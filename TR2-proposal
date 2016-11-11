@@ -8,7 +8,8 @@ I. Overview of the proposed TR replacement
     Main services:
     1. Web-based content delivery
     2. Web-based recording
-    3. Legacy phone service for subscribers and readers who opt out of the web-based solution.
+    3. Legacy phone service for subscribers and readers who opt out 
+       of the web-based solution.
 
 
 II. Proposed stages of implementation with time estimate
@@ -25,6 +26,9 @@ II. Proposed stages of implementation with time estimate
         relatively straight-forward.
       * If the date seems overly cautious: tools have been selected
         but familiarity with the problem domain is low.
+
+    The dates have been determined with immediate start and with at least
+    20 hour of implementation work per week.
 
     STAGE 1: Central Storage
         Estimated delivery: end of December, 2016
@@ -73,7 +77,12 @@ III. Cost estimate
               of the current TR system is implemented (Summer, 2017).
 
 
-IV. Brief description of proposed stages
+IV. Requirements to start the project
+    
+    As of this moment, the only requirement is setting up a Google account for Society For The Blind.
+
+
+V. Brief description of proposed stages
 
     STAGE 1: Central Storage
 
