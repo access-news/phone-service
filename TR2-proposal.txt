@@ -1,4 +1,4 @@
-TR2 implementation proposal with cost/time estimate
+TR2 IMPLEMENTATION PROPOSAL WITH COST/TIME ESTIMATE
 
 I. Overview of the proposed TR replacement
 
