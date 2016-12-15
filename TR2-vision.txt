@@ -52,20 +52,37 @@ EASIER CONTRIBUTION
      file into the system.
 
   2) Make short-term or periodic availability recording easier by
-     not enforcing mandatory assignments (i.e., at this time a remote
-     reader is assigned a publication to avoid duplicates).
-     This results in very poor utilization as sometimes only
-     a couple articles get read in a month.
+     not enforcing mandatory assignments. Assigning publications
+     to a remote reader avoids duplication but it results in very
+     poor utilization as sometimes only a couple articles get read
+     in a month.
+     
+     So the notion is to make cherry-picking available for remote
+     readers as well. Established readers could have the opportunity
+     though to preserve a publication for themselves but this would
+     come with extra responsibilities such as consistent number of
+     articles recorded (e.g., three-fourth of a magazine) and high
+     recording quality. See PLAYFULNESS and QUALITY sections. 
+     
+     This way it would be possible to provide volunteer opportunities
+     to students to complete their community service goals or volunteers
+     who are trying out the service but may change their minds later. 
+     
+     Probably this would also result in a better quality service (or
+     at least more consistent) because some publications get reserved
+     for a remote reader but she may stop after the second week. After
+     reaching out for her, she may start up again, but more often not,
+     wasting the opportunity for someone else to read.
 
      IDEA:
-       By collaboration with media sources (see COLLABORATION) or by
-       volunteer help, article stubs would be added from different
-       publications and these could be queried and selected whether
-       they have been recorded or not.
+       By collaborating with media sources (see COLLABORATION) or by
+       using volunteer help, article stubs would be added from different
+       publications and these could be picked by a prospective reader.
+       Available and already read articles would be clearly highlighted.
 
-       An article stub is consists of the representation of the article
-       on the web page and a preliminary recording containing the title,
-       author name, byline, date etc. The representation of an article
+       An article stub consists of a representation of the article on the
+       web page (or mobile app) and a preliminary recording containing the 
+       title, author name, byline, date etc. The representation of an article
        could be a link, a scanned image of the printed version and so on.
 
        By selecting an article, the reader can either read the
@@ -77,4 +94,3 @@ EASIER CONTRIBUTION
                 if we would like to create a service with highly
                 consistent content.
 
-  * 
