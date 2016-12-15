@@ -1,6 +1,80 @@
 The ideas below are more in the realm of brainstorming that
 accumulated during the last couple months. I will try to give this
 document structure but some of the concepts are connected to other
-topics as well.
+topics as well. There would also be more technical description to
+address some of my concerns or to just remember what I had in mind.
+
+VISION
+
+     TR2 could be the (or an) online audio aggregation point for the
+     print-impaired community, providing access to
+     * news sources
+
+     * original content (podcasts, plays or something brand new)
+
+     * 3rd party audio content sources by mirroring other popular
+       audio content sites (collaboration opportunities)
+
+     * federal, state, municipal etc government alerts, announcements,
+       news, events
+
+     It could be multilingual and multinational, serving minorities
+     (e.g., hispanic, hmong, chinese, japanese).
+
+     The service could be made available to the non-impaired for
+     a fee that gets donated to non-profits or pay involved for profit
+     services involved in the project.
+
+     DISCUSS: * What would be the best course: use the TR distribution
+                model and make the platform available to others to deploy
+                the way they like, or a single online service that is
+                built on tight collaboration?
+
+              Personally, I prefer the latter because of a unified
+              representation that could be a state-wide service but
+              it would have it's challenges:
+
+              * Would money-matters (grants, donations etc) interfere
+                with the latter?
+
+              * Operation? Committee?
+
+              * How to coordinate collaboration?
+                (non-profit, government, media, 3rd party etc.)
+                This is also interesting from a technical
+                viewpoint.
 
 
+EASIER CONTRIBUTION
+
+  1) Send the recording to the email address of the service as
+     an attachment and a script reads the metadata and inserts the
+     file into the system.
+
+  2) Make short-term or periodic availability recording easier by
+     not enforcing mandatory assignments (i.e., at this time a remote
+     reader is assigned a publication to avoid duplicates).
+     This results in very poor utilization as sometimes only
+     a couple articles get read in a month.
+
+     IDEA:
+       By collaboration with media sources (see COLLABORATION) or by
+       volunteer help, article stubs would be added from different
+       publications and these could be queried and selected whether
+       they have been recorded or not.
+
+       An article stub is consists of the representation of the article
+       on the web page and a preliminary recording containing the title,
+       author name, byline, date etc. The representation of an article
+       could be a link, a scanned image of the printed version and so on.
+
+       By selecting an article, the reader can either read the
+       full article or opt in to only read the main content and the
+       preliminary recording with the article details will be added
+       automatically.
+
+       DISCUSS: The former option is probably not a good idea
+                if we would like to create a service with highly
+                consistent content.
+
+  * 
