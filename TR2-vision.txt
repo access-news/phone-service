@@ -80,7 +80,7 @@ EASIER CONTRIBUTION
 
      This way it would be possible to provide volunteer opportunities
      to students to complete their community service goals or volunteers
-     who are trying out the service but may change their minds later. 
+     who are trying out the service but may change their minds later.
 
      Probably this would also result in a better quality service (or
      at least more consistent) because some publications get reserved
@@ -152,6 +152,23 @@ EASIER CONTRIBUTION
 
 LISTENERS
 
+    * Subscribers would be able to query content by title, author,
+      publication, topic, keyword etc., preferably with voice
+      commands.
+
+    * Users could compile playlists.
+
+    * Allow to leave comments. (see QUALITY)
+
+      DISCUSS: Should there be any emphasis on the social aspects?
+
+               I imagined that users would be able to interact with
+               each other (e.g., chatrooms, forums) where they could
+               socialize. It may also help some clients to engage in
+               practicing AT and overcome their anxiety.
+
+      (This section is short because I lost the note that I kept
+       carrying around...)
 
 QUALITY
 
@@ -187,11 +204,32 @@ QUALITY
 
 3RD PARTY COLLABORATION
 
-  Allow (local) companies (stores, newspapers, goverment etc) to
-  sign up and publish their content using their own readers.
-  For example, the NFB and the Economist distribute audio this way.
+    Allow (local) companies (stores, newspapers, goverment etc) to
+    sign up and publish their content using their own readers.
+    For example, the NFB and the Economist distribute audio this way.
 
-  On the technical side these entities would require an account of
-  some sort to operate under their own names.
+    On the technical side these entities would require an account of
+    some sort to operate under their own names.
 
 PLAYFULNESS
+
+    1) Implement something similar to Stackoverflow, Vocabulary.com etc.
+       but it does not necessarily has to be that significant. Opting
+       in would be on a voluntary basis.
+
+       Basically award points and/or achievements and/or badges for
+
+       * submitting quality recordings (readers)
+       * checking submitted content    (readers)
+       * listening to articles         (listeners)
+         e.g., "cosmopolitan" badge if user listens
+               to diverse topics
+       * referring useful 3rd party sources (listeners, readers)
+       * anything that that we can think of and that could be
+         perceived as fun.
+
+    2) Games
+
+       For example, bingo by finding specific news. I had some
+       other ideas as well but these are still obscure even to
+       myself.
