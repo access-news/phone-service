@@ -4,6 +4,10 @@ document structure but some of the concepts are connected to other
 topics as well. There would also be more technical description to
 address some of my concerns or to just remember what I had in mind.
 
+There may be many seemingly unrelated things under the VISION
+section, mostly because I couldn't really find a single category
+for them that felt right.
+
 VISION
 
      TR2 could be the (or an) online audio aggregation point for the
@@ -28,7 +32,7 @@ VISION
      DISCUSS: * What would be the best course: use the TR distribution
                 model and make the platform available to others to deploy
                 the way they like, or a single online service that is
-                built on tight collaboration?
+                built on collaboration?
 
               Personally, I prefer the latter because of a unified
               representation that could be a state-wide service but
@@ -57,6 +61,16 @@ EASIER CONTRIBUTION
      poor utilization as sometimes only a couple articles get read
      in a month.
 
+     DISCUSS: Or should duplication be allowed?
+              Safeway ads are the perfect example as currently it
+              is read by 2 people. This way we wouldn't have to
+              worry about duplicates and gives the listener to
+              pick their favourite reader but then the unread
+              articles need to be made more attractive somehow.
+              Add "bounty" on them? see PLAYFULNESS.
+
+              Would this open a can of worms?
+
      So the notion is to make cherry-picking available for remote
      readers as well. Established readers could have the opportunity
      though to preserve a publication for themselves but this would
@@ -75,7 +89,7 @@ EASIER CONTRIBUTION
      wasting the opportunity for someone else to read.
 
      IDEA:
-       By collaborating with media sources (see COLLABORATION) or by
+       By collaborating with media sources (see 3RD PARTY COLLABORATION) or by
        using volunteer help, article stubs would be added from different
        publications and these could be picked by a prospective reader.
        Available and already read articles would be clearly highlighted.
@@ -106,6 +120,38 @@ EASIER CONTRIBUTION
      therefore sharing that recording with TR2 could be just by
      pushing a button.
 
+  6) Browser plugins to streamline recording.
+     For example, a plugin could embed a button that would start
+     the recording process to TR2 on the spot without any hassle.
+
+     There could a be a status portion to show whether article
+     has been recorded or not, how many times, interest etc.
+
+  7) TR2 "boxes"
+     There's internet in almost every home even if the occupants
+     are not tech savvy or they use it indirectly without them
+     realizing it (smart devices etc). Some volunteers opt in to
+     record through the phone system because that is the least
+     intimidating option.
+
+     There could be a Victor Reader-esque device with large and
+     obvious buttons to record, preconfigured with that persons
+     TR2 credentials. Listeners could use this (or similar) device
+     too to listen to content with the envisioned service features.
+     (see LISTENERS). One of this feature would be to accept
+     voice commands.
+
+     This device could be built very cheaply using a Raspberry Pi
+     Zero for example that costs 5 dollars. On the other hand, by
+     providing step-by-step guides anyone would be able to build
+     it by themselves if they are interested in that sort of things,
+     or they do not agree with our selection of hardware or for any
+     other reasons. The software would be open source, so they would
+     be able to even tailor it to their needs or send feedback.
+
+
+LISTENERS
+
 
 QUALITY
 
@@ -133,4 +179,19 @@ QUALITY
        * By getting feedback.
          This has to be easy enough and reachable from any part
          of the process (either in a mobile app or on the website).
+         For example, allow recording an audio comment, that would
+         also be made visible by voice-to-text.
 
+       * Allow requests.
+         This is pretty close to feedback but still.
+
+3RD PARTY COLLABORATION
+
+  Allow (local) companies (stores, newspapers, goverment etc) to
+  sign up and publish their content using their own readers.
+  For example, the NFB and the Economist distribute audio this way.
+
+  On the technical side these entities would require an account of
+  some sort to operate under their own names.
+
+PLAYFULNESS
