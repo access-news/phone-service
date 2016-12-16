@@ -56,18 +56,18 @@ EASIER CONTRIBUTION
      to a remote reader avoids duplication but it results in very
      poor utilization as sometimes only a couple articles get read
      in a month.
-     
+
      So the notion is to make cherry-picking available for remote
      readers as well. Established readers could have the opportunity
      though to preserve a publication for themselves but this would
      come with extra responsibilities such as consistent number of
      articles recorded (e.g., three-fourth of a magazine) and high
-     recording quality. See PLAYFULNESS and QUALITY sections. 
-     
+     recording quality. See PLAYFULNESS and QUALITY sections.
+
      This way it would be possible to provide volunteer opportunities
      to students to complete their community service goals or volunteers
      who are trying out the service but may change their minds later. 
-     
+
      Probably this would also result in a better quality service (or
      at least more consistent) because some publications get reserved
      for a remote reader but she may stop after the second week. After
@@ -81,9 +81,10 @@ EASIER CONTRIBUTION
        Available and already read articles would be clearly highlighted.
 
        An article stub consists of a representation of the article on the
-       web page (or mobile app) and a preliminary recording containing the 
-       title, author name, byline, date etc. The representation of an article
-       could be a link, a scanned image of the printed version and so on.
+       web page (or mobile app) and a preliminary recording containing the
+       title, author name, byline, date etc. The representation of an
+       article could be a link, a scanned image of the printed version
+       and so on.
 
        By selecting an article, the reader can either read the
        full article or opt in to only read the main content and the
@@ -93,4 +94,43 @@ EASIER CONTRIBUTION
        DISCUSS: The former option is probably not a good idea
                 if we would like to create a service with highly
                 consistent content.
+
+  3) Make it easier to create new categories and/or publications.
+
+  4) Allow referral submission.
+     For example, someone finds a good podcast that she thinks
+     would be a great addition to the content.
+
+  5) Integration with other platforms
+     For example, Voice Memo is installed on the iPhones by default,
+     therefore sharing that recording with TR2 could be just by
+     pushing a button.
+
+
+QUALITY
+
+     Allowing easier contribution would require quality assurance
+     (QA). By QA I mean audio quality and that recordings conform
+     to common guidelines such as no hate speech, appropriate
+     content etc. In addition, currently there is no QA process
+     other than the Access News admin sampling some of the recording
+     when there's time.
+
+     QA could be achieved on multiple levels:
+
+       * Using an automated script checking for "bubbles", distortion,
+         etc.
+
+       * Creating a new volunteer activity to check recordings.
+
+         This could be one non-monetary(?) way for non-impaired users
+         to access content. Although there would be strict conditions
+         they would need to be adhere to.
+
+         Impaired users would also be able to give voice to their
+         opinion:
+
+       * By getting feedback.
+         This has to be easy enough and reachable from any part
+         of the process (either in a mobile app or on the website).
 
