@@ -30,13 +30,12 @@ var onSuccess = function(stream) {
     var mediaRecorder = new MediaRecorder(stream);
 
     mediaRecorder.ondataavailable = function(event) {
+        console.log(' Recorded chunk of size ' + event.data.size + "B");
         chunks.push(event.data);
     }
 
     record.onclick = function(_event) {
-        //  Ignore MediaRecorder.start(**timeslice**) for now
-        //+ in favor of MediaRecorder.requestData()
-        mediaRecorder.start()
+        mediaRecorder.start(100)
 
         record.disabled = resume.disabled = true;
         stop.disabled = pause.disabled = false;
@@ -56,9 +55,9 @@ var onSuccess = function(stream) {
         stop.disabled = pause.disabled = false;
     }
 
-    mediaRecorder.onresume = function(_event) {
-        mediaRecorder.requestData();
-    }
+    // mediaRecorder.onresume = function(_event) {
+    //     mediaRecorder.requestData();
+    // }
 
     stop.onclick = function(_event) {
         mediaRecorder.stop();
