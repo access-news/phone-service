@@ -1,6 +1,15 @@
-TR2 IMPLEMENTATION PROPOSAL WITH COST/TIME ESTIMATE
+TR2 IMPLEMENTATION PROPOSAL
 
-I. Overview of the proposed TR replacement
+I.     Overview of the proposed TR replacement
+II.    Proposed stages of implementation
+III.   Transition
+IV.    Hosting
+V.     Envisioned technology stack
+VI.    Brief description of proposed stages
+
+
+
+I. OVERVIEW OF THE PROPOSED TR REPLACEMENT
 
     Web-based services hosted in the cloud for subscribers to listen to
     audio content and for readers to generate them.
@@ -12,38 +21,80 @@ I. Overview of the proposed TR replacement
        of the web-based solution.
 
 
-II. Proposed stages of implementation with time estimate
+
+II. PROPOSED STAGES OF IMPLEMENTATION
 
     The stages below are not meant to be rigid milestones where previous
     stages have to be completed in order for the next one to start.
 
-    The estimated delivery below refers to a stable bare-bones
-    service that is ready for public testing (as the delivery assumes
-    passing internal tests).
+        STAGE 1: Central digital audio repository
 
-    Guide to interpret the dates:
-      * If the date seems to ambitious: the implementation should be
-        relatively straight-forward.
-      * If the date seems overly cautious: tools have been selected
-        but familiarity with the problem domain is low.
+        STAGE 2: Web service for accessible online content
+                (extensible with new formats)
 
-    The dates have been determined with immediate start and with at least
-    20 hour of implementation work per week.
+        STAGE 3: Online recording capability
 
-    STAGE 1: Central digital audio repository
+        STAGE 4: Provide native apps on other platforms
+                (Android, iPhone)
 
-    STAGE 2: Web service to access online content
-             (extensible with new formats)
-
-    STAGE 3: Online recording capability
-
-    STAGE 4: Provide native apps on other platforms
-             (Android, iPhone)
-    
-    STAGE 5: Replace TR phone service completely
+        STAGE 5: Replace TR phone service completely
 
 
-III. Cost estimate
+
+III. TRANSITION
+
+    Stages in Section II. would also promote transitioning from the old
+    service by actively making high quality digital recordings available
+    online but they would still be available on TR for subscribers with
+    limited choices albeit with degraded quality (TRM conversion is
+    unforgiving.) STAGE 5 would replace this last resort with a more
+    modern implementation.
+
+    1. Local Changes
+
+       a. READERS
+
+          Replace headset phones in the recording booths with equipment that 
+          allows to record digitally.
+
+          Some cost-effective ways to achieve this would be to re-use old PCs
+          that are slow for general office use and install a user- and resource-
+          friendly Linux distribution (e.g. Xubuntu) and an open-source
+          recording application (e.g. Audacity). This would also improve an
+          organization's ecological footprint by reducing e-waste.
+          (Extra grant opportunities?)
+
+          As an alternative, micro-computers could be set up. For example,
+          a Raspberry PI costs $25 with more than enough computing power
+          and it is the size of a credit card.
+
+       b. LISTENERS
+
+          Only readers would be affected.
+
+
+    2. Remote Changes
+
+        a. READERS
+
+           It is possible to recreate the same recording process that
+           volunteers currently use to record through the phone system
+           but this is an edge case.
+
+           Readers who record digitally tend to be more flexible based
+           on their experience with technology. At this time there are
+           many options to submit their recordings, such as email them,
+           share an iCloud link, upload to Google Drive, etc.
+
+           See Section VI. below and also "TR2-vision.txt".
+
+        b. LISTENERS
+           Keep using the replicated TR phone menu system and/or start
+           exploring the online alternatives.
+
+
+
+IV. HOSTING
 
     Predicted ceiling with all sub-services implemented and running with
     high usage: $600/month. This estimate is derived from web-hosting
@@ -70,18 +121,40 @@ III. Cost estimate
         Programmable call recording:           $0.0025/minute
         TOTAL: $150 (= 5000 * 0.0275 + 5000*0.0025 + 2)
 
-        NOTE: This cost is assumed to kick in once the phone system part
-              of the current TR system is implemented (Summer, 2017).
 
 
-IV. Requirements to start the project
-    
-    As of this moment, the only requirement is setting up a Google account for Society For The Blind.
+V. ENVISIONED TECHNOLOGY STACK
+
+    1. Back end
+
+       Use the Phoenix framework with all the advantages of Elixir and
+       the Erlang VM.
 
 
-V. Brief description of proposed stages
+    2. Front end
 
-    STAGE 1: Central Storage
+       A Web application that would conform to the Progressive Web Apps
+       requirements with public APIs promoting
+
+            * the consumption of the service in more flexible ways
+
+                E.g.,
+                You would like to create a micro-computer based
+                hardware receiver so you would create an app
+                that consumes that API in a special way.
+
+            * collaboration across organizations.
+
+       Use the common web standard technologies to achieve maximum
+       accessibility: HTML, CSS, JavaScript. PureScript would be the
+       ideal tool to create the entire front end as it has no runtime and
+       it is easy to reference it from JavaScript and vice versa.
+
+
+
+VI. BRIEF DESCRIPTION OF PROPOSED STAGES
+
+    STAGE 1: Central digital audio repository
 
         Create a central storage service as consolidated destination of
         digital recordings from remote readers.
@@ -91,16 +164,33 @@ V. Brief description of proposed stages
         multiple sources (e.g., e-mail attachments, google drive,
         dropbox etc.) that makes maintenance time consuming.
 
-    STAGE 2: Online recording capability
+        See "TR2-vision.txt" > EASIER CONTRIBUTION, item 1.
 
-        Make it possible for readers to record online by visiting the TR2
-        website where the recording would be saved directly to the central
-         storage.
 
-        RATIONALE:
-        See STAGE 3 RATIONALE.
+    STAGE 2: Web service for accessible online content
 
-    STAGE 3: Extend/integrate STAGE 2 on other platforms
+        Envisioned features:
+
+        * speech recognition for navigation
+
+        * easily extensible menu with text-to-speech
+
+        * ability to tag content
+
+        * create playlists
+
+        * leave audio comments (audio and text via speech-to-text)
+
+          and add many more gradually once a base system is running.
+
+
+    STAGE 3: Online recording capability
+
+        See "TR2-vision.txt" > EASIER CONTRIBUTION
+
+
+    STAGE 4: Provide native apps on other platforms
+             (iPhone, Android, browser extension, electron apps)
 
         Either create native iPhone or Android apps or integrate with
         default applications (e.g., use Voice Memo app on iPhones to
@@ -109,7 +199,7 @@ V. Brief description of proposed stages
         RATIONALE:
         90 % of the new readers embrace the idea of digital recording but
         they struggle to get their readings back to us. This means extra
-        admin time for "tech support" communication. STAGE 2 could help
+        admin time for "tech support" communication. STAGE 4 could help
         by allowing people to open the TR2 recording service in their
         browsers (iPhone's Safari, Android's Chrome etc.) but it adds
         cognitive overhead of learning a new tool. Enabling readers to
@@ -118,16 +208,6 @@ V. Brief description of proposed stages
         on our part to always make sure that our native app or integration
         solution is working even as these platforms keep evolving.
 
-    STAGE 4: Online service for subscribers
-
-        Similar to STAGE 2 and STAGE 3 but for listeners.
-        Envisioned features:
-        * speech recognition for navigation
-        * easily extensible menu with text-to-speech
-        * ability to tag content
-        * create playlist
-        * leave audio comments (audio and text via speech-to-text)
-        and add many more gradually once a base system is running.
 
     STAGE 5: Replace TR phone service completely
 
