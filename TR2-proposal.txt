@@ -30,20 +30,17 @@ II. Proposed stages of implementation with time estimate
     The dates have been determined with immediate start and with at least
     20 hour of implementation work per week.
 
-    STAGE 1: Central Storage
-        Estimated delivery: end of December, 2016
+    STAGE 1: Central digital audio repository
 
-    STAGE 2: Online recording capability
-        Estimated delivery: end of January, 2017
+    STAGE 2: Web service to access online content
+             (extensible with new formats)
 
-    STAGE 3: Extend/integrate STAGE 2 on other platforms
-        Estimated delivery: April/May, 2017
+    STAGE 3: Online recording capability
 
-    STAGE 4: Online service for subscribers
-        Estimated delivery: February/March, 2017
-
+    STAGE 4: Provide native apps on other platforms
+             (Android, iPhone)
+    
     STAGE 5: Replace TR phone service completely
-        Estimated delivery: Summer, 2017
 
 
 III. Cost estimate
