@@ -1,6 +1,8 @@
 var fragment = document.createDocumentFragment(),
     div      = document.createElement('div');
 
+var audioContext = new AudioContext();
+
 div.innerHTML = 
   '<button class="record">Record</button>   \
    <button class="pause">Pause</button>     \
@@ -30,13 +32,12 @@ var onSuccess = function(stream) {
     var mediaRecorder = new MediaRecorder(stream);
 
     mediaRecorder.ondataavailable = function(event) {
+        console.log(' Recorded chunk of size ' + event.data.size + "B");
         chunks.push(event.data);
     }
 
     record.onclick = function(_event) {
-        //  Ignore MediaRecorder.start(**timeslice**) for now
-        //+ in favor of MediaRecorder.requestData()
-        mediaRecorder.start()
+        mediaRecorder.start(100)
 
         record.disabled = resume.disabled = true;
         stop.disabled = pause.disabled = false;
@@ -56,9 +57,9 @@ var onSuccess = function(stream) {
         stop.disabled = pause.disabled = false;
     }
 
-    mediaRecorder.onresume = function(_event) {
-        mediaRecorder.requestData();
-    }
+    // mediaRecorder.onresume = function(_event) {
+    //     mediaRecorder.requestData();
+    // }
 
     stop.onclick = function(_event) {
         mediaRecorder.stop();
@@ -89,7 +90,67 @@ var onSuccess = function(stream) {
         makeLink();
         chunks = [];
     }
+
+    // EXPERIMENT 1
+    // adding lower level stuff besides recording
+    // GAP: is this the right way when doing recording as well?
+
+        // var streamSource = audioContext.createMediaStreamSource(stream);
+        // var csp = audioContext.createScriptProcessor(0,2,2);
+
+        // streamSource.connect(csp);
+        // csp.connect(audioContext.destination);
+        // csp.onaudioprocess = function(event) {
+        //     var audioData = event.inputBuffer.getChannelData(0);
+        //     console.log(audioData);
+        // }
+
+    // EVAL: One unexpected result was that once the media source (i.e. the mic in
+    //       in this context) was allowed to be accessed, the data on the console
+    //       started flowing. Of course, this is a stream object, so what else did
+    //       I expect?
 }
+
+// EXPERIMENT 2
+// using `createMediaElementSource` this time
+    // document.querySelector('#experiment').onclick = function(_event) {
+    //     var audioElem = document.querySelector('audio');
+    //     var elemSource = audioContext.createMediaElementSource(audioElem);
+    //     var csp = audioContext.createScriptProcessor(0,2,2);
+
+    //     elemSource.connect(csp);
+    //     csp.connect(audioContext.destination);
+    //     csp.onaudioprocess = function(event) {
+    //         var audioData = event.inputBuffer.getChannelData(0);
+    //         console.log(audioData);
+    //     }
+    // }
+// EVAL: The result was unexpected but I learned something again:
+//       `console.log()` kept spitting out Float32Array arrays that were
+//       zeroed out but when hit play on the `<audio>` element, data
+//       started to flow until it was stopped.
+
+// EXPERIMENT 3
+// For some reason it did not sink in that create*Source returns an
+// AudioBufferSourceNode object that has `start()` and `stop()` methods.
+// Here we go:
+    var absnStartButton = document.createElement('button'),
+        absnStopButton  = document.createElement('button');
+
+    
+    document.querySelector('#experiment').onclick = function(_event) {
+        var audioElem = document.querySelector('audio');
+        var elemSource = audioContext.createMediaElementSource(audioElem);
+        var csp = audioContext.createScriptProcessor(0,2,2);
+
+        elemSource.connect(csp);
+        csp.connect(audioContext.destination);
+        csp.onaudioprocess = function(event) {
+            var audioData = event.inputBuffer.getChannelData(0);
+            console.log(audioData);
+        }
+    }
+
 
 navigator.mediaDevices.getUserMedia(constraints).
     then(onSuccess).

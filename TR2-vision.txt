@@ -3,129 +3,119 @@ accumulated during the last couple months. I will try to give this
 document structure but some of the concepts are connected to other
 topics as well.
 
-There may be many seemingly unrelated things under the VISION
-section, mostly because I couldn't really find a single category
-for them that felt right.
+---
 
-VISION
+TR2 could be the (or an) online audio aggregation point for the
+print-impaired community, providing access to
 
-     TR2 could be the (or an) online audio aggregation point for the
-     print-impaired community, providing access to
+* news sources
 
-     * news sources
+* original content (podcasts, plays or something brand new)
 
-     * original content (podcasts, plays or something brand new)
+* 3rd party audio content sources by mirroring other popular
+  audio content sites (LOOK_INTO: collaboration opportunities)
 
-     * 3rd party audio content sources by mirroring other popular
-       audio content sites (collaboration opportunities)
+* federal, state, municipal etc government alerts, announcements,
+  news, events
 
-     * federal, state, municipal etc government alerts, announcements,
-       news, events
+It could be multilingual and multinational, serving minorities
+as well (e.g., hispanic, hmong, chinese, japanese).
 
-     It could be multilingual and multinational, serving minorities
-     (e.g., hispanic, hmong, chinese, japanese).
+The service could be made available to the non-impaired for
+a fee that gets donated to non-profits or pay to for-profit
+services involved in the project. (LOOK_INTO: legal requirements?)
 
-     The service could be made available to the non-impaired for
-     a fee that gets donated to non-profits or pay to for-profit
-     services involved in the project.
+TOPICS FOR DISCUSSION
 
-     DISCUSS: * What would be the best course: use the TR distribution
-                model and make the platform available to others to deploy
-                the way they like, or a single online service that is
-                built on collaboration with other organizations?
+    * Distribution model
 
-              Personally, I prefer the latter because of the notion of 
-              a unified representation that could be a state-wide service
-              but it would have it's challenges:
+      (1) TR distribution model
+          (make the platform available to others
+          to deploy the way they like)
 
-              * finances could become murky (grants, donations etc.)
+      (2) Single online service with a central steering committee
+          that is built on collaboration with other organizations.
 
-              * how would it operate? Committee?
+        Personally, I prefer the latter because of the notion of 
+        a unified representation that could be a state-wide (or
+        nation-wide) service but it would have it's challenges that
+        would need to figured out For starters:
 
-              * How to coordinate collaboration?
-                (non-profit, government, media, 3rd party etc.)
-                This is also interesting from a technical
-                viewpoint.
+        * finances (grants, donations etc.)
 
+        * Coordinate collaboration
+
+        * legal challenges
+          (non-profit, government, media, 3rd party etc.)
+
+        * many more things
 
 EASIER CONTRIBUTION
 
-  1) Send the recording to the email address of the service as
-     an attachment and a script reads the metadata and inserts the
-     file into the system.
+  1) Multiple methods of submitting recordings
 
-  2) Make short-term or periodic availability recording easier by
-     not enforcing mandatory assignments. Assigning publications
-     to a remote reader avoids duplication but it results in very
-     poor utilization as sometimes only a couple articles get read
-     in a month. Plus it is never immediately apparent when a
-     volunteer quits.
+     * Send the recording to the email address of the service as
+       an attachment and a script reads the metadata and inserts the
+       file into the system.
 
-     DISCUSS: Should duplication be allowed?
+     * Upload audio files (some volunteers prefer their own recording
+       methods)
 
-              Safeway ads are the perfect example as currently it
-              is read by 2 people because listeners have different
-              tastes. By allowing duplication, each listener would
-              be able to pick their favourite reader and would make
-              some technical choices easiser. Although the unread
-              articles then would need to be made more attractive 
-              somehow.
-              Add "bounty" on them? see PLAYFULNESS.
+     * Record online on TR2's volunteer website
+       (IDEA:
+         * integrate the online content of subscribed publication with
+           the recording app
+         * offline web application leveraging client-side storage
+         * LOOK_INTO: specifications for Progressive Web Apps
+       )
 
-              Would this open a can of worms?
+  2) The article is the default assignable unit
 
-     So the notion is to make cherry-picking available for remote
-     readers as well. Established readers would still have the 
-     opportunity to preserve a publication for themselves but this 
-     would come with extra responsibilities such as consistent number
-     of articles recorded (e.g., three-fourth of a magazine), high
-     recording quality and so on. See PLAYFULNESS and QUALITY sections.
+     Currently remote readers are assigned entire publication but
+     because of poor volunteer retention rates content goes stale
+     by the time we get word that the reader abandoned the project.
 
-     This way it would be possible to provide volunteer opportunities
-     to 
+     Make short-term or periodic availability recording easier
+     instead by allowing cherry-picking and only lock the single
+     article that is being read. This would also make short-term or
+     periodic volunteering easier such as but not limited to:
+
        * students to complete their community service goals
-       * volunteers who would like to try out the service but may 
+
+       * volunteers who would like to try out the service but may
          change their minds later
 
-     Probably this would also result in a better quality service (or
-     at least, a more consistent one) because, as stated above, assigned
-     but not read publications (possible due to lack of motivation or 
-     dislike) hinders the opportunity of others to read.
 
-     IDEA:
-       By collaborating with media sources (see 3RD PARTY COLLABORATION)
-       or by using volunteer help, article stubs would be added from
-       different publications and these could be picked by a prospective
-       reader. Available and already read articles would be clearly
-       highlighted.
+     DISCUSS: * Should duplication be allowed?
 
-       An article stub consists of a representation of the article on the
-       web page (or mobile app) and a preliminary recording containing the
-       title, author name, byline, date etc. The representation of an
-       article could be a link, a scanned image of the printed version
-       and so on.
+                Safeway ads are the perfect example as currently it
+                is read by 2 people because listeners have different
+                tastes. By allowing duplication, each listener would
+                be able to pick their favourite reader and would make
+                some technical choices easiser. Although the unread
+                articles then would need to be made more attractive 
+                somehow.
 
-       By selecting an article, the reader can either read the
-       full article or opt in to only read the main content and the
-       preliminary recording with the article details will be added
-       automatically.
+              * Make "boring" content (such as store sales ads) more
+                attractive.
+                See PLAYFULNESS.
 
-       DISCUSS: The former option is probably not a good idea
-                if we would like to create a service with highly
-                consistent content.
 
   3) Make it easier to create new categories and/or publications.
 
-  4) Allow referral submission.
+  4) Allow submission of referrals
+
      For example, someone finds a good podcast that she thinks
      would be a great addition to the service.
 
   5) Integration with other platforms
+
      For example, Voice Memo is installed on the iPhones by default,
      therefore sharing that recording with TR2 could be just by
      pushing a button.
 
   6) Browser plugins to streamline recording.
+
      For example, a plugin could embed a button that would start
      the recording process to TR2 on the spot without any hassle.
 
@@ -133,9 +123,10 @@ EASIER CONTRIBUTION
      has been recorded or not, how many times, interest etc.
 
   7) TR2 "boxes"
+
      There's internet in almost every home. The occupants may not
      be tech savvy but many people use the net indirectly without
-     them realizing it (e.g., smart devices). Some of our volunteers
+     them realizing it (e.g., Google Home, Siri). Some of our volunteers
      opt in to record through the phone system because that is the least
      intimidating option.
 
@@ -157,15 +148,16 @@ EASIER CONTRIBUTION
 
 LISTENERS
 
-    * Subscribers would be able to query content by title, author,
-      publication, topic, keyword etc., preferably with voice
-      commands.
+    Subscribers would be able to
 
-    * Users could compile playlists.
+    * query content by title, author, publication, topic,
+      keyword etc., preferably with voice commands
 
-    * Allow to leave comments. (see QUALITY)
+    * could compile playlists
 
-    * Location-based suggestions.
+    * leave comments. (see QUALITY)
+
+    * get location-based suggestions
 
       DISCUSS: Should there be any emphasis on the social aspects?
 
@@ -174,22 +166,22 @@ LISTENERS
                socialize. It may also help some clients to engage in
                practicing AT and overcome their anxiety.
 
-      (This section is short because I lost the note that I kept
-       carrying around...)
+               Also there is interest on both sides about the others:
+               volunteers crave feedback from listeners and listeners
+               would like to know more about volunteers.
 
 QUALITY
 
      Allowing easier contribution would require quality assurance
-     (QA). By QA I mean audio quality and that recordings conform
-     to common guidelines such as civilized behaviour, appropriate
-     content etc. In addition, currently there is no QA process
-     other than the Access News admin sampling some of the recording
-     when there's time.
+     (QA) that recordings conform to common guidelines such as civilized
+     behaviour, appropriate content etc. In addition, currently there is
+     no QA process other than the Access News admin sampling some of the
+     recording (when there's time).
 
      QA could be achieved on multiple levels:
 
-       * Using an automated script checking for "bubbles", distortion,
-         etc.
+       * Using an automated script checking for "bubbles" (period of
+         silences), distortion, etc.
 
        * Creating a new volunteer activity to check recordings.
 
@@ -197,16 +189,18 @@ QUALITY
          to access content. Although there would be strict conditions
          they would need to adhere to.
 
-         Impaired users would also be able to give voice to their
-         opinion:
+         Subscriber could also volunteer to participate.
 
-       * By getting feedback.
-         This has to be easy enough and reachable from any part
-         of the process (either in a mobile app or on the website).
-         For example, allow recording an audio comment, that would
-         also be made visible by voice-to-text.
+       * Streamlining feedbacks
+
+         Leaving feedback has to be easy enough and reachable from
+         any part of the process (either in a mobile app or on the
+         website). For example, allow recording an audio comment,
+         that would also be made visible by voice-to-text.
+         An example for the latter is SoundCloud.
 
        * Allow requests.
+
          This is pretty close to feedback but still.
 
 3RD PARTY COLLABORATION
@@ -215,7 +209,7 @@ QUALITY
     etc) to sign up and publish their content using their own readers.
     For example, the NFB and the Economist distribute audio this way.
 
-    On the technical side these entities would require an account of
+    On the technical side, these entities would require an account of
     some sort to operate under their own names.
 
 PLAYFULNESS
@@ -227,16 +221,18 @@ PLAYFULNESS
        Basically award points and/or achievements and/or badges for
 
        * submitting quality recordings (readers)
+
        * checking submitted content    (readers)
+
        * listening to articles         (listeners)
          e.g., "cosmopolitan" badge if user listens
                to diverse topics
+
        * referring useful 3rd party sources (listeners, readers)
+
        * anything that that we can think of and that could be
          perceived as fun.
 
     2) Games
 
-       For example, bingo by finding specific news. I had some
-       other ideas as well but these are still obscure even to
-       myself.
+       For example, bingo by finding specific news.
