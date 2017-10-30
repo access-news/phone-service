@@ -233,6 +233,8 @@ PLAYFULNESS
        * anything that that we can think of and that could be
          perceived as fun.
 
+         For example: article roulette
+
     2) Games
 
        For example, bingo by finding specific news.
