@@ -14,6 +14,8 @@ dbh = freeswitch.Dbh(conn_string)
 assert(dbh:connected())
 freeswitch.consoleLog("INFO", "lua script: connected to DB")
 
+-- NOTE: Workaround for when query returns no rows.
+--       See https://stackoverflow.com/questions/56744392
 q =
   "SELECT COALESCE(" ..
     "(SELECT '+1' || phone_number " ..
