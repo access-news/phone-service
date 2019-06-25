@@ -29,9 +29,12 @@ dbh:query(q, function(row)
   freeswitch.consoleLog("INFO", "lua script: ani = " .. ani)
 
   if row.coalesce == "0" then
-    freeswitch.consoleLog("INFO", "lua script: " .. ani .. " not in database")
+    freeswitch.consoleLog("INFO", "lua script: " .. ani .. " not in database, hanging up")
     session:hangup()
   end
+
+  session:execute("sleep", "750")
+  session:execute("ivr","demo_ivr")
 
 end)
 

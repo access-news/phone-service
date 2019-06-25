@@ -15,8 +15,8 @@
         <action application="lua" data="auth.lua"/>
 
         <!-- <action application="info"/> -->
-        <action application="sleep" data="250"/>
-        <action application="ivr" data="demo_ivr"/>
+        <!-- <action application="sleep" data="750"/> -->
+        <!-- <action application="ivr" data="demo_ivr"/> -->
       </condition>
     </extension>
 
