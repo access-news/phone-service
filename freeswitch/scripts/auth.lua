@@ -34,6 +34,10 @@ dbh:query(q, function(row)
   if row.coalesce == "unauthorized" then
     freeswitch.consoleLog("INFO", "lua script: " .. ani .. " not in database, hanging up")
 
+    -- TODO: ask for the PIN at this point (last 4 digits
+    -- of registered number) and if that fails, then kick
+    -- into demo mode
+
     -- flite is not aware of punctuation marks therefore
     -- the entire text is read in one long string, but it
     -- is just a placeholder right now anyway.
