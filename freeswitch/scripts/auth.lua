@@ -1,6 +1,12 @@
 ani = session:getVariable("ani")
 freeswitch.consoleLog("INFO", "lua script: ani = " .. ani)
 
+-- TODO: let's not advertize credentials once in prod
+-- + https://www.digitalocean.com/community/tutorials/an-introduction-to-managing-secrets-safely-with-version-control-systems
+-- + https://news.ycombinator.com/item?id=5178914
+-- + https://github.com/google/tink
+-- + https://johnresig.com/blog/keeping-passwords-in-source-control/
+-- + https://www.agwa.name/projects/git-crypt/
 conn_string =
   "pgsql://hostaddr=10.142.0.2"              ..
   " dbname=access-news"                      ..
