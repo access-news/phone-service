@@ -11,7 +11,7 @@
       <!-- the number you assigned in your dashboard -->
       <condition field="destination_number" expression="^(\+19162510217)$">
 
-        <action application="answer"/>
+        <!-- <action application="answer"/> -->
         <action application="lua" data="auth.lua"/>
 
         <!-- <action application="info"/> -->
