@@ -1,12 +1,9 @@
-ani = session:getVariable("ani")
-freeswitch.consoleLog("INFO", "lua script: ani = " .. ani)
+--- Globals ------------------------------------------------------------ {{{1
 
--- TODO: let's not advertize credentials once in prod
--- + https://www.digitalocean.com/community/tutorials/an-introduction-to-managing-secrets-safely-with-version-control-systems
--- + https://news.ycombinator.com/item?id=5178914
--- + https://github.com/google/tink
--- + https://johnresig.com/blog/keeping-passwords-in-source-control/
--- + https://www.agwa.name/projects/git-crypt/
+ani = session:getVariable("ani")
+-- freeswitch.consoleLog("INFO", "lua script: ani = " .. ani)
+
+-- TODO: let's not advertize credentials once in prod. See TODOs in README.
 conn_string =
   "pgsql://hostaddr=10.142.0.2"              ..
   " dbname=access-news"                      ..
@@ -16,14 +13,15 @@ conn_string =
   " application_name='freeswitch'"
 
 dbh = freeswitch.Dbh(conn_string)
-
 assert(dbh:connected())
-freeswitch.consoleLog("INFO", "lua script: connected to DB")
+-- freeswitch.consoleLog("INFO", "lua script: connected to DB")
 
-session:execute("sleep", "750")
-session:execute("speak", "flite|slt|Welcome to Access News!")
+--- Functions ---------------------------------------------------------- {{{1
 
-function ani_registered(ani)
+-- TODO: It would probably be prudent to put these in a module.
+-- TODO: `ani_registered()` and `check_sec_code()` are almost the same
+
+function ani_registered(ani) -- {{{2
 
   local registered = false
 
@@ -39,16 +37,44 @@ function ani_registered(ani)
   return registered
 end
 
+function check_sec_code(digits) -- {{{2
+
+  local authenticated = false
+
+  local q =
+    "SELECT  phone_number"     ..
+    "  FROM  phone_numbers"    ..
+    "  WHERE phone_number = '" .. digits .. "'"
+
+  dbh:query(q, function(row)
+    authenticated = true
+  end)
+
+  return authenticated
+end
+
+--- Call flow ---------------------------------------------------------- {{{1
+
+session:answer()
+
+-- NOTE: Not sure  which one is  better, but it is  needed to
+--       give some  time to the  system to start  playing the
+--       menu (either a file, `phrase`, `say`, `speak`, etc.)
+-- session:execute("sleep", "750")
+session:execute("playback", "silence_stream://750,1400")
+
+session:execute("speak", "flite|slt|Welcome to Access News!")
+
 if ani_registered(ani) == false then
   freeswitch.consoleLog("INFO", ani .. " is not registered")
 
-  -- TODO: ask for the PIN at this point (last 4 digits
-  -- of registered number) and if that fails, then kick
-  -- into demo mode
+  local not_registered_note =
+    "The number you "
+  session:execute("speak", "flite|slt|" .. demo_note)
 
-  -- flite is not aware of punctuation marks therefore
-  -- the entire text is read in one long string, but it
-  -- is just a placeholder right now anyway.
+  -- NOTE: `flite` is not aware  of punctuation marks therefore
+  -- the entire  text is read  in one long string.  It is
+  -- just a placeholder right now anyway.
   local demo_note =
     "Please note that you are currently in demo"           ..
     "mode and the system will hang up in 5 minutes."       ..
@@ -64,3 +90,5 @@ session:execute("sleep", "750")
 session:execute("ivr","demo_ivr")
 
 dbh:release()
+
+-- vim: set fdm=marker:

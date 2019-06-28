@@ -7,6 +7,8 @@ Contains all FreeSWITCH-related scripts and configuration files that get symlink
 ```text
 ./freeswitch/dialplan/default.xml <- /etc/freeswitch/dialplan/default.xml
 ./freeswitch/scripts/auth.lua     <- /usr/share/freeswitch/scripts/auth.lua
+./freeswitch/freeswitch.xml       <- /etc/freeswitch/freeswitch.xml
+./freeswitch/phrases/lang/        <- /etc/freeswitch/lang/
 ```
 
 See [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
@@ -21,7 +23,7 @@ Javascript audio recorder experiment pieced together from different sources.
 
 # 1. TODOs
 
-## 1.0 FreeSWITCH diaplan cleanup
+## 1.0 FreeSWITCH diaplan cleanup [STATUS: DONE (but see question)]
 
 `/etc/freeswitch/freeswitch.xml`:
 
@@ -49,9 +51,16 @@ freeswitch/
 | | skinny-patterns.xml
 ```
 
-It would be a good time to figure out the relationship between `public`, `features`, `skinny_profiles`, `default` dialplans. The SignalWire in-memory config also makes things a bit more confusing, and it uses the `default` one out of the box.
+> **QUESTION**:
+> Warning: Locale seems not configured
+> It   would   be   a   good  time   to   figure   out
+> the   relationship  between   `public`,  `features`,
+> `skinny_profiles`,    `default`    dialplans.    The
+> SignalWire in-memory config also  makes things a bit
+> more confusing, and it uses the `default` one out of
+> the box.
 
-### 1.1 Secret management (source control, deployment, etc.)
+## 1.1 Secret management (source control, deployment, etc.)
 
 + https://www.digitalocean.com/community/tutorials/an-introduction-to-managing-secrets-safely-with-version-control-systems
 + https://news.ycombinator.com/item?id=5178914
@@ -75,14 +84,14 @@ I may also misunderstanding the "keep them in environment variables argument" be
 
 , but does not give an alternative.
 
-### 1.2 FreeSWITCH deployment
+## 1.2 FreeSWITCH deployment
 
 Right now files are symlinked from the the `./freeswitch` folder.
 
 Another option would be to edit the `/lib/systemd/system/freeswitch.service` (found it via `sudo systemctl status freeswitch.service`) and re-define the default folders.
 
  + [`systemd.service` man page](https://www.freedesktop.org/software/systemd/man/systemd.service.html)
- + [Command Line Switches](https://freeswitch.org/confluence/display/FREESWITCH/Command+Line+Switches)
+ + [Command Line Switches](https://freeswitch.org/confluence/display/FREESWITCH/Command+Line+Switches) in the FreeSWITCH docs
 
    > ```text
    > bash> fs_cli -x 'global_getvar'| grep _dir
@@ -107,3 +116,15 @@ Another option would be to edit the `/lib/systemd/system/freeswitch.service` (fo
    >  data_dir=/usr/share/freeswitch
    >  localstate_dir=/var/lib/freeswitch
    > ```
+
+## [DONE] 1.3 FreeSWITCH configuration cleanup
+
+Same as 1.0 but different section:
+
+```xml
+  <section name="configuration" description="Various Configuration">
+    <X-PRE-PROCESS cmd="include" data="autoload_configs/*.xml"/>
+  </section>
+```
+
+`/etc/freeswitch/autoload_configs` has 87 files in it right now; pretty sure that only a fraction of them are being used.
