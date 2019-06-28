@@ -9,7 +9,7 @@ Contains all FreeSWITCH-related scripts and configuration files that get symlink
 ./freeswitch/scripts/auth.lua     <- /usr/share/freeswitch/scripts/auth.lua
 ```
 
-See "1. TODOs" about better options.
+See [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
 
 ## `./meta`
 
@@ -76,3 +76,34 @@ I may also misunderstanding the "keep them in environment variables argument" be
 , but does not give an alternative.
 
 ### 1.2 FreeSWITCH deployment
+
+Right now files are symlinked from the the `./freeswitch` folder.
+
+Another option would be to edit the `/lib/systemd/system/freeswitch.service` (found it via `sudo systemctl status freeswitch.service`) and re-define the default folders.
+
+ + [`systemd.service` man page](https://www.freedesktop.org/software/systemd/man/systemd.service.html)
+ + [Command Line Switches](https://freeswitch.org/confluence/display/FREESWITCH/Command+Line+Switches)
+
+   > ```text
+   > bash> fs_cli -x 'global_getvar'| grep _dir
+   >
+   >  base_dir=/usr
+   >  recordings_dir=/var/lib/freeswitch/recordings
+   >  sounds_dir=/usr/share/freeswitch/sounds
+   >  conf_dir=/etc/freeswitch
+   >  log_dir=/var/log/freeswitch
+   >  run_dir=/var/run/freeswitch
+   >  db_dir=/var/lib/freeswitch/db
+   >  mod_dir=/usr/lib/freeswitch/mod
+   >  htdocs_dir=/usr/share/freeswitch/htdocs
+   >  script_dir=/usr/share/freeswitch/scripts
+   >  temp_dir=/tmp
+   >  grammar_dir=/usr/share/freeswitch/grammar
+   >  fonts_dir=/usr/share/freeswitch/fonts
+   >  images_dir=/var/lib/freeswitch/images
+   >  certs_dir=/etc/freeswitch/tls
+   >  storage_dir=/var/lib/freeswitch/storage
+   >  cache_dir=/var/cache/freeswitch
+   >  data_dir=/usr/share/freeswitch
+   >  localstate_dir=/var/lib/freeswitch
+   > ```
