@@ -1,6 +1,6 @@
 # 0. Repo layout
 
-## `./freeswitch`
+## 0.0 `./freeswitch`
 
 Contains all FreeSWITCH-related scripts and configuration files that get symlinked to their actual locations on the production server. For example,
 
@@ -10,6 +10,8 @@ Contains all FreeSWITCH-related scripts and configuration files that get symlink
 /etc/freeswitch/lang/                  -> [this-repo]/freeswitch/phrases/lang/
 
 /usr/share/freeswitch/scripts/         -> [this-repo]/freeswitch/scripts/
+/usr/share/lua/5.2/                    -> [this-repo]/freeswitch/scripts/
+
 ```
 
 Commands used:
@@ -19,15 +21,41 @@ $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/dialplan/default.xml /
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/freeswitch.xml /etc/freeswitch/freeswitch.xml
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/phrases/lang/ /etc/freeswitch/lang
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/freeswitch/scripts
+
+# see note in 0.0.0
+$ sudo mkdir /usr/share/lua
+$ sudo chown -R freeswitch:freeswitch /usr/share/lua
+$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/lua/5.2
 ```
 
-See [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
+See TODO [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
 
-## `./meta`
+### 0.0.0 Note on Lua module locations (or, why `require` fails)
+
+As the error message states, the Lua 5.2 interpreter, built into Freeswitch, is looking in these paths:
+
+```lua
+        no file '/usr/local/share/lua/5.2/conn_string.lua'
+        no file '/usr/local/share/lua/5.2/conn_string/init.lua'
+        no file '/usr/local/lib/lua/5.2/conn_string.lua'
+        no file '/usr/local/lib/lua/5.2/conn_string/init.lua'
+        no file '/usr/share/lua/5.2/conn_string.lua'
+        no file '/usr/share/lua/5.2/conn_string/init.lua'
+        no file './conn_string.lua'
+        no file '/usr/local/lib/lua/5.2/conn_string.so'
+        no file '/usr/lib/x86_64-linux-gnu/lua/5.2/conn_string.so'
+        no file '/usr/lib/lua/5.2/conn_string.so'
+        no file '/usr/local/lib/lua/5.2/loadall.so'
+        no file './conn_string.so'
+```
+
+There is an obscure [Freeswitch wiki entry](ttps://freeswitch.org/confluence/display/FREESWITCH/Third+Party+Libraries#ThirdPartyLibraries-WheretoputthirdpartyLuascripts/modules) on how to change this, and one could read up on [`package.path` file or how Lua modules work](https://www.lua.org/manual/5.3/manual.html#6.3), but it was easier to just point a symlink to the `scripts` directory.
+
+## 0.1 `./meta`
 
 Out of date project descriptions.
 
-## `./recorder`
+## 0.2 `./recorder`
 
 Javascript audio recorder experiment pieced together from different sources.
 
@@ -62,7 +90,6 @@ freeswitch/
 ```
 
 > **QUESTION**:
-> Warning: Locale seems not configured
 > It   would   be   a   good  time   to   figure   out
 > the   relationship  between   `public`,  `features`,
 > `skinny_profiles`,    `default`    dialplans.    The
@@ -93,6 +120,9 @@ I may also misunderstanding the "keep them in environment variables argument" be
 > should not have access to the secret data.
 
 , but does not give an alternative.
+
+**UPDATE** (2019-07-10):
+Based on the recommendations in [this article](https://embeddedartistry.com/blog/2018/3/15/safely-storing-secrets-in-git), will use `git-crypt`.
 
 ## 1.2 FreeSWITCH deployment
 
