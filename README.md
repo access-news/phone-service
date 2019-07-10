@@ -99,6 +99,24 @@ freeswitch/
 > more confusing, and it uses the `default` one out of
 > the box.
 
+### 0.0.1 DB connection string template for Lua
+
+The contents of the `conn_string.lua` module:
+
+```lua
+local c = {}
+
+c.conn_string =
+  "pgsql://hostaddr=1.2.3.4"                 ..
+  " dbname=db"                               ..
+  " user=db_user"                            ..
+  " password=db_password"                    ..
+  " options='-c client_min_messages=NOTICE'" ..
+  " application_name='freeswitch'"
+
+return c
+```
+
 ## 1.1 Secret management (source control, deployment, etc.)
 
 + https://www.digitalocean.com/community/tutorials/an-introduction-to-managing-secrets-safely-with-version-control-systems
@@ -123,8 +141,16 @@ I may also misunderstanding the "keep them in environment variables argument" be
 
 , but does not give an alternative.
 
-**UPDATE** (2019-07-10):
+**UPDATE** (2019-07-10_1022):
 Based on the recommendations in [this article](https://embeddedartistry.com/blog/2018/3/15/safely-storing-secrets-in-git), will use `git-crypt`.
+
+**UPDATE** (2019-07-10_1207):
+Apparently I need to learn some cryptography basics, and how to manage keys (it would be bad to loose the keys, and no one would be able to decrypt the project files...).
+
++ https://www.devdungeon.com/content/gpg-tutorial
++ https://en.wikipedia.org/wiki/Key_management#Key_management_system
++ https://learn.hashicorp.com/vault/
++ https://info.townsendsecurity.com/definitive-guide-to-encryption-key-management-fundamentals
 
 ## 1.2 FreeSWITCH deployment
 
