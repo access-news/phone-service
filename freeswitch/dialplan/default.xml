@@ -2,11 +2,6 @@
 <include>
   <context name="default">
 
-    <!-- 
-      TODO: this should be going to public and transferred here.
-      And/or external. This part is still fuzzy. Anyhow,
-      just as the book describes.
-    -->
     <extension name="SignalWire CONNECTORS incoming call">
       <!-- the number you assigned in your dashboard -->
       <condition field="destination_number" expression="^(\+19162510217)$">

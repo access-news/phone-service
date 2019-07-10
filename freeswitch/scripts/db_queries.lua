@@ -3,13 +3,16 @@ local d = {}
 --- private functions ---------------------------------------------- {{{1
 
 function tr2_connect() -- {{{2
+
   local c = require "conn_string"
   local dbh = freeswitch.Dbh(c.conn_string)
+
   assert(dbh:connected())
+
   return dbh
 end
 
-function bool_query(query_string)
+function bool_query(query_string) -- {{{2
 
   local dbh    = tr2_connect()
   local status = false
@@ -23,9 +26,11 @@ end
 
 --- module functions ---------------------------------------------- {{{1
 
-function d.ani_registered(ani) -- {{{2
+function d.ani_registered() -- {{{2
 
-  local dbh        = tr2_connect()
+  local ani = session:getVariable("ani")
+  local dbh = tr2_connect()
+
   local registered = false
 
   -- don't put `local` before this var

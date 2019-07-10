@@ -1,6 +1,8 @@
-# 0. Repo layout
+# TR2
 
-## 0.0 `./freeswitch`
+## 0. Repo layout
+
+### 0.0 `./freeswitch`
 
 Contains all FreeSWITCH-related scripts and configuration files that get symlinked to their actual locations on the production server. For example,
 
@@ -30,7 +32,7 @@ $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/lu
 
 See TODO [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
 
-### 0.0.0 Note on Lua module locations (and why `require` failed)
+#### 0.0.0 Note on Lua module locations (and why `require` failed)
 
 All Lua modules and script are located in [`freeswitch/scripts`](./freeswitch/scripts).
 
@@ -53,17 +55,36 @@ As the error message states, the Lua 5.2 interpreter, built into Freeswitch, is 
 
 There is an obscure [Freeswitch wiki entry](ttps://freeswitch.org/confluence/display/FREESWITCH/Third+Party+Libraries#ThirdPartyLibraries-WheretoputthirdpartyLuascripts/modules) on how to change this, and one could read up on [`package.path` file or how Lua modules work](https://www.lua.org/manual/5.3/manual.html#6.3), but it was easier to just point a symlink to the `scripts` directory.
 
-## 0.1 `./meta`
+#### 0.0.1 DB connection string template for Lua
+
+The contents of the `conn_string.lua` module:
+
+```lua
+local c = {}
+
+c.conn_string =
+  "pgsql://hostaddr=1.2.3.4"                 ..
+  " dbname=db"                               ..
+  " user=db_user"                            ..
+  " password=db_password"                    ..
+  " options='-c client_min_messages=NOTICE'" ..
+  " application_name='freeswitch'"
+
+return c
+```
+
+
+### 0.1 `./meta`
 
 Out of date project descriptions.
 
-## 0.2 `./recorder`
+### 0.2 `./recorder`
 
 Javascript audio recorder experiment pieced together from different sources.
 
-# 1. TODOs
+## 1. TODOs
 
-## 1.0 FreeSWITCH diaplan cleanup [STATUS: DONE (but see question)]
+### [DONE] 1.0 FreeSWITCH diaplan cleanup
 
 `/etc/freeswitch/freeswitch.xml`:
 
@@ -91,33 +112,7 @@ freeswitch/
 | | skinny-patterns.xml
 ```
 
-> **QUESTION**:
-> It   would   be   a   good  time   to   figure   out
-> the   relationship  between   `public`,  `features`,
-> `skinny_profiles`,    `default`    dialplans.    The
-> SignalWire in-memory config also  makes things a bit
-> more confusing, and it uses the `default` one out of
-> the box.
-
-### 0.0.1 DB connection string template for Lua
-
-The contents of the `conn_string.lua` module:
-
-```lua
-local c = {}
-
-c.conn_string =
-  "pgsql://hostaddr=1.2.3.4"                 ..
-  " dbname=db"                               ..
-  " user=db_user"                            ..
-  " password=db_password"                    ..
-  " options='-c client_min_messages=NOTICE'" ..
-  " application_name='freeswitch'"
-
-return c
-```
-
-## 1.1 Secret management (source control, deployment, etc.)
+### 1.1 Secret management (source control, deployment, etc.)
 
 + https://www.digitalocean.com/community/tutorials/an-introduction-to-managing-secrets-safely-with-version-control-systems
 + https://news.ycombinator.com/item?id=5178914
@@ -152,16 +147,11 @@ Apparently I need to learn some cryptography basics, and how to manage keys (it 
 + https://learn.hashicorp.com/vault/
 + https://info.townsendsecurity.com/definitive-guide-to-encryption-key-management-fundamentals
 
-## 1.2 FreeSWITCH deployment
+### 1.2 FreeSWITCH deployment
 
 Right now files are symlinked from the the `./freeswitch` folder.
 
 Another option would be to edit the `/lib/systemd/system/freeswitch.service` (found it via `sudo systemctl status freeswitch.service`) and re-define the default folders.
-
- + [`systemd.service` man page](https://www.freedesktop.org/software/systemd/man/systemd.service.html)
- + [Command Line Switches](https://freeswitch.org/confluence/display/FREESWITCH/Command+Line+Switches) in the FreeSWITCH docs
-
-   > ```text
    > bash> fs_cli -x 'global_getvar'| grep _dir
    >
    >  base_dir=/usr
@@ -185,7 +175,7 @@ Another option would be to edit the `/lib/systemd/system/freeswitch.service` (fo
    >  localstate_dir=/var/lib/freeswitch
    > ```
 
-## [DONE] 1.3 FreeSWITCH configuration cleanup
+### [DONE] 1.3 FreeSWITCH configuration cleanup
 
 Same as 1.0 but different section:
 
@@ -195,10 +185,27 @@ Same as 1.0 but different section:
   </section>
 ```
 
-`/etc/freeswitch/autoload_configs` has 87 files in it right now; pretty sure that only a fraction of them are being used.
-
-## 1.3 Plan for archiving old media
+### 1.3 Plan for archiving old media
 
 Content, that is many months (or years) old, should be moved to a cheaper storage class. See Google's coldline and nearline storage classes [here](https://cloud.google.com/storage/docs/storage-classes#comparison_of_storage_classes), for example.
 
 QUESTION: How to update media file locations in the DB?
+
+### 1.4 Figure out dialplans
+
+With 1.0 done, it would be a good time to figure out the relationship between `public`, `features`, `skinny_profiles`, `default` dialplans. The SignalWire in-memory config also makes things a bit more confusing, and it uses the `default` one out of the box.
+
+### 1.5 Clean up `autoload_configs`
+
+`/etc/freeswitch/autoload_configs` has 87 files in it right now; pretty sure that only a fraction of them are being used.
+
+### 1.6 IVR: implement "leave a message" option
+
+Implement leaving a message (by pressing 0, for example).
+
+Right now, the text says to call the main Access News number.
+
+How would that be sent  to admins? For example email
+the audio  as an attachment with  a transcription as
+email body.
+
