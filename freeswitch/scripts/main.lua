@@ -3,55 +3,10 @@
 ani = session:getVariable("ani")
 -- freeswitch.consoleLog("INFO", "lua script: ani = " .. ani)
 
--- TODO: let's not advertize credentials once in prod. See TODOs in README.
-conn_string =
-  "pgsql://hostaddr=10.142.0.2"              ..
-  " dbname=access-news"                      ..
-  " user=postgres"                           ..
-  " password=postgres"                       ..
-  " options='-c client_min_messages=NOTICE'" ..
-  " application_name='freeswitch'"
-
-dbh = freeswitch.Dbh(conn_string)
-assert(dbh:connected())
--- freeswitch.consoleLog("INFO", "lua script: connected to DB")
-
 --- Functions ---------------------------------------------------------- {{{1
 
 -- TODO: It would probably be prudent to put these in a module.
 -- TODO: `ani_registered()` and `check_sec_code()` are almost the same
-
-function ani_registered(ani) -- {{{2
-
-  local registered = false
-
-  local q =
-    "SELECT '+1' || phone_number"                    ..
-    "  FROM phone_numbers"                           ..
-    "  WHERE '+1' || phone_number = '" .. ani .. "'"
-
-  dbh:query(q, function(row)
-    registered = true
-  end)
-
-  return registered
-end
-
-function check_sec_code(digits) -- {{{2
-
-  local authenticated = false
-
-  local q =
-    "SELECT  phone_number"     ..
-    "  FROM  phone_numbers"    ..
-    "  WHERE phone_number = '" .. digits .. "'"
-
-  dbh:query(q, function(row)
-    authenticated = true
-  end)
-
-  return authenticated
-end
 
 function silence(s) -- {{{2
   session:execute("playback", "silence_stream://" .. tostring(s) .. ",1400")
@@ -184,7 +139,7 @@ top = call_IVRMenu(main_opts)
 -- top:bindAction("menu-exec-app", "echo", "1")
 top:bindAction("menu-exec-app", "info", "1")
 top:bindAction("menu-exec-app", "info", "2")
-top:bindAction("menu-exec-app", "lua t.lua $1", "/^([0-9]{10})$/")
+top:bindAction("menu-exec-app", "lua login.lua $1", "/^([0-9]{10})$/")
 -- top:bindAction("menu-exec-app", "lua /home/toraritte/clones/TR2/t.lua \"$1\"", "/^(1234567890)$/")
 -- top:bindAction("menu-exec-app", "lua ~freeswitch.consoleLog(\"CRIT\", $1)", "/^1234567890$/")
 top:execute(session, "tr2_main")
