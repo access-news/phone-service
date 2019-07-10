@@ -30,7 +30,9 @@ $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/lu
 
 See TODO [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
 
-### 0.0.0 Note on Lua module locations (or, why `require` fails)
+### 0.0.0 Note on Lua module locations (and why `require` failed)
+
+All Lua modules and script are located in [`freeswitch/scripts`](./freeswitch/scripts).
 
 As the error message states, the Lua 5.2 interpreter, built into Freeswitch, is looking in these paths:
 
