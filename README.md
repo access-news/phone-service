@@ -5,10 +5,20 @@
 Contains all FreeSWITCH-related scripts and configuration files that get symlinked to their actual locations on the production server. For example,
 
 ```text
-./freeswitch/dialplan/default.xml <- /etc/freeswitch/dialplan/default.xml
-./freeswitch/scripts/auth.lua     <- /usr/share/freeswitch/scripts/auth.lua
-./freeswitch/freeswitch.xml       <- /etc/freeswitch/freeswitch.xml
-./freeswitch/phrases/lang/        <- /etc/freeswitch/lang/
+/etc/freeswitch/dialplan/default.xml   -> [this-repo]/freeswitch/dialplan/default.xml
+/etc/freeswitch/freeswitch.xml         -> [this-repo]/freeswitch/freeswitch.xml
+/etc/freeswitch/lang/                  -> [this-repo]/freeswitch/phrases/lang/
+
+/usr/share/freeswitch/scripts/         -> [this-repo]/freeswitch/scripts/
+```
+
+Commands used:
+
+```text
+$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/dialplan/default.xml /etc/freeswitch/dialplan/default.xml
+$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/freeswitch.xml /etc/freeswitch/freeswitch.xml
+$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/phrases/lang/ /etc/freeswitch/lang
+$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/freeswitch/scripts
 ```
 
 See [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
@@ -128,3 +138,9 @@ Same as 1.0 but different section:
 ```
 
 `/etc/freeswitch/autoload_configs` has 87 files in it right now; pretty sure that only a fraction of them are being used.
+
+## 1.3 Plan for archiving old media
+
+Content, that is many months (or years) old, should be moved to a cheaper storage class. See Google's coldline and nearline storage classes [here](https://cloud.google.com/storage/docs/storage-classes#comparison_of_storage_classes), for example.
+
+QUESTION: How to update media file locations in the DB?
