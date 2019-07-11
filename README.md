@@ -93,6 +93,7 @@ Javascript audio recorder experiment pieced together from different sources.
 - [ ] 1.6 Clean up `autoload_configs`
 - [ ] 1.7 IVR: implement "leave a message" option
 - [ ] 1.8 Per user favourites
+- [ ] 1.9 I18n support
 
 ### [DONE] 1.0 FreeSWITCH diaplan cleanup
 
@@ -220,3 +221,9 @@ the audio  as an attachment with  a transcription as
 email body.
 
 ### 1.8 Per user favourites
+
+### 1.9 I18n support
+
+Add a menu to be able to change languages, and each submenu option will announce itself in the language supported. See [this note](https://github.com/toraritte/knowledge-gaps/blob/master/telephony/freeswitch.md#2-speech-phrase-management-in-docs-vs-language-management-in-demo-config) on the confusion with language suport in FreeSWITCH.
+
+Maybe it isn't even an issue though, if a cloud TTS can be set up.
