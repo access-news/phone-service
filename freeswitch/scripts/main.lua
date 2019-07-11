@@ -12,21 +12,11 @@ session:answer()
 -- session:execute("sleep", "750")
 f.silence(750)
 
--- session:execute("speak", "flite|slt|" .. welcome_note)
--- speak(welcome_note)
-
 --- Is caller registered? ---------------------------------------------- {{{2
 if d.ani_registered() == false then
 
-  -- speak(demo_note, register_note)
-
-  -- This will  schedule a  hangup after 10  minutes, but
-  -- this would  kick out the  user even if  they provide
-  -- their passcode.
-  --
-  -- TODO: Implement a timer than can be reset when passcode is
-  --       supplied.
-  session:execute("sched_hangup", "+600 allotted_timeout")
+  -- session:execute("sched_hangup", "+600 allotted_timeout")
+  session:execute("sched_transfer", "+600 9999 XML default")
 
   i.unregistered_main:execute(session, "unregistered_main")
 else
