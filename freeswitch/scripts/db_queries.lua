@@ -4,6 +4,7 @@ local d = {}
 
 function tr2_connect() -- {{{2
 
+  -- See README 0.0.1 for "conn_string"
   local c = require "conn_string"
   local dbh = freeswitch.Dbh(c.conn_string)
 

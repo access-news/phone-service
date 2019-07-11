@@ -15,9 +15,7 @@ f.silence(750)
 --- Is caller registered? ---------------------------------------------- {{{2
 if d.ani_registered() == false then
 
-  -- session:execute("sched_hangup", "+600 allotted_timeout")
-  session:execute("sched_transfer", "+600 9999 XML default")
-
+  f.sched_hangup()
   i.unregistered_main:execute(session, "unregistered_main")
 else
   i.main:execute(session, "main")
