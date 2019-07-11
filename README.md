@@ -96,6 +96,7 @@ Javascript audio recorder experiment pieced together from different sources.
 - [ ] 1.9 I18n support
 - [ ] 1.10 Stats
 - [ ] 1.11 Logs
+- [ ] 1.12 Create submenus automatically to play recordings
 
 ### [DONE] 1.0 FreeSWITCH diaplan cleanup
 
@@ -233,3 +234,9 @@ Maybe it isn't even an issue though, if a cloud TTS can be set up.
 ### 1.10 Stats
 
 ### 1.11 Logs
+
+### 1.12 Create submenus automatically to play recordings
+
+Probably the easiest way is [session:setInputCallback](https://freeswitch.org/confluence/display/FREESWITCH/Lua+API+Reference#LuaAPIReference-session:setInputCallback), but see [session:sayPhrase](https://freeswitch.org/confluence/display/FREESWITCH/Lua+API+Reference#LuaAPIReference-session:sayPhrase) for more examples.
+
+Is there an easier way?

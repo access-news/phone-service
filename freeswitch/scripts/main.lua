@@ -17,6 +17,13 @@ if d.ani_registered() == false then
 
   f.sched_hangup()
   i.unregistered_main:execute(session, "unregistered_main")
+
+  -- The  control goes  to `ivr.lua`  (look for  the line
+  -- with `login.lua`).  When user enters  their security
+  -- code, `login.lua` will get invoked.
+  --
+  -- If the code is correct: scheduled hangup will be canceled, and main menu will start.
+  -- If incorrect: announcement, jump to main menu, and, eventually, scheduled hangup.
 else
   i.main:execute(session, "main")
 end
