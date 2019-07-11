@@ -84,6 +84,16 @@ Javascript audio recorder experiment pieced together from different sources.
 
 ## 1. TODOs
 
+- [X] 1.0 FreeSWITCH diaplan cleanup
+- [ ] 1.1 Secret management (source control, deployment, etc.)
+- [ ] 1.2 FreeSWITCH deployment
+- [X] 1.3 FreeSWITCH configuration cleanup
+- [ ] 1.4 Plan for archiving old media
+- [ ] 1.5 Figure out dialplans
+- [ ] 1.6 Clean up `autoload_configs`
+- [ ] 1.7 IVR: implement "leave a message" option
+- [ ] 1.8 Per user favourites
+
 ### [DONE] 1.0 FreeSWITCH diaplan cleanup
 
 `/etc/freeswitch/freeswitch.xml`:
@@ -185,21 +195,21 @@ Same as 1.0 but different section:
   </section>
 ```
 
-### 1.3 Plan for archiving old media
+### 1.4 Plan for archiving old media
 
 Content, that is many months (or years) old, should be moved to a cheaper storage class. See Google's coldline and nearline storage classes [here](https://cloud.google.com/storage/docs/storage-classes#comparison_of_storage_classes), for example.
 
 QUESTION: How to update media file locations in the DB?
 
-### 1.4 Figure out dialplans
+### 1.5 Figure out dialplans
 
 With 1.0 done, it would be a good time to figure out the relationship between `public`, `features`, `skinny_profiles`, `default` dialplans. The SignalWire in-memory config also makes things a bit more confusing, and it uses the `default` one out of the box.
 
-### 1.5 Clean up `autoload_configs`
+### 1.6 Clean up `autoload_configs`
 
 `/etc/freeswitch/autoload_configs` has 87 files in it right now; pretty sure that only a fraction of them are being used.
 
-### 1.6 IVR: implement "leave a message" option
+### 1.7 IVR: implement "leave a message" option
 
 Implement leaving a message (by pressing 0, for example).
 
@@ -209,3 +219,4 @@ How would that be sent  to admins? For example email
 the audio  as an attachment with  a transcription as
 email body.
 
+### 1.8 Per user favourites
