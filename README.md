@@ -1,4 +1,4 @@
-# TR2
+# Phone service to reach Access News content
 
 ## 0. Repo layout
 
@@ -72,15 +72,6 @@ c.conn_string =
 
 return c
 ```
-
-
-### 0.1 `./meta`
-
-Out of date project descriptions.
-
-### 0.2 `./recorder`
-
-Javascript audio recorder experiment pieced together from different sources.
 
 ## 1. TODOs
 
