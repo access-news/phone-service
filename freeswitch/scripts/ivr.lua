@@ -99,10 +99,15 @@ i.main = get_IVRMenu(main_opts)
 i.unregistered_main = get_IVRMenu(unregistered_main_opts)
 
 i.main:bindAction("menu-exec-app", "info", "1")
-i.main:bindAction("menu-exec-app", "info", "2")
+i.main:bindAction("menu-exec-app", "info", "2") 
 
 i.unregistered_main:bindAction("menu-exec-app", "info", "1")
-i.unregistered_main:bindAction("menu-exec-app", "info", "2")
+-- Warning: Locale seems not configured
+-- `playback` doesn't support mp3, but when `mod_shout`
+-- is enabled, it does play it.
+--
+-- NEXT: test signed url
+i.unregistered_main:bindAction("menu-exec-app", "playback /home/toraritte/clones/TR2/x.mp3", "3")
 i.unregistered_main:bindAction("menu-exec-app", "lua login.lua $1", "/^([0-9]{10})$/")
 
 return i
