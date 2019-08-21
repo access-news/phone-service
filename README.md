@@ -11,6 +11,8 @@ Contains all FreeSWITCH-related scripts and configuration files that get symlink
 /etc/freeswitch/freeswitch.xml         -> [this-repo]/freeswitch/freeswitch.xml
 /etc/freeswitch/lang/                  -> [this-repo]/freeswitch/phrases/lang/
 
+/etc/freeswitch/autoload_configs/modules.conf.xml -> [full_path_to_repo]/freeswitch/autoload_configs/modules.conf.xml
+
 /usr/share/freeswitch/scripts/         -> [this-repo]/freeswitch/scripts/
 /usr/share/lua/5.2/                    -> [this-repo]/freeswitch/scripts/
 
@@ -23,6 +25,7 @@ $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/dialplan/default.xml /
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/freeswitch.xml /etc/freeswitch/freeswitch.xml
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/phrases/lang/ /etc/freeswitch/lang
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/freeswitch/scripts
+$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/autoload_configs/modules.conf.xml /etc/freeswitch/autoload_configs/modules.conf.xml
 
 # see note in 0.0.0
 $ sudo mkdir /usr/share/lua
