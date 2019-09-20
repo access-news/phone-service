@@ -11,27 +11,42 @@
   <macro name="welcome">
     <input pattern="(.*)">
       <match>
-        <action function="speak-text"
-                data="Welcome to Access News, a service of Society For The 
-                      Blind!  If  you  have any  questions,  concerns,  or 
-                      suggestions, please call us at " />
-        <action function="play-file" data="phrase:access_news_phone_number"/>
+        <action
+          function="speak-text"
+          data= "Welcome  to  Access  News, a  service  of
+                 Society For The Blind!" />
       </match>
     </input>
   </macro>
 
-  <macro name="unregistered">
+  <macro name="registered_intro">
+      <input pattern="(.*)">
+          <match>
+            <action
+              function="speak-text"
+              data= "If you  have any questions,  concerns, or
+                     suggestions, please call us at " />
+            <action
+              function="play-file"
+              data="phrase:access_news_phone_number"/>
+          </match>
+      </input>
+  </macro>
+
+  <macro name="unregistered_intro">
     <input pattern="(.*)">
       <match>
-        <action function="speak-text"
-                data="Please note that you are currently in demo mode. The 
-                      system will  hang up after  10 minutes, but  you can 
-                      log in at any time if you are already registered, by 
-                      entering your security code."/>
-        <action function="speak-text"
-                data= "If you would like to sign up for the service, please 
-                       call "/>
-        <action function="play-file" data="phrase:access_news_phone_number"/>
+        <action
+          function="speak-text"
+          data= "Please  note that  you  are currently  in
+                 demo mode.  The system will hang  up after
+                 10 minutes, but you can log in at any time
+                 if you are already registered, by entering
+                 your security  code. If you would  like to
+                 sign up for the service, please call "/>
+        <action
+          function="play-file"
+          data="phrase:access_news_phone_number"/>
       </match>
     </input>
   </macro>
@@ -53,6 +68,7 @@
       <match>
         <!-- <action function="play-file" data="silence_stream://500,1400"/> -->
         <action function="play-file" data="phrase:welcome" />
+        <action function="play-file" data="phrase:registered_intro" />
         <action function="play-file" data="phrase:common_menu_items" />
       </match>
     </input>
@@ -64,7 +80,7 @@
     <input pattern="(.*)">
       <match>
         <action function="play-file" data="phrase:welcome" />
-        <action function="play-file" data="phrase:unregistered" />
+        <action function="play-file" data="phrase:unregistered_intro" />
         <action function="play-file" data="phrase:common_menu_items" />
       </match>
     </input>

@@ -23,9 +23,12 @@ local i = {}
 -- max_timeouts)          ?int:     threshold of timeouts before hanging up,
 --                                  -1 for unlimited?
 
-local main_opts = {
+-- WHY SO MANY MENUS?
+-- See `main.lua`.
+
+local registered_main_opts = { -- {{{2
   ["main"]                = nil,
-  ["name"]                = "main",
+  ["name"]                = "registered_main",
   ["greet_long"]          = "phrase:main_menu",
   ["greet_short"]         = "phrase:common_menu_items",
   ["invalid_sound"]       = "ivr/ivr-that_was_an_invalid_entry.wav",
@@ -42,20 +45,23 @@ local main_opts = {
   ["max_failures"]        = "3",
   ["max_timeouts"]        = "2"
 }
+i.registered_main_name = registered_main_opts["name"]
 
--- The only difference between  this and `main_opts` is
--- by  adding the  word  "unregistered"  to the  marked
--- lines and in `digit_len`.
+-- The only difference between  `unregistered_main_opts`
+-- and  `registered_main_opts`  is  the  addition of the
+-- word "unregistered" to the marked lines and `digit_len`
+-- is 1 instead of 10.
+--
 -- (Lua  tables are  objects,  and  only the  reference
 -- gets  copied, hence  the duplication  of the  entire
 -- structure.  Could've gone  the way  of mutating  one
 -- object, but  that would've gotten me  into all sorts
 -- of messes.)
-local unregistered_main_opts = {
+local unregistered_main_opts = { -- {{{2
   ["main"]                = nil,
-  ["name"]                = "unregistered_main",          -- *
-  ["greet_long"]          = "phrase:unregistered_main_menu",   -- *
-  ["greet_short"]         = "phrase:common_menu_items",  -- *
+  ["name"]                = "unregistered_main",                     --  *
+  ["greet_long"]          = "phrase:unregistered_main_menu",         --  *
+  ["greet_short"]         = "phrase:common_menu_items",              --  *
   ["invalid_sound"]       = "ivr/ivr-that_was_an_invalid_entry.wav",
   ["exit_sound"]          = "voicemail/vm-goodbye.wav",
   ["transfer_sound"]      = nil,
@@ -65,12 +71,35 @@ local unregistered_main_opts = {
   ["tts_voice"]           = "rms",
   ["confirm_attempts"]    = "3",
   ["inter_digit_timeout"] = "2000",
-  -- `digit_len` is 10 to allow entering the security code
-  ["digit_len"]           = "10",                             -- *
+                                                                     --  `digit_len` is 10 to allow entering the security code
+  ["digit_len"]           = "10",                                    --  *
   ["timeout"]             = "10000",
   ["max_failures"]        = "3",
   ["max_timeouts"]        = "2"
 }
+i.unregistered_main_name = unregistered_main_opts["name"]
+
+-- Same as `registered_main_opts` except for the marked ones.
+local common_menu_opts = { -- {{{2
+  ["main"]                = nil,
+  ["name"]                = "common_menu",              -- *
+  ["greet_long"]          = "phrase:common_menu_items", -- *
+  ["greet_short"]         = "phrase:common_menu_items",
+  ["invalid_sound"]       = "ivr/ivr-that_was_an_invalid_entry.wav",
+  ["exit_sound"]          = "voicemail/vm-goodbye.wav",
+  ["transfer_sound"]      = nil,
+  ["confirm_macro"]       = nil,
+  ["confirm_key"]         = nil,
+  ["tts_engine"]          = "flite",
+  ["tts_voice"]           = "rms",
+  ["confirm_attempts"]    = "3",
+  ["inter_digit_timeout"] = "2000",
+  ["digit_len"]           = "1",
+  ["timeout"]             = "10000",
+  ["max_failures"]        = "3",
+  ["max_timeouts"]        = "2"
+}
+i.common_menu_name = common_menu_opts["name"]
 
 function get_IVRMenu(tbl) -- {{{2
   -- is return needed, or is it implicit in lua for the last statement?
@@ -95,20 +124,28 @@ function get_IVRMenu(tbl) -- {{{2
   );
 end
 
-i.main = get_IVRMenu(main_opts)
-i.unregistered_main = get_IVRMenu(unregistered_main_opts)
+i.main = get_IVRMenu(registered_main_opts) -- {{{2
 
 i.main:bindAction("menu-exec-app", "info", "1")
 i.main:bindAction("menu-exec-app", "info", "2") 
 
+i.unregistered_main = get_IVRMenu(unregistered_main_opts) -- {{{2
+
 i.unregistered_main:bindAction("menu-exec-app", "info", "1")
-
--- generate links and then strip the url scheme
-local signed_url_without_url_scheme = ""
-
--- `playback` doesn't support mp3; need `mod_shout` to enable support
-i.unregistered_main:bindAction("menu-exec-app", "playback shout://" .. signed_url_without_url_scheme, "3")
-
 i.unregistered_main:bindAction("menu-exec-app", "lua login.lua $1", "/^([0-9]{10})$/")
 
+i.common_menu = get_IVRMenu(common_menu_opts) -- {{{2
+
+i.common_menu:bindAction("menu-exec-app", "info", "1")
+i.common_menu:bindAction("menu-exec-app", "info", "2") 
+
+-- generate links and then strip the url scheme
+-- local signed_url_without_url_scheme = ""
+
+-- `playback` doesn't support mp3; need `mod_shout` to enable support
+-- i.unregistered_main:bindAction("menu-exec-app", "playback shout://" .. signed_url_without_url_scheme, "3")
+
 return i
+
+-- VIM modeline
+-- vim:set foldmethod=marker:
