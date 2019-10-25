@@ -1,10 +1,17 @@
 # Phone service to reach Access News content
 
-## 0. Repo layout
+## 0. Deployment
 
-### 0.0 `./freeswitch`
+Very hacky at the moment, hoping to move to NixOS and NixOps at one point.
 
-Contains all FreeSWITCH-related scripts and configuration files that get symlinked to their actual locations on the production server. For example,
+### 0.1 Install FreeSWITCH
+
+Follow installation instructions on the FreeSWITCH wiki.
+E.g. [Debian 9 instructions](https://freeswitch.org/confluence/display/FREESWITCH/Debian+9+Stretch)
+
+### 0.2 Configuration files
+
+[`./freeswitch`](./freeswitch) contains all FreeSWITCH-related scripts and configuration files that get symlinked to their actual locations on the production server.
 
 ```text
 /etc/freeswitch/dialplan/default.xml   -> [this-repo]/freeswitch/dialplan/default.xml
@@ -27,7 +34,7 @@ $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/phrases/lang/ /etc/fre
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/freeswitch/scripts
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/autoload_configs/modules.conf.xml /etc/freeswitch/autoload_configs/modules.conf.xml
 
-# see note in 0.0.0
+# see note in 1.0.0
 $ sudo mkdir /usr/share/lua
 $ sudo chown -R freeswitch:freeswitch /usr/share/lua
 $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/lua/5.2
@@ -35,7 +42,7 @@ $ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/lu
 
 See TODO [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
 
-#### 0.0.0 Note on Lua module locations (and why `require` failed)
+#### 0.2.1 Note on Lua module locations (and why `require` failed)
 
 All Lua modules and script are located in [`freeswitch/scripts`](./freeswitch/scripts).
 
@@ -56,25 +63,83 @@ As the error message states, the Lua 5.2 interpreter, built into Freeswitch, is 
         no file './conn_string.so'
 ```
 
-There is an obscure [Freeswitch wiki entry](ttps://freeswitch.org/confluence/display/FREESWITCH/Third+Party+Libraries#ThirdPartyLibraries-WheretoputthirdpartyLuascripts/modules) on how to change this, and one could read up on [`package.path` file or how Lua modules work](https://www.lua.org/manual/5.3/manual.html#6.3), but it was easier to just point a symlink to the `scripts` directory.
+There is an obscure [Freeswitch wiki entry](https://freeswitch.org/confluence/display/FREESWITCH/Third+Party+Libraries#ThirdPartyLibraries-WheretoputthirdpartyLuascripts/modules) on how to change this, and one could read up on [`package.path` file or how Lua modules work](https://www.lua.org/manual/5.3/manual.html#6.3), but it was easier to just point a symlink to the `scripts` directory.
 
-#### 0.0.1 DB connection string template for Lua
+There is a global FreeSWITCH variable called `script_dir` that on Debian 9 points to `/usr/share/freeswitch/scripts`, but it doesn't even show up in the errors above. From the very first FreeSWITCH setup (note the timestamps):
 
-The contents of the `conn_string.lua` module:
+$ ll /usr/share/freeswitch/scripts
+2 lrwxrwxrwx 1 freeswitch freeswitch 46 Jul 10 15:26 /usr/share/freeswitch/scripts -> /home/toraritte/clones/TR2/freeswitch/scripts//
+
+$ ll /usr/share/lua/
+. total 8
+f drwxr-xr-x   2 freeswitch freeswitch 4096 Jul 10 17:42 ./
+  drwxr-xr-x 104 root       root       4096 Sep  6 22:59 ../
+    lrwxrwxrwx   1 freeswitch freeswitch   46 Jul 10 17:42 5.2 -> /home/toraritte/clones/TR2/freeswitch/scripts//
+
+### 0.3 Secrets
+
+#### 0.3.1 Lua connection string
+
+The general format:
 
 ```lua
 local c = {}
 
 c.conn_string =
-  "pgsql://hostaddr=1.2.3.4"                 ..
-  " dbname=db"                               ..
-  " user=db_user"                            ..
-  " password=db_password"                    ..
+  "pgsql://hostaddr= <local or public IP"    ..
+  " dbname=<database>"                       ..
+  " user=<database-username>"                ..
+  " password=<password>"                     ..
   " options='-c client_min_messages=NOTICE'" ..
   " application_name='freeswitch'"
 
 return c
 ```
+
+The actual connection string is not checked into the repo. To retrieve it from Azure Vault:
+
+```bash
+# `az keyvault secret  show` returns a JSON,
+# and `jq`  returns  its  `value`  attribute
+
+c=$(az keyvault secret show        \
+      --vault-name "sftb-vault"    \
+      --name "tr2-lua-conn-string" \
+    | jq '.value'                  \
+   )
+
+# `c` now holds  a double-quoted string with
+# newlines as  `\n` and  inner double-quotes
+# escaped with `\`.
+#
+# `echo   -e`  prints   a  string   so  that
+# meaningful escapes are  converted to their
+# meaning (e.g., `\n`  will become a literal
+# newline).
+#
+# The  inner `echo`  removes first  and last
+# characters  (i.e., the  quotes around  the
+# entire string).
+
+`tr -d '\\' deletes all `\` characters (so that `\"` will become `"`).
+echo -e $(echo "${c:1:${#c}-2}") \
+| tr -d '\\'                     \
+> freeswitch/scripts/conn_string.lua
+```
+
+#### 0.3.2 vars.xml
+
+follow advice on 
+
+### 0.2 FreeSWITCH sounds (optional?)
+
+I think the basic sounds are installed with the previous step (at `/usr/share/freeswitch/sounds` on Debian 9), but, just in case, here are all the sounds:
+
+https://github.com/access-news/freeswitch-sounds
+
+---
+FreeSWITCH phrases are now in [lang/](./lang/).
+---
 
 ## 1. TODOs
 
