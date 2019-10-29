@@ -1,84 +1,89 @@
 # Phone service to reach Access News content
 
-## 0. Deployment
+## 0. Layout
 
-Very hacky at the moment, hoping to move to NixOS and NixOps at one point.
+```text
+freeswitch/
+|
+|-- autoload_configs/
+|   |-- modules.conf.xml
+|   |-- pre_load_modules.conf.xml
+|   `-- ( ... and whole bunch  of  actual )
+|       ( config files, included verbatim )
+|       ( from vanilla install.           )
+|
+|-- dialplan/
+|   `-- default.xml
+|
+|-- lang/ ===================> FreeSWITCH phrases
+|   `-- en/
+|       |-- en.xml
+|       `-- tr2.xml
+|
+|-- scripts/
+|   |-- db_queries.lua
+|   |-- ivr.lua
+|   |-- login.lua
+|   |-- main.lua
+|   `-- utility_functions.lua
+|
+|-- (!) tls/
+|
+|-- README_IMPORTANT.txt
+|-- freeswitch.xml
+|-- mime.types
+|-- (!) passwords.xml
+`-- vars.xml
+```
 
-### 0.1 Install FreeSWITCH
+`tls/` and `passwords.xml` is not in the repo as the
+store  sensitive data.  See  section "1.3  Secrets".
+(Hopefully didn't not forget anything else...)
+
+This list has been culled  from the list provided by
+the vanilla install (see
+[`conf/vanilla`](https://github.com/signalwire/freeswitch/tree/master/conf/vanilla)
+in  the  FreeSWITCH  repo,  but  `conf/`  has  other
+predefined  configurations.   Will  link   from  the
+FreeSWITCH wiki, but the configuration pages (
+[1](https://freeswitch.org/confluence/display/FREESWITCH/Default+Configuration),
+[2](https://freeswitch.org/confluence/display/FREESWITCH/Configuring+FreeSWITCH),
+[3](https://freeswitch.org/confluence/display/FREESWITCH/Vanilla+installation+files)
+) need to be consolidated first.
+
+## 1. Deployment
+
+See TODO [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
+
+### 1.1 Install FreeSWITCH
 
 Follow installation instructions on the FreeSWITCH wiki.
 E.g. [Debian 9 instructions](https://freeswitch.org/confluence/display/FREESWITCH/Debian+9+Stretch)
 
-### 0.2 Configuration files
+### 0.1 FreeSWITCH sounds
 
-[`./freeswitch`](./freeswitch) contains all FreeSWITCH-related scripts and configuration files that get symlinked to their actual locations on the production server.
+Basic sounds should be installed during a vanilla install (at `/usr/share/freeswitch/sounds` on Debian 9), but, just in case, here are all the sounds:
 
-```text
-/etc/freeswitch/dialplan/default.xml   -> [this-repo]/freeswitch/dialplan/default.xml
-/etc/freeswitch/freeswitch.xml         -> [this-repo]/freeswitch/freeswitch.xml
-/etc/freeswitch/lang/                  -> [this-repo]/freeswitch/phrases/lang/
+https://github.com/access-news/freeswitch-sounds
 
-/etc/freeswitch/autoload_configs/modules.conf.xml -> [full_path_to_repo]/freeswitch/autoload_configs/modules.conf.xml
+### 1.3 Secrets
 
-/usr/share/freeswitch/scripts/         -> [this-repo]/freeswitch/scripts/
-/usr/share/lua/5.2/                    -> [this-repo]/freeswitch/scripts/
+#### 1.3.1 Downloading secret files from Azure
 
-```
+None of  these are  checked in  the repo,  but their
+contents are uploaded to Azure keyvault.
 
-Commands used:
+`deploy.bash` invokes `dl-secrets.bash` that
+1. downloads secret files to specified paths, and
+2. the permission to 600.
 
-```text
-$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/dialplan/default.xml /etc/freeswitch/dialplan/default.xml
-$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/freeswitch.xml /etc/freeswitch/freeswitch.xml
-$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/phrases/lang/ /etc/freeswitch/lang
-$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/freeswitch/scripts
-$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/autoload_configs/modules.conf.xml /etc/freeswitch/autoload_configs/modules.conf.xml
+#### 1.3.2 `passwords.xml`
 
-# see note in 1.0.0
-$ sudo mkdir /usr/share/lua
-$ sudo chown -R freeswitch:freeswitch /usr/share/lua
-$ sudo -u freeswitch ln -s [full_path_to_repo]/freeswitch/scripts/ /usr/share/lua/5.2
-```
+Following the instructions in the FreeSWITCH wiki,
+[Configuring FreeSWITCH](https://freeswitch.org/confluence/display/FREESWITCH/Configuring+FreeSWITCH),
+[Security advice](https://freeswitch.org/confluence/display/FREESWITCH/Configuring+FreeSWITCH#ConfiguringFreeSWITCH-Securityadvice).
 
-See TODO [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) about better options.
-
-#### 0.2.1 Note on Lua module locations (and why `require` failed)
-
-All Lua modules and script are located in [`freeswitch/scripts`](./freeswitch/scripts).
-
-As the error message states, the Lua 5.2 interpreter, built into Freeswitch, is looking in these paths:
-
-```lua
-        no file '/usr/local/share/lua/5.2/conn_string.lua'
-        no file '/usr/local/share/lua/5.2/conn_string/init.lua'
-        no file '/usr/local/lib/lua/5.2/conn_string.lua'
-        no file '/usr/local/lib/lua/5.2/conn_string/init.lua'
-        no file '/usr/share/lua/5.2/conn_string.lua'
-        no file '/usr/share/lua/5.2/conn_string/init.lua'
-        no file './conn_string.lua'
-        no file '/usr/local/lib/lua/5.2/conn_string.so'
-        no file '/usr/lib/x86_64-linux-gnu/lua/5.2/conn_string.so'
-        no file '/usr/lib/lua/5.2/conn_string.so'
-        no file '/usr/local/lib/lua/5.2/loadall.so'
-        no file './conn_string.so'
-```
-
-There is an obscure [Freeswitch wiki entry](https://freeswitch.org/confluence/display/FREESWITCH/Third+Party+Libraries#ThirdPartyLibraries-WheretoputthirdpartyLuascripts/modules) on how to change this, and one could read up on [`package.path` file or how Lua modules work](https://www.lua.org/manual/5.3/manual.html#6.3), but it was easier to just point a symlink to the `scripts` directory.
-
-There is a global FreeSWITCH variable called `script_dir` that on Debian 9 points to `/usr/share/freeswitch/scripts`, but it doesn't even show up in the errors above. From the very first FreeSWITCH setup (note the timestamps):
-
-$ ll /usr/share/freeswitch/scripts
-2 lrwxrwxrwx 1 freeswitch freeswitch 46 Jul 10 15:26 /usr/share/freeswitch/scripts -> /home/toraritte/clones/TR2/freeswitch/scripts//
-
-$ ll /usr/share/lua/
-. total 8
-f drwxr-xr-x   2 freeswitch freeswitch 4096 Jul 10 17:42 ./
-  drwxr-xr-x 104 root       root       4096 Sep  6 22:59 ../
-    lrwxrwxrwx   1 freeswitch freeswitch   46 Jul 10 17:42 5.2 -> /home/toraritte/clones/TR2/freeswitch/scripts//
-
-### 0.3 Secrets
-
-#### 0.3.1 Lua connection string
+#### 1.3.3 Lua connection string
 
 The general format:
 
@@ -96,52 +101,13 @@ c.conn_string =
 return c
 ```
 
-The actual connection string is not checked into the repo. To retrieve it from Azure Vault:
+#### 1.3.3 `tls/` directory
 
-```bash
-# `az keyvault secret  show` returns a JSON,
-# and `jq`  returns  its  `value`  attribute
+Currently not  included in the Azure  vault, because
+each FreeSWITCH installation provided these files so
+far.
 
-c=$(az keyvault secret show        \
-      --vault-name "sftb-vault"    \
-      --name "tr2-lua-conn-string" \
-    | jq '.value'                  \
-   )
-
-# `c` now holds  a double-quoted string with
-# newlines as  `\n` and  inner double-quotes
-# escaped with `\`.
-#
-# `echo   -e`  prints   a  string   so  that
-# meaningful escapes are  converted to their
-# meaning (e.g., `\n`  will become a literal
-# newline).
-#
-# The  inner `echo`  removes first  and last
-# characters  (i.e., the  quotes around  the
-# entire string).
-
-`tr -d '\\' deletes all `\` characters (so that `\"` will become `"`).
-echo -e $(echo "${c:1:${#c}-2}") \
-| tr -d '\\'                     \
-> freeswitch/scripts/conn_string.lua
-```
-
-#### 0.3.2 vars.xml
-
-follow advice on 
-
-### 0.2 FreeSWITCH sounds (optional?)
-
-I think the basic sounds are installed with the previous step (at `/usr/share/freeswitch/sounds` on Debian 9), but, just in case, here are all the sounds:
-
-https://github.com/access-news/freeswitch-sounds
-
----
-FreeSWITCH phrases are now in [lang/](./lang/).
----
-
-## 1. TODOs
+## 2. TODOs
 
 - [X] 1.0 FreeSWITCH diaplan cleanup
 - [ ] 1.1 Secret management (source control, deployment, etc.)
@@ -185,7 +151,7 @@ freeswitch/
 | | skinny-patterns.xml
 ```
 
-### 1.1 Secret management (source control, deployment, etc.)
+### 2.1 Secret management (source control, deployment, etc.)
 
 + https://www.digitalocean.com/community/tutorials/an-introduction-to-managing-secrets-safely-with-version-control-systems
 + https://news.ycombinator.com/item?id=5178914
@@ -220,35 +186,41 @@ Apparently I need to learn some cryptography basics, and how to manage keys (it 
 + https://learn.hashicorp.com/vault/
 + https://info.townsendsecurity.com/definitive-guide-to-encryption-key-management-fundamentals
 
-### 1.2 FreeSWITCH deployment
+### 2.2 FreeSWITCH deployment
+
+Move to NixOps.
 
 Right now files are symlinked from the the `./freeswitch` folder.
 
 Another option would be to edit the `/lib/systemd/system/freeswitch.service` (found it via `sudo systemctl status freeswitch.service`) and re-define the default folders.
    > bash> fs_cli -x 'global_getvar'| grep _dir
    >
-   >  base_dir=/usr
-   >  recordings_dir=/var/lib/freeswitch/recordings
-   >  sounds_dir=/usr/share/freeswitch/sounds
-   >  conf_dir=/etc/freeswitch
-   >  log_dir=/var/log/freeswitch
-   >  run_dir=/var/run/freeswitch
-   >  db_dir=/var/lib/freeswitch/db
-   >  mod_dir=/usr/lib/freeswitch/mod
-   >  htdocs_dir=/usr/share/freeswitch/htdocs
-   >  script_dir=/usr/share/freeswitch/scripts
-   >  temp_dir=/tmp
-   >  grammar_dir=/usr/share/freeswitch/grammar
-   >  fonts_dir=/usr/share/freeswitch/fonts
-   >  images_dir=/var/lib/freeswitch/images
-   >  certs_dir=/etc/freeswitch/tls
-   >  storage_dir=/var/lib/freeswitch/storage
-   >  cache_dir=/var/cache/freeswitch
-   >  data_dir=/usr/share/freeswitch
-   >  localstate_dir=/var/lib/freeswitch
+   >  base_dir       = /usr
+   >  recordings_dir = /var/lib/freeswitch/recordings
+   >  sounds_dir     = /usr/share/freeswitch/sounds
+   >  conf_dir       = /etc/freeswitch
+   >  log_dir        = /var/log/freeswitch
+   >  run_dir        = /var/run/freeswitch
+   >  db_dir         = /var/lib/freeswitch/db
+   >  mod_dir        = /usr/lib/freeswitch/mod
+   >  htdocs_dir     = /usr/share/freeswitch/htdocs
+   >  script_dir     = /usr/share/freeswitch/scripts
+   >  temp_dir       = /tmp
+   >  grammar_dir    = /usr/share/freeswitch/grammar
+   >  fonts_dir      = /usr/share/freeswitch/fonts
+   >  images_dir     = /var/lib/freeswitch/images
+   >  certs_dir      = /etc/freeswitch/tls
+   >  storage_dir    = /var/lib/freeswitch/storage
+   >  cache_dir      = /var/cache/freeswitch
+   >  data_dir       = /usr/share/freeswitch
+   >  localstate_dir = /var/lib/freeswitch
    > ```
 
-### [DONE] 1.3 FreeSWITCH configuration cleanup
+See also
+[Command Line Switches](https://freeswitch.org/confluence/display/FREESWITCH/Command+Line+Switches)
+in the FreeSWITCH wiki.
+
+### [DONE] 2.3 FreeSWITCH configuration cleanup
 
 Same as 1.0 but different section:
 
@@ -258,21 +230,21 @@ Same as 1.0 but different section:
   </section>
 ```
 
-### 1.4 Plan for archiving old media
+### 2.4 Plan for archiving old media
 
 Content, that is many months (or years) old, should be moved to a cheaper storage class. See Google's coldline and nearline storage classes [here](https://cloud.google.com/storage/docs/storage-classes#comparison_of_storage_classes), for example.
 
 QUESTION: How to update media file locations in the DB?
 
-### 1.5 Figure out dialplans
+### 2.5 Figure out dialplans
 
 With 1.0 done, it would be a good time to figure out the relationship between `public`, `features`, `skinny_profiles`, `default` dialplans. The SignalWire in-memory config also makes things a bit more confusing, and it uses the `default` one out of the box.
 
-### 1.6 Clean up `autoload_configs`
+### 2.6 Clean up `autoload_configs`
 
 `/etc/freeswitch/autoload_configs` has 87 files in it right now; pretty sure that only a fraction of them are being used.
 
-### 1.7 IVR: implement "leave a message" option
+### 2.7 IVR: implement "leave a message" option
 
 Implement leaving a message (by pressing 0, for example).
 
@@ -282,19 +254,19 @@ How would that be sent  to admins? For example email
 the audio  as an attachment with  a transcription as
 email body.
 
-### 1.8 Per user favourites
+### 2.8 Per user favourites
 
-### 1.9 I18n support
+### 2.9 I18n support
 
 Add a menu to be able to change languages, and each submenu option will announce itself in the language supported. See [this note](https://github.com/toraritte/knowledge-gaps/blob/master/telephony/freeswitch.md#2-speech-phrase-management-in-docs-vs-language-management-in-demo-config) on the confusion with language suport in FreeSWITCH.
 
 Maybe it isn't even an issue though, if a cloud TTS can be set up.
 
-### 1.10 Stats
+### 2.10 Stats
 
-### 1.11 Logs
+### 2.11 Logs
 
-### 1.12 Create submenus automatically to play recordings
+### 2.12 Create submenus automatically to play recordings
 
 Probably the easiest way is [session:setInputCallback](https://freeswitch.org/confluence/display/FREESWITCH/Lua+API+Reference#LuaAPIReference-session:setInputCallback), but see [session:sayPhrase](https://freeswitch.org/confluence/display/FREESWITCH/Lua+API+Reference#LuaAPIReference-session:sayPhrase) for more examples.
 
