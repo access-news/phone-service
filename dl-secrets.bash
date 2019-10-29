@@ -6,25 +6,31 @@ function elem {
   cut -d':' -f$POS <<<$PAIR
 }
 
-# input: [ "secret_name_in_vault:path_to_save" ]
-#                              ^
-#                              |
-#                         pair delimiter
-#
+# Tutorial: Use a Linux VM system-assigned managed identity to access Azure Key Vault
+# https://docs.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/tutorial-linux-vm-access-nonaad
+function get_secret {
+  SECRET_NAME=$1
+  TOKEN=$(               \
+    curl                 \
+      'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net' \
+      -H Metadata:true   \
+    | jq '.access_token' \
+    | tr -d '"'          \
+    )
+
+  curl \
+    https://sftb-vault.vault.azure.net/secrets/"${SECRET_NAME}"?api-version=2016-10-01 \
+    -H "Authorization: Bearer ${TOKEN}" \
+  | jq '.value'
+}
+
+# input:   [ "secret_name_in_vault:path/to/save" ]
 # example: "fs-password:freeswitch/passwords.xml lua-conn-string:freeswitch/scripts/conn.lua"
 for pair in $@; do
 
   SECRET_NAME=$(elem 1 $pair)
   TARGET_PATH=$(elem 2 $pair)
-
-  # `az keyvault secret  show` returns a JSON,
-  # and `jq`  returns  its  `value`  attribute
-
-  RAW_CONTENT=$(az keyvault secret show \
-        --vault-name "sftb-vault"       \
-        --name $SECRET_NAME             \
-      | jq '.value'                     \
-    )
+  RAW_CONTENT=$(get_secret $SECRET_NAME)
 
   # caveman debug
   # echo -e $RAW_CONTENT
