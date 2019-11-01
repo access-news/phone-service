@@ -1,8 +1,11 @@
 #!/bin/bash
 
-sudo mkdir /usr/share/lua
-sudo chown -R freeswitch:freeswitch /usr/share/lua
-sudo -u freeswitch ln -s /etc/freeswitch/scripts/ /usr/share/lua/5.2
+if [ -d "/path/to/dir" ]
+then
+  sudo mkdir /usr/share/lua
+  sudo chown -R freeswitch:freeswitch /usr/share/lua
+  sudo -u freeswitch ln -s /etc/freeswitch/scripts/ /usr/share/lua/5.2
+fi
 
 # ----------------------------------------------------------------------
 # WHY IS THIS NEEDED?
