@@ -60,11 +60,17 @@ See TODO [1.2 FreeSWITCH deployment](#user-content-12-freeswitch-deployment) abo
 Follow installation instructions on the FreeSWITCH wiki.
 E.g. [Debian 9 instructions](https://freeswitch.org/confluence/display/FREESWITCH/Debian+9+Stretch)
 
-### 0.1 FreeSWITCH sounds
+#### 1.1.1 FreeSWITCH sounds (optional)
 
 Basic sounds should be installed during a vanilla install (at `/usr/share/freeswitch/sounds` on Debian 9), but, just in case, here are all the sounds:
 
 https://github.com/access-news/freeswitch-sounds
+
+### 1.2 Clone this repo
+
+```bash
+git clone https://github.com/access-news/phone-service.git ~/clones/phone-service
+```
 
 ### 1.3 Secrets
 
@@ -75,7 +81,7 @@ contents are uploaded to Azure keyvault.
 
 `deploy.bash` invokes `dl-secrets.bash` that
 1. downloads secret files to specified paths, and
-2. the permission to 600.
+2. sets file permissions to 600.
 
 #### 1.3.2 `passwords.xml`
 
