@@ -117,6 +117,12 @@ Currently not  included in the Azure  vault, because
 each FreeSWITCH installation provided these files so
 far.
 
+### 1.4 Connect to telco provider
+
+In this case, SignalWire. Follow the steps at [mod_signalwire](https://freeswitch.org/confluence/display/FREESWITCH/mod_signalwire).
+
+<sup>**Don't forget Step 4!** (That is, assigning a connector/integration to the purchased number, otherwise incoming calls will be dropped with busy signal.)</sup>
+
 ## 2. TODOs
 
 - [X] 1.0 FreeSWITCH diaplan cleanup
