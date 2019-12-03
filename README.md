@@ -72,24 +72,28 @@ https://github.com/access-news/freeswitch-sounds
 git clone https://github.com/access-news/phone-service.git ~/clones/phone-service
 ```
 
-### 1.3 Secrets
+### 1.3 Deploy
 
-#### 1.3.1 Downloading secret files from Azure
+Run `deploy.bash`.
 
-None of  these are  checked in  the repo,  but their
-contents are uploaded to Azure keyvault.
+It will
+1. stop FreeSWITCH,
+2. rename `/etc/freeswitch` to `/etc/freeswitch_old`,
+3. download sensitive files (the Lua connection string,
+   and `passwords.xml`,  see notes below)  to specified
+   paths (using `dl-secrets.bash`),
+4. copy   `./freeswitch`   into  `/etc`,   and   change
+   ownership to `freeswitch`,
+5. call `lua-fixup.bash`,
+6. and restart the service.
 
-`deploy.bash` invokes `dl-secrets.bash` that
-1. downloads secret files to specified paths, and
-2. sets file permissions to 600.
-
-#### 1.3.2 `passwords.xml`
+#### Note on `passwords.xml`
 
 Following the instructions in the FreeSWITCH wiki,
 [Configuring FreeSWITCH](https://freeswitch.org/confluence/display/FREESWITCH/Configuring+FreeSWITCH),
 [Security advice](https://freeswitch.org/confluence/display/FREESWITCH/Configuring+FreeSWITCH#ConfiguringFreeSWITCH-Securityadvice).
 
-#### 1.3.3 Lua connection string
+#### Note on the Lua connection string
 
 The general format:
 
@@ -107,7 +111,7 @@ c.conn_string =
 return c
 ```
 
-#### 1.3.3 `tls/` directory
+#### Note on the `tls/` directory
 
 Currently not  included in the Azure  vault, because
 each FreeSWITCH installation provided these files so
@@ -116,8 +120,8 @@ far.
 ## 2. TODOs
 
 - [X] 1.0 FreeSWITCH diaplan cleanup
-- [ ] 1.1 Secret management (source control, deployment, etc.)
-- [ ] 1.2 FreeSWITCH deployment
+- [X] 1.1 Secret management (source control, deployment, etc.)
+- [X] 1.2 FreeSWITCH deployment
 - [X] 1.3 FreeSWITCH configuration cleanup
 - [ ] 1.4 Plan for archiving old media
 - [ ] 1.5 Figure out dialplans
@@ -128,6 +132,7 @@ far.
 - [ ] 1.10 Stats
 - [ ] 1.11 Logs
 - [ ] 1.12 Create submenus automatically to play recordings
+- [ ] 1.13 Save user progress on crash
 
 ### [DONE] 1.0 FreeSWITCH diaplan cleanup
 
@@ -277,3 +282,7 @@ Maybe it isn't even an issue though, if a cloud TTS can be set up.
 Probably the easiest way is [session:setInputCallback](https://freeswitch.org/confluence/display/FREESWITCH/Lua+API+Reference#LuaAPIReference-session:setInputCallback), but see [session:sayPhrase](https://freeswitch.org/confluence/display/FREESWITCH/Lua+API+Reference#LuaAPIReference-session:sayPhrase) for more examples.
 
 Is there an easier way?
+
+### 2.13 Save user progress on crash
+
+When the user calls again, they can choose to continue to listen from the same spot as before.
