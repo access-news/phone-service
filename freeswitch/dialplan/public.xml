@@ -16,7 +16,7 @@
 
      Because pretty sure that I'm overcomplicating things
      again. What is done right  now, is that the incoming
-     call matches the lest extension (public_extensions),
+     call matches the last extension (public_extensions),
      and routes it to the internal `default` context. But
      this  system will  never  have users,  why not  just
      handle it here?

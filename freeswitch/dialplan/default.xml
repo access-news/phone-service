@@ -7,8 +7,8 @@
       <condition field="destination_number" expression="^(\+19162510217)$">
 
         <!-- <action application="answer"/> -->
-        <action application="lua" data="main.lua"/>
-
+        <!-- <action application="lua" data="main.lua"/> -->
+         <action application="erlang" data="call_control:start access_news@tr2"/>
       </condition>
     </extension>
   </context>

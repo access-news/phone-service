@@ -9,7 +9,7 @@
          If you pass a complete node name, the 'shortname' parameter has no effect. -->
     <param name="nodename" value="freeswitch"/>
     <!-- Specify this OR 'cookie-file' or $HOME/.erlang.cookie will be read -->
-    <param name="cookie" value="ClueCon"/>
+    <param name="cookie" value="$${tr2-outbound-erlang-cookie}"/>
     <!-- Read a cookie from an arbitary erlang cookie file instead -->
     <!--<param name="cookie-file" value="/$${temp_dir}/erlang.cookie"/>-->
     <param name="shortname" value="true"/>
