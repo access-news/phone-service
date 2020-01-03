@@ -19,15 +19,16 @@
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
+-define(DEMO_TIMEOUT, 600000).
 
-%% How to start this as outbound node on the terminal? {{{2
+%% How to start this as outbound node on the terminal? {{-
 %% To yank the command lines without the comments, do
 %% qaq
 %% :'<,'>g/^[^#]/y A
 %% :let @*=@a
 %% See https://vi.stackexchange.com/questions/11217/ as well
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run tr2_logger -run user_db -sname access_news -setcookie <cookie>
+% erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -sname access_news -setcookie <cookie>
 
 % erl                                                      \
 % # Make sure all necessary Erlang files are compiled.
@@ -39,28 +40,30 @@
 % -eval '{lofa, freeswitch@tr2} ! register_event_handler.' \
 % # Both  have  a  `start/0` function  that  is  invoked
 % # automatically.
-% -run tr2_logger                                          \
+% -run filog                                               \
 % -run user_db                                             \
 % -sname access_news                                       \
 % -setcookie <cookie>
 
-% Vim command to parse logs {{{2
+% Vim command to parse logs 
 % execute 'g/\({"Event-Name\)/s//\r\1/g ' | execute 'g/^{/s/}/}\r/g' | execute 'g/\\r\\n/s//\r/g' | g/^20\(19\|20\)/s/^/\r/g
 
-%% The  `start*` functions  follow the  requirements of {{{1
+%% The  `start*` functions  follow the  requirements of 
 %% FreeSWITCH's  `mod_erlang_event`. See  section 7.1.3
 %% in the `mod_erlang_event` documentation.
+%% }}-
+
 start_link(Ref) ->
     {ok, Pid} = gen_server:start_link(?MODULE, [], []),
-    tr2_logger:add_handler(Pid),
     {Ref, Pid}.
 
 start(Ref) ->
     {ok, Pid} = gen_server:start(?MODULE, [], []),
-    tr2_logger:add_handler(Pid),
     {Ref, Pid}.
 
 init(_Args) ->
+    filog:add_process_handler(?MODULE),
+    filog:process_handler_filter(?MODULE),
     %%   {FSMState, DTMFString}
     {ok, {init, ""}}.
 
@@ -84,8 +87,7 @@ handle_info(
         registered ->
             noop;
         unregistered ->
-            %% Demo mode set to 10 minutes
-            timer:send_after(600000, unregistered_timer)
+            timer:send_after(?DEMO_TIMEOUT, unregistered_timer)
             %% Timeout handled in the next handle_info clauses.
     end,
     sendmsg("execute", ["answer", []]),
@@ -100,33 +102,40 @@ handle_info(unregistered_timer, {unregistered, _DTMFString} = State) ->
     {noreply, State};
 
 handle_info({call_hangup, _ChannelID} = Info, {_FSMState, DTMFString} = State) ->
-    tr2_logger:log(debug, [handle_info, State, Info]),
+    filog:process_log(debug, [handle_info, State, Info]),
     {stop, normal, {hangup, DTMFString}};
 
 % Ez mire kellett?
 % handle_info(disconnected = Info, State) ->
-%     tr2_logger:log(handle_info, [State, Info]),
+%     filog:log(handle_info, [State, Info]),
 %     {stop, Info, State};
 
 handle_info(
-  {call_event, {event, [UUID | EventHeaders]}},
+  {call_event, {event, [_UUID | EventHeaders]}} = Event,
   {FSMState, DTMFString} = State
- ) ->
-    process_call_event(EventHeaders),
-    Digit = get_header_value("DTMF-Digit", EventHeaders),
-    % tr2_logger:log("DTMF digit", Digit),
-    {noreply, State};
+) ->
+    EventName = get_header_value("Event-Name", EventHeaders),
+    NewState =
+        case EventName of
+            "DTMF" ->
+                % handle_dtmf(State, EventHeaders,);
+                noop;
+            _ ->
+                filog:process_log(debug, [EventName, State, Event]),
+                State
+        end,
+    {noreply, NewState};
 
 handle_info(Info, State) ->
-    tr2_logger:log(warning, [handle_info, "not_handled_message", State, Info]),
+    filog:process_log(warning, [handle_info, "not_handled_message", State, Info]),
     {noreply, State}.
 
-%% -- used with `caller_status/1` {{{2
+%% -- used with `caller_status/1` 
 %% Match  on  `unregistered` state,  because,  ideally,
 %% this type  of cast should  only be received  in this
 %% state.
 % handle_cast(CallerStatus, {unregistered, DTMFString} = _State) ->
-%     tr2_logger:log(handle_cast, CallerStatus),
+%     filog:log(handle_cast, CallerStatus),
 %     %%        NewState
 %     {noreply, {CallerStatus, DTMFString}}.
 
@@ -137,13 +146,13 @@ handle_info(Info, State) ->
 % just save the state indiscriminately?
 
 terminate(Reason, State) ->
-    tr2_logger:log(debug, [terminate, Reason, State]),
-    tr2_logger:remove_handler().
+    filog:process_log(debug, [terminate, Reason, State]),
+    filog:remove_process_handler(?MODULE).
 
 %%%%%%%%%%%%%%%%%%%%%%%
-%% Private functions %%  {{{2
+%% Private functions %%  {{-
 %%%%%%%%%%%%%%%%%%%%%%%
-
+%% {{-
 %% The async version of `register_status/1`. Probably
 %% better  suited  for  when the  phone  number  lookup
 %% will  try to  reach  a remote  database. Handled  in
@@ -164,15 +173,18 @@ terminate(Reason, State) ->
 %% successful, or stay silent the first time and give a
 %% warning  that 1  minute  remaining  for example,  if
 %% lookup not successful.
-caller_status(EventHeaders) -> % {{{1
+%% }}-
+
+caller_status(EventHeaders) -> % {{-
     CallPid = self(),
     F = fun() ->
             CallerStatus = register_status(EventHeaders),
             gen_server:cast(CallPid, CallerStatus)
         end,
     spawn(F).
+%% }}-
 
-register_status(EventHeaders) ->
+register_status(EventHeaders) -> %% {{-
     CallerID = get_header_value("Channel-ANI", EventHeaders),
     PhoneNumber =
         case CallerID of
@@ -183,18 +195,19 @@ register_status(EventHeaders) ->
             %% that is.)
             "+1" ++ Number -> Number;
             _Invalid ->
-                tr2_logger:log(debug, [register_status, "Can't pull phone number from " ++ CallerID]),
+                filog:process_log(debug, [register_status, "Can't pull phone number from " ++ CallerID]),
                 exit("invalid")
         end,
     case lookup(PhoneNumber) of
         true  -> registered;
         false -> unregistered
     end.
+%% }}-
 
 lookup(PhoneNumber) ->
     gen_server:call(user_db, PhoneNumber).
 
-%% FreeSWITCH helpers
+%% FreeSWITCH helpers {{-
 
 %% Only implemented for `execute` and `hangup` for now.
 %% Even these aren't that well documented.
@@ -216,7 +229,7 @@ sendmsg_headers("hangup", [HangupCode]) ->
 %% This will  blow up,  one way or  the other,  but not
 %% planning to get there anyway.
 sendmsg_headers(SendmsgCommand, Args) ->
-    tr2_logger:log(
+    filog:process_log(
       emergency,
       ["`sendmsg` command not implemented yet"
       , SendmsgCommand
@@ -247,7 +260,12 @@ sendmsg_locked(SendmsgCommand, Args) when is_list(Args) ->
 get_header_value(Header, EventHeaders) ->
     proplists:get_value(Header, EventHeaders).
 
-process_call_event(EventHeaders) ->
-    EventName = get_header_value("Event-Name", EventHeaders).
+accumulate_dtmf(EventHeaders, DTMFString) ->
+    Digit = get_header_value("DTMF-Digit", EventHeaders),
+    [Digit|DTMFString].
+
+%%   }}-
+%% }}-
 
 % vim: set fdm=marker:
+% set foldmarker={{-,}}-
