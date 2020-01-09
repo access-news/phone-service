@@ -20,8 +20,9 @@
 
 -define(FS_NODE, 'freeswitch@tr2').
 -define(DEMO_TIMEOUT, 600000).
+-define(DTMF_DIGIT_TIMEOUT, 5000).
 
-%% How to start this as outbound node on the terminal? {{-
+%% How to start this as outbound node on the terminal? {{- {{-
 %% To yank the command lines without the comments, do
 %% qaq
 %% :'<,'>g/^[^#]/y A
@@ -51,7 +52,7 @@
 %% The  `start*` functions  follow the  requirements of 
 %% FreeSWITCH's  `mod_erlang_event`. See  section 7.1.3
 %% in the `mod_erlang_event` documentation.
-%% }}-
+%% }}- }}-
 
 start_link(Ref) ->
     {ok, Pid} = gen_server:start_link(?MODULE, [], []),
@@ -64,46 +65,46 @@ start(Ref) ->
 init(_Args) ->
     filog:add_process_handler(?MODULE),
     filog:process_handler_filter(?MODULE),
-    %%   {FSMState, DTMFString}
-    {ok, {init, ""}}.
+    %%   {IVRState, CallerStatus, DTMFString}
+    {ok, {init, unregistered, ""}}.
 
 %% Match on `init` because  this module is for outbound
 %% mode,  so   any  incoming  calls  should   meet  the
 %% gen_server in `init` state.
 handle_info(
   {call, {event, [UUID | EventHeaders]}} = Info,
-                      {init, DTMFString} = State
- ) ->
+  %  IVRState, CallerStatus, DTMFString
+    {init,     unregistered, DTMFString} = State
+) -> % {{-
     logger:debug(#{ {incoming_call, self(), handle_info, State} => Info}),
-    %% Would  name the  outbound  call handler  gen_servers
+    %% Would  name the  outbound  call handler  gen_servers {{-
     %% after the call UUIDs if that would be handed down by
     %% FreeSWITCH instead of a Ref,  because it is a static
     %% value unique to each call, so the process dictionary
     %% is the next best thing.
+    %% }}-
     put(uuid, UUID),
-    FSMState = register_status(EventHeaders),
-    %% Schedule hangup if user is not registered.
-    case FSMState of
-        registered ->
-            noop;
-        unregistered ->
-            timer:send_after(?DEMO_TIMEOUT, unregistered_timer)
-            %% Timeout handled in the next handle_info clauses.
-    end,
+    NewCallerStatus = authenticate_caller(EventHeaders),
     sendmsg("execute", ["answer", []]),
+    % sendmsg("execute", ["set", "tts_engine=flite"]),
+    % sendmsg("execute", ["set", "tts_voice=kal"]),
+    % sendmsg("execute", ["speak", "Welcome, step right in!"]),
     sendmsg("execute", ["playback", "/home/toraritte/clones/main.mp3"]),
-    {noreply, {FSMState, DTMFString}};
+    {noreply, {main_menu, NewCallerStatus, DTMFString}};
+% }}-
 
-handle_info(unregistered_timer, {registered, _DTMFString} = State) ->
+%% Handle `unregistered_timer` started in `authenticate_caller/1`. {{-
+handle_info(unregistered_timer, {_IVRState, registered, _DTMFString} = State) ->
     {noreply, State};
 
-handle_info(unregistered_timer, {unregistered, _DTMFString} = State) ->
+handle_info(unregistered_timer, {_IVRState, unregistered, _DTMFString} = State) ->
     sendmsg("hangup", ["16"]),
     {noreply, State};
+% }}-
 
-handle_info({call_hangup, _ChannelID} = Info, {_FSMState, DTMFString} = State) ->
+handle_info({call_hangup, _ChannelID} = Info, {_IVRState, CallerStatus, DTMFString} = State) ->
     filog:process_log(debug, [handle_info, State, Info]),
-    {stop, normal, {hangup, DTMFString}};
+    {stop, normal, {hangup, CallerStatus, DTMFString}};
 
 % Ez mire kellett?
 % handle_info(disconnected = Info, State) ->
@@ -112,19 +113,34 @@ handle_info({call_hangup, _ChannelID} = Info, {_FSMState, DTMFString} = State) -
 
 handle_info(
   {call_event, {event, [_UUID | EventHeaders]}} = Event,
-  {FSMState, DTMFString} = State
+  {IVRState, CallerStatus, DTMFString} = State
 ) ->
     EventName = get_header_value("Event-Name", EventHeaders),
     NewState =
         case EventName of
             "DTMF" ->
-                % handle_dtmf(State, EventHeaders,);
-                noop;
+                Digit = get_header_value("DTMF-Digit", EventHeaders),
+                handle_dtmf(State, Digit);
             _ ->
                 filog:process_log(debug, [EventName, State, Event]),
                 State
         end,
     {noreply, NewState};
+
+handle_info({ok, _BgJobID}, State) ->
+    {noreply, State};
+
+handle_info({error, BgReason}, State) ->
+    filog:process_log(error, [bgapi_error, BgReason]),
+    {noreply, State};
+
+handle_info({bgok, _JobID, Reply}, State) ->
+    filog:process_log(error, [bgok, Reply]),
+    {noreply, State};
+
+handle_info({bgerror, _JobID, Reason}, State) ->
+    filog:process_log(error, [bgerror, Reason]),
+    {noreply, State};
 
 handle_info(Info, State) ->
     filog:process_log(warning, [handle_info, "not_handled_message", State, Info]),
@@ -195,7 +211,7 @@ register_status(EventHeaders) -> %% {{-
             %% that is.)
             "+1" ++ Number -> Number;
             _Invalid ->
-                filog:process_log(debug, [register_status, "Can't pull phone number from " ++ CallerID]),
+                filog:process_log(emergency, [register_status, "Can't pull phone number from " ++ CallerID]),
                 exit("invalid")
         end,
     case lookup(PhoneNumber) of
@@ -203,6 +219,27 @@ register_status(EventHeaders) -> %% {{-
         false -> unregistered
     end.
 %% }}-
+
+%% Only for emphasizing the side effect (timer). {{-
+%% ----------------------------------------------------
+%% Could've just shoved it `register_status/1`, but (1)
+%% would've been easy to miss, and (2) neither function
+%% names show that there will be a side effect, so this
+%% way it is a bit more explicit.
+%% ----------------------------------------------------
+%% TODO:  How   would  this  be  done   in  Haskell  or
+%%        PureScript? Monads?
+%% }}-
+authenticate_caller(EventHeaders) ->
+    CallerStatus = register_status(EventHeaders),
+    case CallerStatus of
+        registered ->
+            noop;
+        unregistered ->
+            timer:send_after(?DEMO_TIMEOUT, unregistered_timer)
+            %% Timeout handled in handle_info clauses.
+    end,
+    CallerStatus.
 
 lookup(PhoneNumber) ->
     gen_server:call(user_db, PhoneNumber).
@@ -249,7 +286,7 @@ do_sendmsg(SendmsgCommand, Args, IsLocked) ->
         [{"call-command", SendmsgCommand}]
         ++ sendmsg_headers(SendmsgCommand, Args)
         ++ LockHeaderList,
-    {sendmsg, ?FS_NODE} ! {sendmsg, UUID, FinalHeaders}.
+    fsend({sendmsg, UUID, FinalHeaders}).
 
 sendmsg(SendmsgCommand, Args) when is_list(Args) ->
     do_sendmsg(SendmsgCommand, Args, false).
@@ -257,15 +294,37 @@ sendmsg(SendmsgCommand, Args) when is_list(Args) ->
 sendmsg_locked(SendmsgCommand, Args) when is_list(Args) ->
     do_sendmsg(SendmsgCommand, Args, true).
 
+fsend(Msg) ->
+    {lofa, ?FS_NODE} ! Msg.
+
 get_header_value(Header, EventHeaders) ->
     proplists:get_value(Header, EventHeaders).
 
-accumulate_dtmf(EventHeaders, DTMFString) ->
-    Digit = get_header_value("DTMF-Digit", EventHeaders),
-    [Digit|DTMFString].
+% Access News controls {{-
+% Press 8 for the help menu.
+% Press 0 to pause playback.
+% Press 1 to skip back one article.
+% Press 2 to restart the current article.
+% Press 3 to go forward to the next article.
+% Press 4 to jump back 10 seconds in article.
+% Press 5 to change volume up or down.
+% Press 6 to skip forward 10 seconds.
+% Press 7 to slow the playback down.
+% Press 9 to speed the playback up.
+% Press * key once to return to the main system menu.
+% Press # to skip to the last article in this category.
+% }}-
+
+% TR2 controls {{-
+% }}-
+
+handle_dtmf({publication, _CallerStatus, DTMFString} = State, "5") ->
+    timer:send_after(?DTMF_DIGIT_TIMEOUT, dtmf_digit_timeout),
+    fsend({bgapi, uuid_fileman, get(uuid) ++ " restart"}),
+    State.
 
 %%   }}-
 %% }}-
 
 % vim: set fdm=marker:
-% set foldmarker={{-,}}-
+% vim: set foldmarker={{-,}}-:
