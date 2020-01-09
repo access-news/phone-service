@@ -38,14 +38,14 @@ init(_Args) ->
     PhoneNumberSet = load_phone_numbers(),
     {ok, PhoneNumberSet}.
 
-handle_call(PhoneNumber, {Pid, _Ref}, PhoneNumberSet) ->
-    RegisteredStatus =
+handle_call({look_up, PhoneNumber}, {Pid, _Ref}, PhoneNumberSet) ->
+    IsRegistered =
         sets:is_element(
             list_to_binary(PhoneNumber),
             PhoneNumberSet
          ),
-    log(debug, [look_up_number, Pid, PhoneNumber, RegisteredStatus]),
-    {reply, RegisteredStatus, PhoneNumberSet}.
+    log(debug, [lookup, Pid, PhoneNumber, IsRegistered]),
+    {reply, IsRegistered, PhoneNumberSet}.
 
 handle_cast(reload_db = Request, _PhoneNumberSet) ->
     log(debug, [reload_db, Request]),
