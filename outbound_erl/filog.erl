@@ -267,4 +267,4 @@ filtered_pid_string(Pid) when is_pid(Pid) ->
     ).
 
 % vim: set fdm=marker:
-% set foldmarker={{-,}}-
+% vim: set foldmarker={{-,}}-:

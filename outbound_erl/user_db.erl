@@ -16,6 +16,7 @@
    , handle_cast/2
    , terminate/2
 
+   % private functions
    , load_phone_numbers/0
    ]).
 
@@ -68,4 +69,4 @@ log(Level, ValueList) ->
     filog:log(Level, ?MODULE, ValueList).
 
 % vim: set fdm=marker:
-% set foldmarker={{-,}}-
+% vim: set foldmarker={{-,}}-:
