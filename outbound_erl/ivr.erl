@@ -5,11 +5,11 @@
     [ start/1
     , start_link/1
 
-    % gen_server callbacks
+    % gen_statem callbacks
     , init/1
     , callback_mode/0
     , handle_event/4
-    , terminate/3
+    % , terminate/3
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
@@ -17,11 +17,11 @@
 -define(DTMF_DIGIT_TIMEOUT, 5000).
 
 start_link(Ref) ->
-    {ok, Pid} = gen_server:start_link(?MODULE, [], []),
+    {ok, Pid} = gen_statem:start_link(?MODULE, [], []),
     {Ref, Pid}.
 
 start(Ref) ->
-    {ok, Pid} = gen_server:start(?MODULE, [], []),
+    {ok, Pid} = gen_statem:start(?MODULE, [], []),
     {Ref, Pid}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -45,7 +45,7 @@ start(Ref) ->
 % | {incoming_call, unregistered}      |
 % \____________________________________/
 %               |
-%               |<--- "MOD_ERL_CALL"
+%               |<--- "INCOMING_CALL"
 %               |
 %               V
 % *------------------------------------*
@@ -55,20 +55,34 @@ start(Ref) ->
 % }}- }}-
 init(_Args) ->
     %% Set up logging to file. {{- {{-
-    filog:add_process_handler(?MODULE),
-    filog:process_handler_filter(?MODULE),
-    filog:process_log(debug, #{ from => ["INIT"] }),
+    % filog:add_process_handler(?MODULE),
+    % filog:process_handler_filter(?MODULE),
+
+    %% NOTE: Leaving  this here  as a  reminder that  `init/1` is
+    %%       running in different process than the future `gen_*`
+    %%       behaviour,  therefore calling  `self()` in  `init/1`
+    %%       and  in the  started `gen_*`  behaviour will  result
+    %%       in  different PID  values. Yes,  this is  completely
+    %%       logical, but still need to remind myself.
+    %%
+    %%       (See  `add_handler_filter/3`  note in  `filog.erl`'s
+    %%       export list why all this  is a problem regarding the
+    %%       below statement.)
+    % filog:process_log(debug, #{ from => ["INIT"] }),
+    % ------------------------------------------------
     %% }}- }}-
-    %%   {IVRState,      CallerStatus}
-    {ok, {incoming_call, unregistered}, #{dtmf_digits => ""}}.
+       %%   {IVRState,      CallerStatus}
+    State = {incoming_call, unregistered},
+    Data = #{dtmf_digits => ""},
+    {ok, State, Data}.
 
 callback_mode() ->
     handle_event_function.
 
 %% Remove log handler
-terminate(Reason, State, Data) -> %% {{-
-    filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
-    filog:remove_process_handler(?MODULE).
+% terminate(Reason, State, Data) -> %% {{-
+%     % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
+%     filog:remove_process_handler(?MODULE).
 %% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -95,18 +109,18 @@ terminate(Reason, State, Data) -> %% {{-
 %% ```erl
 %% %% `state_functions` pseudo-code
 %%
-%% incoming_call(info, ModErlEvent, _Data) ->
-%%     NewFSEvent = do_the_deed,
-%%     {keep_state_and_data, {next_event, internal, NewFSEvent}};
+%% incoming_call(info, ModErlEventMsg, _Data) ->
+%%     MassagedModErlEvent = do_the_deed,
+%%     {keep_state_and_data, {next_event, internal, MassagedModErlEvent}};
 %% incoming_call(internal, MassagedFSEvent, Data) ->
 %%     do_something_here,
 %%     {next_state, ...}.
 %%
 %% %% ... N more other states
 %%
-%% publication(info, ModErlEvent, _Data) ->
-%%     NewFSEvent = do_the_deed,
-%%     {keep_state_and_data, {next_event, internal, NewFSEvent}};
+%% publication(info, ModErlEventMsg, _Data) ->
+%%     MassagedModErlEvent = do_the_deed,
+%%     {keep_state_and_data, {next_event, internal, MassagedModErlEvent}};
 %% publication(internal, MassagedFSEvent, Data) ->
 %%     do_something_here,
 %%     {next_state, ...}.
@@ -129,15 +143,15 @@ terminate(Reason, State, Data) -> %% {{-
 %% %% FreeSWITCH events %%
 %% %%%%%%%%%%%%%%%%%%%%%%%
 %%
-%% handle_event(info, ModErlEvent, _State, _Data) ->
-%%     NewFSEvent = do_the_deed,
-%%     {keep_state_and_data, {next_event, internal, NewFSEvent}};
+%% handle_event(info, ModErlEventMsg, _State, _Data) ->
+%%     MassagedModErlEvent = do_the_deed,
+%%     {keep_state_and_data, {next_event, internal, MassagedModErlEvent}};
 %%
-%% handle_event(internal, NewFSEvent, State, Data) ->
+%% handle_event(internal, MassagedModErlEvent, State, Data) ->
 %%     %% ...
 %%     {next_state, ...}.
 %%
-%% handle_event(internal, NewFSEvent, AnotherState, Data) ->
+%% handle_event(internal, MassagedModErlEvent, AnotherState, Data) ->
 %%     %% ...
 %%     {next_state, ...}.
 %%
@@ -169,7 +183,7 @@ terminate(Reason, State, Data) -> %% {{-
 %%      lower overhead.
 
 %% MOD_ERL_EVENT_MASSAGE (info) {{-
-%% The   event  content   is   name  `ModErlEvent`   on {{- {{-
+%% The   event  content   is   name  `ModErlEventMsg`   on {{- {{-
 %% purpose, and not  `FSEvent` (i.e., FreeSWITCH event)
 %% or   similar,  because   `mod_erlang_event`  creates
 %% its  own  arbitrary  messages  and  wrappers  around
@@ -178,11 +192,11 @@ terminate(Reason, State, Data) -> %% {{-
 %% |  FSEventHeaders]}}`  but there  is  `{call_hangup,
 %% UUID}`,  even  though   there  are  `CHANNEL_HANGUP`
 %% events received besides it.
-%% 
+%%
 %% The   actual    FreeSWITCH   event    is   basically
 %% `FSEventHeaders`,  as they  consist of  header-value
 %% pairs anyways, and an optional body.
-%% 
+%%
 %% TODO It is rare for FreeSWITCH events to have body (or is
 %%      it?) and not sure how  the Erlang message looks like
 %%      in that case.
@@ -190,73 +204,94 @@ terminate(Reason, State, Data) -> %% {{-
 
 handle_event(
   info,
-  {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = ModErlEvent,
+  {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = ModErlEventMsg,
   State,
   Data
 ) ->
-    NewFSEvent =
+    MassagedModErlEvent =
         { UUID
         , ModErlEventCallStatus
         , maps:from_list(FSEventHeaders)
         },
     TransitionActions =
-        [ {next_event, internal, NewFSEvent}
+        [ {next_event, internal, MassagedModErlEvent}
         ],
     %% As this  clause preceeds **every**  state transition
     %% (not   just  state   changes!)   AND  always   keeps
     %% `gen_statem` state and data,  this log does not need
     %% to be  repeated in  `handle_event/4` below,  only to
     %% double-check matched values, calculations etc.
-    filog:process_log(debug, #{ from => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, fs_event => ModErlEvent, new_fs_event => NewFSEvent,  state => State }]}),
+    % filog:process_log(debug, #{ from => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, mod_erlang_event_message => ModErlEventMsg, friendly_mod_erlang_event_message => MassagedModErlEvent,  state => State }]}),
     {keep_state_and_data, TransitionActions};
 %% }}-
 
 %% CALL_HANGUP (info) {{-
 handle_event(
-  info,               % EventType                
-  {call_hangup, UUID} % EventContent = ModErlEvent
-  State,              %                           
-  Data                %                         
+  info,                 % EventType
+  {call_hangup, _UUID}, % EventContent = ModErlEventMsg
+  State,                % State
+  Data                  % Data
 ) ->
-    filog:process_log(debug, #{ from => ["CALL_HANGUP", #{ data => Data, state => State }]}),
-    {stop, normal}.
-
-  % State
-  {main_menu, _CallerStatus},
-
-  % Data
-  Data
-) ->
+    % filog:process_log(debug, #{ from => ["CALL_HANGUP", #{ data => Data, state => State }]}),
+    {stop, normal};
 %% }}-
 
-%% MOD_ERL_CALL (internal) {{-
+%%%%%%%%%%%%%%%%%%%%%%%%
+%% `internal` clauses %%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% INCOMING_CALL (internal) {{-
+
+%% This is the only state where `call` event can arrive
+%% -  or at  least this  is  how it  should be;  `call`
+%% should happen only once in  a call, and becuase this
+%% is  outbound mode,  and  the  process just  started,
+%% there is not much else flying around.
+
 handle_event(
-  internal = _EventType,             % EventType
+  internal,                          % EventType
   { UUID                             % \
-  , call = _ModErlEventCallStatus    % |
+  , call                             % |
   , #{ "Channel-ANI" := CallerNumber % | EventContent = MassagedModErlEvent
      }                               % |
   },                                 % /
   {incoming_call, unregistered},     % State
   Data                               % Data
 ) ->
-    filog:process_log(debug, #{ from => {mod_erlang_event_call_status, "MOD_ERL_CALL"} }),
+    % filog:process_log(debug, #{ from => {mod_erlang_event_call_status, "INCOMING_CALL"} }),
 
     sendmsg(UUID, execute, ["answer", []]),
+
+    % start playback of main menu here (don't forget of repeats)
+    sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
 
     { CallerStatus
     , TransitionActions
     } =
         case is_user_registered(CallerNumber) of
             true ->
-                {registered, []};
+                { registered
+                , []
+                };
             false ->
                 { unregistered
-                , [{{timeout, unregistered_timer}, ?DEMO_TIMEOUT, {hang_up, UUID}}]
+                , [ { {timeout, unregistered_timer}
+                    , ?DEMO_TIMEOUT
+                    , {hang_up, UUID}
+                    }
+                  ]
                 }
         end,
-    {next_state, {main_menu, CallerStatus}, Data, TransitionActions}.
+    {next_state, {main_menu, CallerStatus}, Data, TransitionActions};
 %% }}-
+
+% handle_event(
+%   internal,                          % EventType
+%   _MassagedModErlEvent,
+%   _State,
+%   _Data                               % Data
+% ) ->
+    % filog:process_log(debug, #{ from => "another event that is not INCOMING_CALL and CALL_HANGUP" });
 
 %%%%%%%%%%%%%%
 %% Timeouts %%
@@ -265,7 +300,7 @@ handle_event(
 %% unregistered_timer {{-
 handle_event(
   {timeout, unregistered_timer}, % EventType
-  {hang_up, UUID},               % EventContent
+  {hang_up, _UUID},              % EventContent
   {_IVRState, registered},       % State
   _Data                          % Data
  ) ->
@@ -274,7 +309,7 @@ handle_event(
 handle_event(
   {timeout, unregistered_timer}, % EventType
   {hang_up, UUID},               % EventContent
-  {_IVRState, registered}        = State,
+  {_IVRState, unregistered}      = State,
   Data                           % Data
  ) ->
     %% See "CALL_HANGUP" `handle_event/4`
@@ -311,7 +346,7 @@ handle_event(
 %     CallPid = self(),
 %     F = fun() ->
 %             CallerStatus = register_status(EventHeaders),
-%             gen_server:cast(CallPid, CallerStatus)
+%             gen_statem:cast(CallPid, CallerStatus)
 %         end,
 %     spawn(F).
 %% }}-
@@ -326,7 +361,7 @@ is_user_registered(CallerNumber) -> %% {{-
             "+1" ++ Number ->
                 Number;
             _Invalid ->
-                filog:process_log(emergency, #{ from => ["IS_USER_REGISTERED", #{ caller_number => CallerNumber}]}),
+                % filog:process_log(emergency, #{ from => ["IS_USER_REGISTERED", #{ caller_number => CallerNumber}]}),
                 exit("invalid")
         end,
     look_up(PhoneNumber).
@@ -345,7 +380,7 @@ look_up(PhoneNumber) ->
 %%
 %%      See available `sendmsg` commands at
 %%      https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket#mod_event_socket-3.9.1Commands
-sendmsg_headers(execute, [App, Args]) -> 
+sendmsg_headers(execute, [App, Args]) ->
     %% TODO "loops"  header   and  alternate  format   for  long
     %%      messages (is it needed here?)  not added as they are
     %%      not needed yet.
@@ -360,18 +395,17 @@ sendmsg_headers(hangup, [HangupCode]) ->
 
 %% This will  blow up,  one way or  the other,  but not
 %% planning to get there anyway.
-sendmsg_headers(SendmsgCommand, Args) -> %% {{-
-    filog:process_log(
-      emergency,
-      ["`sendmsg` command not implemented yet"
-      , SendmsgCommand
-      , Args
-      ]
-    ),
+sendmsg_headers(SendmsgCommand, Args) ->
+    % filog:process_log(
+    %   emergency,
+    %   ["`sendmsg` command not implemented yet"
+    %   , SendmsgCommand
+    %   , Args
+    %   ]
+    % ),
     [].
-%% }}-
 
-do_sendmsg(UUID, SendmsgCommand, Args, IsLocked) -> % {{-
+do_sendmsg(UUID, SendmsgCommand, Args, IsLocked) ->
     LockHeaderList =
         case IsLocked of
             false -> [];
@@ -382,14 +416,17 @@ do_sendmsg(UUID, SendmsgCommand, Args, IsLocked) -> % {{-
         ++ sendmsg_headers(SendmsgCommand, Args)
         ++ LockHeaderList,
     fsend({sendmsg, UUID, FinalHeaders}).
-%% }}-
 
+%% Could've just saved the channel ID (i.e., `UUID`) to
+%% the process registry, because it unique to this call
+%% (hence to this process) but  this way it is explicit
+%% on  every  call,  and  mirrors  the  FreeSWITCH  ESL
+%% `sendmsg` syntax.
 sendmsg(UUID, SendmsgCommand, Args) when is_list(Args) ->
     do_sendmsg(UUID, SendmsgCommand, Args, false).
 
 sendmsg_locked(UUID, SendmsgCommand, Args) when is_list(Args) ->
     do_sendmsg(UUID, SendmsgCommand, Args, true).
-
 %% }}-
 
 fsend(Msg) ->

@@ -67,10 +67,13 @@
     %%      module) get persisted.
     %%
     %%      At first, tried to match on the PID itself, but when
-    %%      modules (including behaviours) are started with `erl
-    %%      -run` then  the init  functions will run  way before
-    %%      the final PID of the Node process. In those cases, a
-    %%      key other than the PID needs to be supplied.
+    %%      modules (including behaviours) are started, the init
+    %%      function  will  run  way  before the  final  PID  of
+    %%      the  `gen_*`  process,  hence  calling  `self()`  in
+    %%      `init/1`  and in  the started  `gen_*` process  will
+    %%      yield different  result. (Logical, yet I  need to be
+    %%      reminded of  it.) In those  cases, a key  other than
+    %%      the PID needs to be supplied.
     %%
     %%        + `singleton_handler_filter/2`   is    for   named
     %%          processes where  the key can be  static (such as
