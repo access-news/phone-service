@@ -9,7 +9,7 @@
     , init/1
     , callback_mode/0
     , handle_event/4
-    % , terminate/3
+    , terminate/3
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
@@ -55,23 +55,15 @@ start(Ref) ->
 % }}- }}-
 init(_Args) ->
     %% Set up logging to file. {{- {{-
-    % filog:add_process_handler(?MODULE),
-    % filog:process_handler_filter(?MODULE),
-
-    %% NOTE: Leaving  this here  as a  reminder that  `init/1` is
-    %%       running in different process than the future `gen_*`
-    %%       behaviour,  therefore calling  `self()` in  `init/1`
-    %%       and  in the  started `gen_*`  behaviour will  result
-    %%       in  different PID  values. Yes,  this is  completely
-    %%       logical, but still need to remind myself.
-    %%
-    %%       (See  `add_handler_filter/3`  note in  `filog.erl`'s
-    %%       export list why all this  is a problem regarding the
-    %%       below statement.)
-    % filog:process_log(debug, #{ from => ["INIT"] }),
-    % ------------------------------------------------
+    % filog:add_process_handler(?MODULE, Ref),
+    % filog:process_handler_filter(?MODULE, Ref),
     %% }}- }}-
        %%   {IVRState,      CallerStatus}
+    logger:debug("==========================="),
+    logger:debug("==========================="),
+    logger:debug("==========================="),
+
+    process_flag(trap_exit, true),
     State = {incoming_call, unregistered},
     Data = #{dtmf_digits => ""},
     {ok, State, Data}.
@@ -79,11 +71,10 @@ init(_Args) ->
 callback_mode() ->
     handle_event_function.
 
-%% Remove log handler
-% terminate(Reason, State, Data) -> %% {{-
-%     % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
-%     filog:remove_process_handler(?MODULE).
-%% }}-
+ terminate(Reason, State, Data) ->
+    logger:debug(#{ self() => ["TERMINATE (normal-ish)", #{ data => Data, reason => Reason, state => State }]}).
+     % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
+     % filog:remove_process_handler(?MODULE).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% `info` clauses (for FreeSWITCH events) %%
@@ -205,6 +196,7 @@ callback_mode() ->
 handle_event(
   info,
   {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = ModErlEventMsg,
+  % {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = ModErlEventMsg,
   State,
   Data
 ) ->
@@ -221,11 +213,20 @@ handle_event(
     %% `gen_statem` state and data,  this log does not need
     %% to be  repeated in  `handle_event/4` below,  only to
     %% double-check matched values, calculations etc.
+
     % filog:process_log(debug, #{ from => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, mod_erlang_event_message => ModErlEventMsg, friendly_mod_erlang_event_message => MassagedModErlEvent,  state => State }]}),
+    % logger:debug(#{ self() => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, mod_erlang_event_message => ModErlEventMsg, friendly_mod_erlang_event_message => MassagedModErlEvent,  state => State }]}),
+    logger:debug(#{ self() => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, state => State, mod_erl_event_call_status => ModErlEventCallStatus }]}),
     {keep_state_and_data, TransitionActions};
 %% }}-
 
 %% CALL_HANGUP (info) {{-
+
+%% NOTE There  are two  related  events, CHANNEL_HANGUP  and
+%%      CHANNEL_HANGUP_COMPLETE. Not sure  why, but probably
+%%      to  denote certain  stages of  the call  termination
+%%      process,  just  as  the  `Answer-State`  header  has
+%%      multiple values (e.g., `early`, `answered`).
 handle_event(
   info,                 % EventType
   {call_hangup, _UUID}, % EventContent = ModErlEventMsg
@@ -233,8 +234,27 @@ handle_event(
   Data                  % Data
 ) ->
     % filog:process_log(debug, #{ from => ["CALL_HANGUP", #{ data => Data, state => State }]}),
+    logger:debug(#{ self() => ["CALL_HANGUP", #{ data => Data, state => State }]}),
     {stop, normal};
 %% }}-
+
+handle_event(
+  info,                          % EventType
+  ok = Msg,
+  State,
+  _Data                               % Data
+) ->
+    logger:debug(#{ self() => ["SENDMSG_CONFIRMATION", #{ message => Msg, state => State}]}),
+    keep_state_and_data;
+
+handle_event(
+  info,                          % EventType
+  Msg,
+  State,
+  _Data                               % Data
+) ->
+    logger:emergency(#{ self() => ["UNKNOWN", #{ unknown_msg => Msg, state => State}]}),
+    keep_state_and_data;
 
 %%%%%%%%%%%%%%%%%%%%%%%%
 %% `internal` clauses %%
@@ -255,15 +275,13 @@ handle_event(
   , #{ "Channel-ANI" := CallerNumber % | EventContent = MassagedModErlEvent
      }                               % |
   },                                 % /
-  {incoming_call, unregistered},     % State
+  {incoming_call, unregistered} = State,     % State
   Data                               % Data
 ) ->
     % filog:process_log(debug, #{ from => {mod_erlang_event_call_status, "INCOMING_CALL"} }),
+    logger:debug(#{ self() => ["INCOMING_CALL", #{ data => Data, state => State }]}),
 
     sendmsg(UUID, execute, ["answer", []]),
-
-    % start playback of main menu here (don't forget of repeats)
-    sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
 
     { CallerStatus
     , TransitionActions
@@ -285,6 +303,47 @@ handle_event(
     {next_state, {main_menu, CallerStatus}, Data, TransitionActions};
 %% }}-
 
+%% MAIN_MENU (internal) {{-
+handle_event(
+  internal,                          % EventType
+  { UUID                             % \
+  , call_event                             % |
+  , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
+  },                                 % /
+  {main_menu, _CallerStatus} = State,     % State
+  _Data                               % Data
+) ->
+    logger:debug(#{ self() => ["MAIN_MENU", #{ state => State}]}),
+
+    % start playback of main menu here (don't forget of repeats)
+    sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
+
+    keep_state_and_data;
+%% }}-
+
+handle_event(
+  internal,                          % EventType
+  { _UUID                             % \
+  , call_event                             % |
+  , #{ "Event-Name" := EventName } % | EventContent = MassagedModErlEvent
+  },                                 % /
+  State,
+  _Data                               % Data
+) ->
+    logger:debug(""),
+    logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ fs_event => EventName, state => State}]}),
+    logger:debug(""),
+    keep_state_and_data;
+
+handle_event(
+  internal,                          % EventType
+  Msg,
+  State,
+  _Data                               % Data
+) ->
+    logger:emergency(#{ self() => ["UNKNOWN_INTERNAL", #{ unknown_msg => Msg, state => State}]}),
+    keep_state_and_data;
+
 % handle_event(
 %   internal,                          % EventType
 %   _MassagedModErlEvent,
@@ -301,9 +360,10 @@ handle_event(
 handle_event(
   {timeout, unregistered_timer}, % EventType
   {hang_up, _UUID},              % EventContent
-  {_IVRState, registered},       % State
-  _Data                          % Data
+  {_IVRState, registered} = State,       % State
+  Data                          % Data
  ) ->
+    logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
     keep_state_and_data;
 
 handle_event(
@@ -313,8 +373,15 @@ handle_event(
   Data                           % Data
  ) ->
     %% See "CALL_HANGUP" `handle_event/4`
+    logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
     sendmsg(UUID, hangup, ["16"]),
-    {next_state, hangup, State, Data}.
+    %% Gave `normal` as reason, otherwise `gen_statem` will
+    %% crash  (which isn't  really a  problem, because  the
+    %% started `gen_statem`  processes are not  linked, and
+    %% could've  just trap  exits, but  why go  through the
+    %% hassle, when  a demo timeout is  considered a normal
+    %% behaviour.)
+    {stop, normal, Data#{termination_reason => "user did not log in"}}.
 %% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%

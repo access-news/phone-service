@@ -29,7 +29,7 @@
     %%   + `Timestamp` is  the number of seconds  since the
     %%     Epoch.
     %% }}-
-    [ add_handler/2
+    [ add_handler/1
     %% Convenience  wrappers  around `add_handler/2`.  Read {{-
     %% `add_handler_filter/3` for the rationale, but in a nutshell:
     %%
@@ -39,7 +39,7 @@
     %%    unique name.
     %% }}-
     , add_singleton_handler/1
-    , add_process_handler/1
+    , add_process_handler/2
     %% add_handler_filter                               {{-
     %%     (HandlerID::atom(), Name::atom(), Key::term())
     %%     -> ok | {error, term()}
@@ -67,13 +67,10 @@
     %%      module) get persisted.
     %%
     %%      At first, tried to match on the PID itself, but when
-    %%      modules (including behaviours) are started, the init
-    %%      function  will  run  way  before the  final  PID  of
-    %%      the  `gen_*`  process,  hence  calling  `self()`  in
-    %%      `init/1`  and in  the started  `gen_*` process  will
-    %%      yield different  result. (Logical, yet I  need to be
-    %%      reminded of  it.) In those  cases, a key  other than
-    %%      the PID needs to be supplied.
+    %%      modules (including behaviours) are started with `erl
+    %%      -run` then  the init  functions will run  way before
+    %%      the final PID of the Node process. In those cases, a
+    %%      key other than the PID needs to be supplied.
     %%
     %%        + `singleton_handler_filter/2`   is    for   named
     %%          processes where  the key can be  static (such as
@@ -105,7 +102,7 @@
     %% `add_handler_filter/3` for the rationale
     %% }}-
     , singleton_handler_filter/1
-    , process_handler_filter/1
+    , process_handler_filter/2
     %% Remove log handler. {{-
 
     %% NOTE: `Name`  must be  the same  that has  been used
@@ -150,8 +147,14 @@ start() ->
     logger:set_primary_config(level, debug),
     %% To make less noise on the console:
     %% logger:set_handler_config(default, level, notice),
+
+    %% No filters, all log events will get to main.
+    %% See "Primary project log" section above.
     add_singleton_handler(main).
 
+%% NOTE: `Key` in `add_handler_filter/3` should be the as the
+%%       one used in `log/3`. (Can be different, but then the
+%%       filter will not work.)
 add_handler_filter(HandlerID, Name, Key) when is_atom(Name) -> %% {{-
     FilterFun =
         fun
@@ -170,17 +173,9 @@ add_handler_filter(HandlerID, Name, Key) when is_atom(Name) -> %% {{-
       Filter
     ). %% }}-
 
-singleton_handler_filter(Name) ->
-    HandlerID = make_handler_id(Name),
-    add_handler_filter(HandlerID, Name, Name).
-
-process_handler_filter(Name) ->
-    HandlerID = make_handler_id(Name, self()),
-    add_handler_filter(HandlerID, Name, self()).
-
-add_handler(HandlerID, Name) when is_atom(Name) -> %% {{-
+%% TODO: again, add typespecs
+add_handler(HandlerID) when is_atom(HandlerID) -> %% {{-
     NodeName = atom_to_list(node()),
-    Pid = self(),
     % `Timestamp` in Elixir:                           {{-
     % ---------------------------------------------------
     % iex(6)> \
@@ -195,19 +190,16 @@ add_handler(HandlerID, Name) when is_atom(Name) -> %% {{-
     % #> "2019-12-20T17:53:52.995118Z"
     % ------------------------------------------------}}-
     Timestamp =
-        lists:foldl(
-            fun(Int, Acc) -> Acc ++ integer_to_list(Int) end,
-            "",
-            tuple_to_list(os:timestamp())
+        string:trim(
+          os:cmd("date +%Y-%m-%d_%H-%M-%S-%N"),
+          trailing,
+          "\n"
          ),
-    PidString =
-        filtered_pid_string(Pid),
     Filename =
         "./" ++
-        NodeName           ++ "-" ++
-        atom_to_list(Name) ++ "-" ++
-        PidString          ++ "-" ++
-        Timestamp          ++
+        NodeName                ++ "-" ++
+        atom_to_list(HandlerID) ++ "-" ++
+        Timestamp               ++
         ".log",
     Config =
         #{ config =>
@@ -221,29 +213,56 @@ add_handler(HandlerID, Name) when is_atom(Name) -> %% {{-
     ).
 %% }}-
 
+%% Singleton handler functions {{- {{-
 add_singleton_handler(Name) ->
     HandlerID = make_handler_id(Name),
-    add_handler(HandlerID, Name).
+    add_handler(HandlerID).
 
-add_process_handler(Name) ->
-    HandlerID = make_handler_id(Name, self()),
-    add_handler(HandlerID, Name).
+singleton_handler_filter(Name) ->
+    HandlerID = make_handler_id(Name),
+    add_handler_filter(HandlerID, Name, Name).
 
 remove_singleton_handler(Name) ->
     HandlerID = make_handler_id(Name),
     logger:remove_handler(HandlerID).
+%% }}- }}-
+
+%% Transient (or process) handler functions {{- {{-
+
+%% `Key`,
+%%
+%% * and not  `UUID`, because  it could be  anything that
+%%   disambiguates  between  processes, and  it  does  not
+%%   necessarily have to conform to the UUID format.
+%%
+%% * and  not  `UniqueID`  (event   though  this  is  the
+%%   intentional  meaning), to  draw attention  that this
+%%   `Key` is used in `process_log/2` implicitly.
+add_process_handler(Name, Key) ->
+    HandlerID = make_handler_id(Name, Key),
+    add_handler(HandlerID).
+
+process_handler_filter(Name, Key) ->
+    put(key, Key),
+    HandlerID = make_handler_id(Name, Key),
+    add_handler_filter(HandlerID, Name, Key).
 
 remove_process_handler(Name) ->
     HandlerID = make_handler_id(Name, self()),
     logger:remove_handler(HandlerID).
+%% }}- }}-
 
+%% NOTE: `Key` in `add_handler_filter/3` should be the as the
+%%       one used in `log/3`. (Can be different, but then the
+%%       filter will not work.)
 log(Level, Key, ValueList) when is_list(ValueList) ->
     logger:Level(
         #{ log => [Key | ValueList] }
      ).
 
 process_log(Level, ValueList) ->
-    log(Level, self(), ValueList).
+    log(Level, get(key), ValueList).
+    % log(Level, self(), ValueList).
 
 %% PRIVATE FUNCTIONS
 
@@ -255,19 +274,24 @@ append(Atom, String) ->
 make_handler_id(Name) when is_atom(Name) ->
     append(Name, "_log_handler").
 
-make_handler_id(Name, Pid) when is_pid(Pid) and is_atom(Name) ->
-    PidString = filtered_pid_string(Pid),
-    NewName = append(Name, PidString),
+% make_handler_id(Name, Pid) when is_pid(Pid) and is_atom(Name) ->
+%     PidString = filtered_pid_string(Pid),
+%     NewName = append(Name, PidString),
+%     make_handler_id(NewName);
+
+make_handler_id(Name, Ref) when is_reference(Ref) and is_atom(Name) ->
+    RefString = list_to_atom(ref_to_list(Ref)),
+    NewName = append(Name, RefString),
     make_handler_id(NewName).
 
 make_filter_id(Name) when is_atom(Name) ->
     append(Name, "_log_filter").
 
-filtered_pid_string(Pid) when is_pid(Pid) ->
-    lists:filter(
-      fun(Elem) -> not(lists:member(Elem, [$<, $>])) end,
-      pid_to_list(Pid)
-    ).
+% filtered_pid_string(Pid) when is_pid(Pid) ->
+%     lists:filter(
+%       fun(Elem) -> not(lists:member(Elem, [$<, $>])) end,
+%       pid_to_list(Pid)
+%     ).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
