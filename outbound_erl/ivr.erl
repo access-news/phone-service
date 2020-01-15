@@ -28,6 +28,18 @@ start(Ref) ->
 %% gen_statem callbacks %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 
+% Welcome to Access News, a service of Society For The Blind in Sacramento, California for blind, low-vision, and print-impaired individuals.
+
+% You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0# followed by your code, or if you would like to sign up up for Access News, please call us at 916 889 7519, or dial 02 to leave a message with your contact details.
+
+% For the main menu, press 0.
+% To listen to the tutorial, dial 00.
+% If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.
+% To learn about other blindness services, dial 03.
+% To start exploring menu items one by one, press #. Press # again to skip to the next, and dial #0 to jump back to the previous one.
+
+% If you would like to learn about the national Federation of the blind nfb newsline service with access to more than 300 newspapers and magazines including the Sacramento Bee. Please call 410-659-9314. If you would like to learn about the California Braille and talking book Library, please call 80095 to 5666. 
+
 % State transition cheat sheat {{- {{-
 % ============================
 
@@ -300,38 +312,65 @@ handle_event(
                   ]
                 }
         end,
-    {next_state, {main_menu, CallerStatus}, Data, TransitionActions};
+    {next_state, {greeting, CallerStatus}, Data, TransitionActions};
 %% }}-
 
-%% MAIN_MENU (internal) {{-
+%% GREETING (internal) {{-
 handle_event(
   internal,                          % EventType
   { UUID                             % \
   , call_event                             % |
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
   },                                 % /
-  {main_menu, _CallerStatus} = State,     % State
+  {greeting, _CallerStatus} = State,     % State
   _Data                               % Data
 ) ->
-    logger:debug(#{ self() => ["MAIN_MENU", #{ state => State}]}),
+    logger:debug(#{ self() => ["GREETING", #{ state => State}]}),
 
-    % start playback of main menu here (don't forget of repeats)
-    sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
+    % TODO start playback of main menu here (don't forget of repeats)
+
+    % TODO Try out `mod_vlc` to play aac and m4a files.
+
+    % REMINDER The default `playback_terminator` is  *, but that is
+    %          ok because  it is tied  to going up/back a  menu, so
+    %          playback should be stopped anyway.
+    %          https://freeswitch.org/confluence/display/FREESWITCH/playback_terminators
+
+    % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
+    sendmsg_locked(UUID, execute, ["playback", "silence_stream://750,1400"]),
+    % sendmsg_locked(UUID, execute, ["speak", "flite|kal|Welcome to Access News, a service of Society For The Blind in Sacramento, California for blind, low-vision, and print-impaired individuals."]),
+    sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3@@1300000"]),
 
     keep_state_and_data;
+%% }}-
+
+%% HANDLE_DTMF (internal) {{-
+handle_event(
+  internal,                          % EventType
+  { UUID                             % \
+  , call_event                             % |
+  , #{ "DTMF-Digit" := Digit} % | EventContent = MassagedModErlEvent
+  },                                 % /
+  State,
+  Data                               % Data
+) ->
+    logger:debug(#{ self() => ["DTMF", #{ digit => Digit, state => State}]}),
+    GenStatemReturn = handle_dtmf(State, Data, Digit, UUID),
+    sendmsg_locked(UUID, execute, ["speak", "flite|kal|Welcome to Access News, a service of Society For The Blind in Sacramento, California for blind, low-vision, and print-impaired individuals."]),
+    GenStatemReturn;
 %% }}-
 
 handle_event(
   internal,                          % EventType
   { _UUID                             % \
   , call_event                             % |
-  , #{ "Event-Name" := EventName } % | EventContent = MassagedModErlEvent
+  , #{ "Event-Name" := EventName } = FSEvent % | EventContent = MassagedModErlEvent
   },                                 % /
   State,
   _Data                               % Data
 ) ->
     logger:debug(""),
-    logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ fs_event => EventName, state => State}]}),
+    logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, fs_event_data => FSEvent,  state => State}]}),
     logger:debug(""),
     keep_state_and_data;
 
@@ -442,11 +481,19 @@ look_up(PhoneNumber) ->
 %%%%%%%%%%%%%%%%%%%%%%%%
 
 %% sendmsg/2 {{-
+
+%% Could've just saved the channel ID (i.e., `UUID`) to
+%% the process registry, because it unique to this call
+%% (hence to this process) but  this way it is explicit
+%% on  every  call,  and  mirrors  the  FreeSWITCH  ESL
+%% `sendmsg` syntax.
+
 %% TODO Only implemented for `execute` and `hangup` for now;
 %%      even these are lacking a thorough documentation.
 %%
 %%      See available `sendmsg` commands at
 %%      https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket#mod_event_socket-3.9.1Commands
+
 sendmsg_headers(execute, [App, Args]) ->
     %% TODO "loops"  header   and  alternate  format   for  long
     %%      messages (is it needed here?)  not added as they are
@@ -484,11 +531,6 @@ do_sendmsg(UUID, SendmsgCommand, Args, IsLocked) ->
         ++ LockHeaderList,
     fsend({sendmsg, UUID, FinalHeaders}).
 
-%% Could've just saved the channel ID (i.e., `UUID`) to
-%% the process registry, because it unique to this call
-%% (hence to this process) but  this way it is explicit
-%% on  every  call,  and  mirrors  the  FreeSWITCH  ESL
-%% `sendmsg` syntax.
 sendmsg(UUID, SendmsgCommand, Args) when is_list(Args) ->
     do_sendmsg(UUID, SendmsgCommand, Args, false).
 
@@ -519,10 +561,25 @@ fsend(Msg) ->
 % TR2 controls {{-
 % }}-
 
-handle_dtmf({publication, _CallerStatus, DTMFString} = State, "5") ->
-    timer:send_after(?DTMF_DIGIT_TIMEOUT, dtmf_digit_timeout),
-    fsend({bgapi, uuid_fileman, get(uuid) ++ " restart"}),
-    State.
+% handle_dtmf({publication, _CallerStatus, DTMFString} = State, "5") ->
+%     timer:send_after(?DTMF_DIGIT_TIMEOUT, dtmf_digit_timeout),
+%     fsend({bgapi, uuid_fileman, get(uuid) ++ " restart"}),
+%     State;
+
+handle_dtmf({greeting, CallerStatus}, #{ dtmf_digits := StateDigits } = Data, Digit, UUID) ->
+    % stop playback
+    fsend({api, uuid_break, UUID ++ " all"}),
+    keep_state_and_data;
+    %case Digit of
+    %    0 ->
+    %        %next_state with next_event actually
+    %        {next_state, {main_menu, CallerStatus}, Data};
+
+handle_dtmf(State, Data, Digit, _UUID) ->
+    logger:debug(""),
+    logger:emergency(#{ self() => ["UNHANDLED_DTMF", #{ data => Data, digit => Digit, state => State}]}),
+    logger:debug(""),
+    keep_state_and_data.
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
