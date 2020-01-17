@@ -1,14 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <include>
   <context name="default">
-
     <extension name="SignalWire CONNECTORS incoming call">
       <!-- the number you assigned in your dashboard -->
       <condition field="destination_number" expression="^(\+19162510217)$">
-
-        <!-- <action application="answer"/> -->
-        <!-- <action application="lua" data="main.lua"/> -->
-         <action application="erlang" data="call_control:start access_news@tr2"/>
+        <action application="erlang" data="call_control:start access_news@tr2"/>
       </condition>
     </extension>
   </context>

@@ -13,6 +13,9 @@
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
+
+-define(CATEGORIES, {category, []}).
+
 -define(DEMO_TIMEOUT, 600000).
 -define(DTMF_DIGIT_TIMEOUT, 5000).
 
@@ -34,11 +37,12 @@ start(Ref) ->
 
 % For the main menu, press 0.
 % To listen to the tutorial, dial 00.
+% To learn about other blindness services, dial 01.
 % If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.
-% To learn about other blindness services, dial 03.
-% To start exploring menu items one by one, press #. Press # again to skip to the next, and dial #0 to jump back to the previous one.
+% To start exploring menu items one by one, press the pound sign.
+% Press # again to skip to the next, and dial #0 to jump back to the previous one.
 
-% If you would like to learn about the national Federation of the blind nfb newsline service with access to more than 300 newspapers and magazines including the Sacramento Bee. Please call 410-659-9314. If you would like to learn about the California Braille and talking book Library, please call 80095 to 5666. 
+% If you would like to learn about the national Federation of the blind nfb newsline service with access to more than 300 newspapers and magazines including the Sacramento Bee. Please call 410-659-9314. If you would like to learn about the California Braille and talking book Library, please call 80095 to 5666.
 
 % State transition cheat sheat {{- {{-
 % ============================
@@ -70,14 +74,19 @@ init(_Args) ->
     % filog:add_process_handler(?MODULE, Ref),
     % filog:process_handler_filter(?MODULE, Ref),
     %% }}- }}-
-       %%   {IVRState,      CallerStatus}
+
     logger:debug("==========================="),
     logger:debug("==========================="),
     logger:debug("==========================="),
 
+    % TODO Why was this necessary?
     process_flag(trap_exit, true),
-    State = {incoming_call, unregistered},
-    Data = #{dtmf_digits => ""},
+
+    State = incoming_call,
+    Data =
+        #{ dtmf_digits => ""
+         , auth_status => unregistered
+         },
     {ok, State, Data}.
 
 callback_mode() ->
@@ -207,11 +216,18 @@ callback_mode() ->
 
 handle_event(
   info,
-  {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = ModErlEventMsg,
+  {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = _ModErlEventMsg,
   % {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = ModErlEventMsg,
   State,
   Data
 ) ->
+    %% As this  clause preceeds **every**  state transition
+    %% (not   just  state   changes!)   AND  always   keeps
+    %% `gen_statem` state and data,  this log does not need
+    %% to be  repeated in  `handle_event/4` below,  only to
+    %% double-check matched values, calculations etc.
+    logger:debug(#{ self() => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, state => State, mod_erl_event_call_status => ModErlEventCallStatus }]}),
+
     MassagedModErlEvent =
         { UUID
         , ModErlEventCallStatus
@@ -220,15 +236,10 @@ handle_event(
     TransitionActions =
         [ {next_event, internal, MassagedModErlEvent}
         ],
-    %% As this  clause preceeds **every**  state transition
-    %% (not   just  state   changes!)   AND  always   keeps
-    %% `gen_statem` state and data,  this log does not need
-    %% to be  repeated in  `handle_event/4` below,  only to
-    %% double-check matched values, calculations etc.
 
-    % filog:process_log(debug, #{ from => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, mod_erlang_event_message => ModErlEventMsg, friendly_mod_erlang_event_message => MassagedModErlEvent,  state => State }]}),
-    % logger:debug(#{ self() => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, mod_erlang_event_message => ModErlEventMsg, friendly_mod_erlang_event_message => MassagedModErlEvent,  state => State }]}),
-    logger:debug(#{ self() => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, state => State, mod_erl_event_call_status => ModErlEventCallStatus }]}),
+    %% Keeping  state  and  data,  because  the  FreeSWITCH
+    %% `info` messages  can come any time,  and this clause
+    %% only transforms them.
     {keep_state_and_data, TransitionActions};
 %% }}-
 
@@ -245,11 +256,17 @@ handle_event(
   State,                % State
   Data                  % Data
 ) ->
-    % filog:process_log(debug, #{ from => ["CALL_HANGUP", #{ data => Data, state => State }]}),
     logger:debug(#{ self() => ["CALL_HANGUP", #{ data => Data, state => State }]}),
-    {stop, normal};
+    %% Gave `normal` as reason, otherwise `gen_statem` will {{-
+    %% crash  (which isn't  really a  problem, because  the
+    %% started `gen_statem`  processes are not  linked, and
+    %% could've  just trap  exits, but  why go  through the
+    %% hassle, when  a demo timeout is  considered a normal
+    %% behaviour as well.) }}-
+    {stop, normal, Data};
 %% }}-
 
+%% SENDMSG_CONFIRMATION (info) {{-
 handle_event(
   info,                          % EventType
   ok = Msg,
@@ -258,27 +275,39 @@ handle_event(
 ) ->
     logger:debug(#{ self() => ["SENDMSG_CONFIRMATION", #{ message => Msg, state => State}]}),
     keep_state_and_data;
+%% }}-
 
+%% DEBUG (info)
+%% Catch-all clause to see unhandled `info` events.
 handle_event(
-  info,                          % EventType
-  Msg,
-  State,
-  _Data                               % Data
+  info,  % EventType
+  Msg,   % EventContent
+  State, % State
+  _Data  % Data
 ) ->
-    logger:emergency(#{ self() => ["UNKNOWN", #{ unknown_msg => Msg, state => State}]}),
+    logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 
 %%%%%%%%%%%%%%%%%%%%%%%%
 %% `internal` clauses %%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
-%% INCOMING_CALL (internal) {{-
+%% INCOMING_CALL (internal) (aka call init, see below)  {{-
 
+%% Call init {{-
+%% ====================================================
 %% This is the only state where `call` event can arrive
 %% -  or at  least this  is  how it  should be;  `call`
 %% should happen only once in  a call, and becuase this
 %% is  outbound mode,  and  the  process just  started,
 %% there is not much else flying around.
+
+%% Long story short, this is kind of the real `init` of
+%% the call (`init/1` is to initialize the `gen_statem`
+%% process), and thus some  variables are set here, and
+%% will document call-global notes here as well.
+
+%% }}-
 
 handle_event(
   internal,                          % EventType
@@ -287,15 +316,55 @@ handle_event(
   , #{ "Channel-ANI" := CallerNumber % | EventContent = MassagedModErlEvent
      }                               % |
   },                                 % /
-  {incoming_call, unregistered} = State,     % State
-  Data                               % Data
+  incoming_call                      = State,
+  #{ auth_status := unregistered }   = Data
 ) ->
-    % filog:process_log(debug, #{ from => {mod_erlang_event_call_status, "INCOMING_CALL"} }),
     logger:debug(#{ self() => ["INCOMING_CALL", #{ data => Data, state => State }]}),
 
-    sendmsg(UUID, execute, ["answer", []]),
+    %% Implicit UUID {{-
+    %% ====================================================
+    %% Tried  to  convince   myself  to  always  explicitly
+    %% include  the channel  ID  (i.e.,  `UUID`), but  just
+    %% putting  it  in  the process  dictionary  is  easier
+    %% because
+    %%
+    %%   + a `gen_statem` process will  only deal with one call
+    %%     anyway,
+    %%
+    %%   + analogous  to  how FreeSwITCH  does  it  in the  XML
+    %%     dialplan, and
+    %%
+    %%   + this  is  the  perfect  use  case  for  the  process
+    %%     registry as  the UUID  won't change during  the call
+    %%     (at least not in the Access News scenario).
+    %% }}-
+    put(uuid, UUID),
 
-    { CallerStatus
+    sendmsg(execute, ["answer", []]),
+    %% REMINDER (`playback_terminator`) {{-
+    %% ====================================================
+    %% https://freeswitch.org/confluence/display/FREESWITCH/playback_terminators
+    %%
+    %% The   default   `playback_terminator`  is   *,   and
+    %% that   should  be   ok   because  it   is  tied   to
+    %% going   up/back   a   menu,  but   playback   should
+    %% be  killed  in most  cases  anyway, and disabling it
+    %% would make it explicit (and also avoiding mysterious
+    %% errors in the future).
+    %%
+    %% Kind of the FreeSWITCH-equivalent of the CSS reset.
+    %%
+    %% The same  could've been done in  the dialplan (e.g.,
+    %% `freeswitch/dialplan/default.xml`) using
+    %% ```xml
+    %% <action application="set" data="playback_terminators=none"/>
+    %% ```
+    %% but this pertains  to each call, and  better to have
+    %% everything related to the same call in one place.
+    %% }}-
+    fsend({api, uuid_setvar, UUID ++ " playback_terminators none"}),
+
+    { NewAuthStatus
     , TransitionActions
     } =
         case is_user_registered(CallerNumber) of
@@ -304,62 +373,126 @@ handle_event(
                 , []
                 };
             false ->
+                DemoTimeout =                       % Generic timeout
+                    { {timeout, unregistered_timer} % { {timeout, Name}
+                    , ?DEMO_TIMEOUT                 % , Time
+                    , hang_up                       % , EventContent }
+                    },
                 { unregistered
-                , [ { {timeout, unregistered_timer}
-                    , ?DEMO_TIMEOUT
-                    , {hang_up, UUID}
-                    }
+                , [ DemoTimeout
                   ]
                 }
         end,
-    {next_state, {greeting, CallerStatus}, Data, TransitionActions};
+
+    { next_state
+    , greeting
+    , Data#{auth_status := NewAuthStatus}
+    , TransitionActions
+    };
 %% }}-
 
 %% GREETING (internal) {{-
+%% That is, events that are handled in the `greeting` state.
+
 handle_event(
-  internal,                          % EventType
-  { UUID                             % \
-  , call_event                             % |
+  internal,                               % EventType
+  { _UUID                                 % \
+  , call_event                            % |
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
-  },                                 % /
-  {greeting, _CallerStatus} = State,     % State
-  _Data                               % Data
+  },                                      % /
+  greeting                                = State,
+  #{ auth_status := AuthStatus }      = Data
 ) ->
     logger:debug(#{ self() => ["GREETING", #{ state => State}]}),
 
-    % TODO start playback of main menu here (don't forget of repeats)
+    comfort_noise(750),
+    play({State, AuthStatus}),
 
-    % TODO Try out `mod_vlc` to play aac and m4a files.
-
-    % REMINDER The default `playback_terminator` is  *, but that is
-    %          ok because  it is tied  to going up/back a  menu, so
-    %          playback should be stopped anyway.
-    %          https://freeswitch.org/confluence/display/FREESWITCH/playback_terminators
-
+    % TODO Try out `mod_vlc` to play aac and m4a files. {{-
     % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
-    sendmsg_locked(UUID, execute, ["playback", "silence_stream://750,1400"]),
-    % sendmsg_locked(UUID, execute, ["speak", "flite|kal|Welcome to Access News, a service of Society For The Blind in Sacramento, California for blind, low-vision, and print-impaired individuals."]),
-    sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3@@1300000"]),
+    % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
+    % }}-
 
     keep_state_and_data;
 %% }}-
 
-%% HANDLE_DTMF (internal) {{-
+%% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
 handle_event(
-  internal,                          % EventType
-  { UUID                             % \
-  , call_event                             % |
-  , #{ "DTMF-Digit" := Digit} % | EventContent = MassagedModErlEvent
-  },                                 % /
+  internal,                    % EventType
+  { _UUID                      % \
+  , call_event                 % |
+  , #{ "DTMF-Digit" := Digit}  % | EventContent = MassagedModErlEvent
+  },                           % /
   State,
-  Data                               % Data
+  #{dtmf_digits := DTMFDigits} = Data
 ) ->
-    logger:debug(#{ self() => ["DTMF", #{ digit => Digit, state => State}]}),
-    GenStatemReturn = handle_dtmf(State, Data, Digit, UUID),
-    sendmsg_locked(UUID, execute, ["speak", "flite|kal|Welcome to Access News, a service of Society For The Blind in Sacramento, California for blind, low-vision, and print-impaired individuals."]),
-    GenStatemReturn;
+    logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
+
+    % interdigit timeouts!
+    NewData =
+        case {State, Digit} of
+            %% greeting {{-
+
+            %% Stop  the  greeting,  change  state,  and  when  the
+            %% `PLAYBACK_STOP`  event  comes   in  from  FreeSWITCH
+            %% (`info` massage -> `internal`), the menu of the next
+            %% state is played.
+            %% ------------------------------------------------------*
+            * has no meaning in greeting or in ?CATEGORIES, but # does everywhere
+            {greeting, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
+                stop_playback();                                   % |
+                % {next_state, ?CATEGORIES, Data};                   % |
+                                                                % |
+            {_State, Digit} when Digit =:= "0" ->                % |
+                stop_playback();                                   % |
+                % {next_state, main_menu, Data};                     % |
+            %% ------------------------------------------------------*
+
+            %% Keep  playing  the   greeting,  continue  collecting
+            %% digits,  and caller  will be  sent to  the specified
+            %% category, if the `DTMFString` contains a valid entry
+            %% after  the  interdigit  timout.  Once  the  playback
+            %% finishes,  the `PLAYBACK_STOP`  event is  emitted by
+            %% FreeSWITCH,  and  the  state   will  be  changed  to
+            %% `?CATEGORIES`, but  the behavior  there will  be the
+            %% same, and  the digits will continue  to be collected
+            %% (until they make sense).
+
+            %% It is implicit  that `Digits` can only  be [1-9] (or
+            %% at least that is how it should be...)
+            {State, Digit} when State =/= article ->
+                % NewData = Data#{ dtmf_digits := DTMFDigits ++ [Digit] },
+                % {next_state, ?CATEGORIES, NewData};
+                lofa
+        end,
+        %% }}-
+
+    %% Why `keep_state`? {{- {{-
+    %% ====================================================
+    %% Many  key press  (in  many states)  should stop  the
+    %% playback, and cause a state  change, but if state is
+    %% changed in this `handle_event/4` clause than it will
+    %% be hard to understand  how subsequent events need to
+    %% handled.
+    %% 
+    %% For example, `stop_playback/0` will cause FreeSWITCH
+    %% to emit `PLAYBACK_STOP` events,  and if the state is
+    %% changed,  these events  will have  to be  handled in
+    %% those  states. But  these next  states will  have to
+    %% handle DTMF  events that stop the  playback as well,
+    %% where the  `PLAYBACK_STOP` events will be  pushed to
+    %% the subsequent events, and so on.
+    %% 
+    %% Keeping   the  state,   and  handle   the  resulting
+    %% `PLAYBACK_STOP` events in the same state that caused
+    %% seems more logical. Not to mention the natural state
+    %% changes  that result  in playbacks  stopping because
+    %% all the text has been read (so loop, or next state).
+    %% }}- }}-
+    {keep_state, NewData};
 %% }}-
 
+%% Debug clauses for `internal` events {{-
 handle_event(
   internal,                          % EventType
   { _UUID                             % \
@@ -391,6 +524,8 @@ handle_event(
 % ) ->
     % filog:process_log(debug, #{ from => "another event that is not INCOMING_CALL and CALL_HANGUP" });
 
+%% }}-
+
 %%%%%%%%%%%%%%
 %% Timeouts %%
 %%%%%%%%%%%%%%
@@ -398,29 +533,26 @@ handle_event(
 %% unregistered_timer {{-
 handle_event(
   {timeout, unregistered_timer}, % EventType
-  {hang_up, _UUID},              % EventContent
-  {_IVRState, registered} = State,       % State
-  Data                          % Data
+  hang_up,                       % EventContent
+  State,
+  #{ auth_status := AuthStatus } = Data
  ) ->
     logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
-    keep_state_and_data;
 
-handle_event(
-  {timeout, unregistered_timer}, % EventType
-  {hang_up, UUID},               % EventContent
-  {_IVRState, unregistered}      = State,
-  Data                           % Data
- ) ->
-    %% See "CALL_HANGUP" `handle_event/4`
-    logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
-    sendmsg(UUID, hangup, ["16"]),
-    %% Gave `normal` as reason, otherwise `gen_statem` will
-    %% crash  (which isn't  really a  problem, because  the
-    %% started `gen_statem`  processes are not  linked, and
-    %% could've  just trap  exits, but  why go  through the
-    %% hassle, when  a demo timeout is  considered a normal
-    %% behaviour.)
-    {stop, normal, Data#{termination_reason => "user did not log in"}}.
+    case AuthStatus of
+
+        unregistered ->
+            keep_state_and_data;
+
+        registered ->
+            %% The generated `CALL_HANGUP` event  will be caught by
+            %% "CALL_HANGUP" `handle_event/4`.
+            sendmsg(hangup, ["16"]),
+            %% Not stopping the  `gen_statem` process here, because
+            %% there will be further events related to the `hangup`
+            %% command above.
+            {keep_state, Data#{termination_reason => "No logins during the demo period."}}
+    end.
 %% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
@@ -519,7 +651,7 @@ sendmsg_headers(SendmsgCommand, Args) ->
     % ),
     [].
 
-do_sendmsg(UUID, SendmsgCommand, Args, IsLocked) ->
+do_sendmsg(SendmsgCommand, Args, IsLocked) ->
     LockHeaderList =
         case IsLocked of
             false -> [];
@@ -529,19 +661,24 @@ do_sendmsg(UUID, SendmsgCommand, Args, IsLocked) ->
         [{"call-command", atom_to_list(SendmsgCommand)}]
         ++ sendmsg_headers(SendmsgCommand, Args)
         ++ LockHeaderList,
-    fsend({sendmsg, UUID, FinalHeaders}).
+    fsend({sendmsg, get(uuid), FinalHeaders}).
 
-sendmsg(UUID, SendmsgCommand, Args) when is_list(Args) ->
-    do_sendmsg(UUID, SendmsgCommand, Args, false).
+sendmsg(SendmsgCommand, Args) when is_list(Args) ->
+    do_sendmsg(SendmsgCommand, Args, false).
 
-sendmsg_locked(UUID, SendmsgCommand, Args) when is_list(Args) ->
-    do_sendmsg(UUID, SendmsgCommand, Args, true).
+sendmsg_locked(SendmsgCommand, Args) when is_list(Args) ->
+    do_sendmsg(SendmsgCommand, Args, true).
 %% }}-
 
 fsend(Msg) ->
     %% Why the `lofa` atom:
     %% https://stackoverflow.com/questions/58981920/
     {lofa, ?FS_NODE} ! Msg.
+
+stop_playback() ->
+    % TODO Should this  be `bgapi`? Will the  synchronous `api`
+    %      call wreak havoc when many users are calling?
+    fsend({api, uuid_break, get(uuid) ++ " all"}).
 
 % Access News controls {{-
 % Press 8 for the help menu.
@@ -566,20 +703,65 @@ fsend(Msg) ->
 %     fsend({bgapi, uuid_fileman, get(uuid) ++ " restart"}),
 %     State;
 
-handle_dtmf({greeting, CallerStatus}, #{ dtmf_digits := StateDigits } = Data, Digit, UUID) ->
-    % stop playback
-    fsend({api, uuid_break, UUID ++ " all"}),
-    keep_state_and_data;
-    %case Digit of
-    %    0 ->
-    %        %next_state with next_event actually
-    %        {next_state, {main_menu, CallerStatus}, Data};
+% handle_dtmf(greeting, #{ dtmf_digits := DTMFDigits} = Data, Digit) ->
+%     case 
+%     stop_playback(UUID),
+%     case Digit of
+%         0 ->
+%             {next_state, {main_menu, CallerStatus}, Data};
+%         _ ->
+%             {
 
 handle_dtmf(State, Data, Digit, _UUID) ->
     logger:debug(""),
     logger:emergency(#{ self() => ["UNHANDLED_DTMF", #{ data => Data, digit => Digit, state => State}]}),
     logger:debug(""),
     keep_state_and_data.
+
+%% Playback-related {{-
+
+%% Using  `sendmsg_locked`  most   of  the  time  (with
+%% `speak`   or   `playback`)    because   it   enables
+%% synchronous execution on FreeSWITCH, so `event_lock`
+%% events  get  queued   up  and  called  sequentially.
+%% Otherwise playbacks would overlap.
+%% 
+%% Although  this  does   not  mean  that  `gen_statem`
+%% stands  still! Once  the  command is  sent off  with
+%% `sendmsg_locked`,  the process  continues execution,
+%% and waits for coming events (such as DTMF events).
+
+comfort_noise(Milliseconds) ->
+    ComfortNoise = "silence_stream://" ++ Milliseconds ++ ",1400",
+    sendmsg_locked(execute, ["playback", ComfortNoise]).
+
+play({greeting, AuthStatus}) ->
+    Welcome = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
+    Unregistered =
+        case AuthStatus of
+            registered ->
+                "";
+            unregistered ->
+                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0, pound, followed by your code, or if you would like to sign up up for Access News, please call us at 916, 889, 7519, or dial 0 2 to leave a message with your contact details."
+        end,
+    GoToTutorial = "To listen to the tutorial, dial 01.",
+    GoToBlindnessServices = "To learn about other blindness services, dial 03.",
+    LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.",
+    % GoToMainMenu = "For the main menu, press 0.",
+    % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
+    % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
+    speak(
+         Welcome
+      ++ Unregistered
+      % ++ GoToMainMenu
+      ++ GoToTutorial
+      ++ GoToBlindnessServices
+      ++ LeaveMessage
+    ).
+%% }}-
+
+speak(Text) ->
+    sendmsg_locked(execute, ["speak", "flite|kal|" ++ Text]).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
