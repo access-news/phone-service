@@ -84,8 +84,10 @@ init(_Args) ->
 
     State = incoming_call,
     Data =
-        #{ dtmf_digits => ""
+        #{ dtmf_digits => []
          , auth_status => unregistered
+         , collecting_digits => false
+         , 'IDT_running' => false
          },
     {ok, State, Data}.
 
@@ -424,26 +426,57 @@ handle_event(
   , #{ "DTMF-Digit" := Digit}  % | EventContent = MassagedModErlEvent
   },                           % /
   State,
-  #{dtmf_digits := DTMFDigits} = Data
+  #{ dtmf_digits := DTMFDigits
+   , auth_status := AuthStatus
+   , collecting_digits := CollectorStatus
+   , 'IDT_running' := IDTRunning
+   } = Data
 ) ->
     logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
 
-    % interdigit timeouts!
+    %% 1 2 3   \
+    %% 4 5 6    > Interdigit time-out (IDT) = 2 sec (?)
+    %% 7 8 9   /  EXCEPT when playing an article, then IDT = 0
+    %% -----
+    %% * 0 #   Interdigit time-out = 0
+
+    % Then notion is that in every state when one of "123456789" is pressed, "collecting_digits" mode is initiated, and "*" and "#" will be ignored (except when received after the interdigit time-out (IDT) expired), but they will trigger an extra IDT seconds to get new digits.
     NewData =
         case {State, Digit} of
-            %% greeting {{-
 
-            %% Stop  the  greeting,  change  state,  and  when  the
-            %% `PLAYBACK_STOP`  event  comes   in  from  FreeSWITCH
-            %% (`info` massage -> `internal`), the menu of the next
-            %% state is played.
+            %% Brings to main menu (`main_menu`) in every state
+            {_State, Digit} when Digit =:= "0" ->                % |
+                stop_playback();                                   % |
+                Data#{ dtmf_digits := DTMFDigits ++ [Digit] };
+                % {next_state, main_menu, Data};                     % |
             %% ------------------------------------------------------*
-            * has no meaning in greeting or in ?CATEGORIES, but # does everywhere
+
+            %% Stop   greeting,   and  (once   `PLAYBACK_STOP`   is
+            %% received) jump to `?CATEGORIES`.
             {greeting, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
                 stop_playback();                                   % |
                 % {next_state, ?CATEGORIES, Data};                   % |
-                                                                % |
-            {_State, Digit} when Digit =:= "0" ->                % |
+
+            %% ?CATEGORIES - * (star) and # (pound) has no functionality;
+            %%                ignored when pressed.
+    % When a user presses it accidentally when signing in,
+    % or when selecting the category, it will get filtered
+    % out.
+            %% TODO * - unassigned
+            %% TODO # - unassigned
+            {?CATEGORIES, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
+                noop;
+                % keep_state_and_data;                   % |
+
+            %% # (pound) means "next category" in any other state
+            %% (e.g., when  listening to an article,  it means jump
+            %% to the next publication)
+            {_State, Digit} when Digit =:= "#" ->                % |
+                stop_playback();                                   % |
+                % {next_state, main_menu, Data};                     % |
+
+            %% * (star) means "go back / previous menu" in any other state
+            {_State, Digit} when Digit =:= "*" ->                % |
                 stop_playback();                                   % |
                 % {next_state, main_menu, Data};                     % |
             %% ------------------------------------------------------*
@@ -451,7 +484,7 @@ handle_event(
             %% Keep  playing  the   greeting,  continue  collecting
             %% digits,  and caller  will be  sent to  the specified
             %% category, if the `DTMFString` contains a valid entry
-            %% after  the  interdigit  timout.  Once  the  playback
+            %% after  the  interdigit  time-out.  Once  the  playback
             %% finishes,  the `PLAYBACK_STOP`  event is  emitted by
             %% FreeSWITCH,  and  the  state   will  be  changed  to
             %% `?CATEGORIES`, but  the behavior  there will  be the
@@ -464,8 +497,8 @@ handle_event(
                 % NewData = Data#{ dtmf_digits := DTMFDigits ++ [Digit] },
                 % {next_state, ?CATEGORIES, NewData};
                 lofa
+                % Data#{ dtmf_digits := DTMFDigits ++ [Digit] };
         end,
-        %% }}-
 
     %% Why `keep_state`? {{- {{-
     %% ====================================================
@@ -474,7 +507,7 @@ handle_event(
     %% changed in this `handle_event/4` clause than it will
     %% be hard to understand  how subsequent events need to
     %% handled.
-    %% 
+    %%
     %% For example, `stop_playback/0` will cause FreeSWITCH
     %% to emit `PLAYBACK_STOP` events,  and if the state is
     %% changed,  these events  will have  to be  handled in
@@ -482,12 +515,24 @@ handle_event(
     %% handle DTMF  events that stop the  playback as well,
     %% where the  `PLAYBACK_STOP` events will be  pushed to
     %% the subsequent events, and so on.
-    %% 
+    %%
     %% Keeping   the  state,   and  handle   the  resulting
     %% `PLAYBACK_STOP` events in the same state that caused
     %% seems more logical. Not to mention the natural state
     %% changes  that result  in playbacks  stopping because
     %% all the text has been read (so loop, or next state).
+
+    %% REMINDER
+    %%
+    %% When  the   `PLAYBACK_STOP`  event  comes   in  from
+    %% FreeSWITCH it first
+    %% 1. enters as an `info` message,
+    %% 2. gets massaged  into more  pattern-matchable form
+    %%    that
+    %% 3. will be inserted as an `internal` event,
+    %% 4. and only then will the `PLAYBACK_STOP` FreeSWITCH
+    %%    event really handled.
+
     %% }}- }}-
     {keep_state, NewData};
 %% }}-
@@ -704,7 +749,7 @@ stop_playback() ->
 %     State;
 
 % handle_dtmf(greeting, #{ dtmf_digits := DTMFDigits} = Data, Digit) ->
-%     case 
+%     case
 %     stop_playback(UUID),
 %     case Digit of
 %         0 ->
@@ -725,7 +770,7 @@ handle_dtmf(State, Data, Digit, _UUID) ->
 %% synchronous execution on FreeSWITCH, so `event_lock`
 %% events  get  queued   up  and  called  sequentially.
 %% Otherwise playbacks would overlap.
-%% 
+%%
 %% Although  this  does   not  mean  that  `gen_statem`
 %% stands  still! Once  the  command is  sent off  with
 %% `sendmsg_locked`,  the process  continues execution,
