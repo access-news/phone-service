@@ -17,6 +17,7 @@
 -define(CATEGORIES, {category, []}).
 
 -define(DEMO_TIMEOUT, 600000).
+-define(INTER_DIGIT_TIMEOUT, 2000).
 -define(DTMF_DIGIT_TIMEOUT, 5000).
 
 start_link(Ref) ->
@@ -86,8 +87,8 @@ init(_Args) ->
     Data =
         #{ dtmf_digits => []
          , auth_status => unregistered
-         , collecting_digits => false
-         , 'IDT_running' => false
+         , history     => [ ?CATEGORIES ]
+         % , idt_running => false %% If true, we are collecting DTMF digits
          },
     {ok, State, Data}.
 
@@ -426,10 +427,13 @@ handle_event(
   , #{ "DTMF-Digit" := Digit}  % | EventContent = MassagedModErlEvent
   },                           % /
   State,
+   % if `DTMFDigits =/= []`, we are collecting digits
   #{ dtmf_digits := DTMFDigits
    , auth_status := AuthStatus
-   , collecting_digits := CollectorStatus
-   , 'IDT_running' := IDTRunning
+   % When `idt_running` is true, it means we are collecting digits for category selection.
+   % , collecting_digits := CollectorStatus
+   % , idt_running := IDTRunning
+   , history := History
    } = Data
 ) ->
     logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
@@ -441,29 +445,98 @@ handle_event(
     %% * 0 #   Interdigit time-out = 0
 
     % Then notion is that in every state when one of "123456789" is pressed, "collecting_digits" mode is initiated, and "*" and "#" will be ignored (except when received after the interdigit time-out (IDT) expired), but they will trigger an extra IDT seconds to get new digits.
-    NewData =
-        case {State, Digit} of
+
+    OneToNine =
+        case string:find("123456789", Digit) of
+            nomatch ->
+                false;
+            _ ->
+                true
+        end,
+
+    InterDigitTimeout =                  % Generic timeout
+        { {timeout, inter_digit_timer}   % { {timeout, Name}
+        , ?INTER_DIGIT_TIMEOUT           % , Time
+        , eval_collected_digits          % , EventContent }
+        },
+
+    { NewData 
+    , TransitionActions
+    } =
+        % {{- {{-
+        % When `idt_running` is true, it means we are collecting digits for category selection. So when IDT is not running and 0 comes in, then go to main menu, but when IDT is running, then add it to `DTMFDigits`, renew IDT, and keep collecting. Another example is when IDT is not running, and * (star) and # (pound) arrives, go back or go to next category respectively, but when IDT is running, then ignore these inputs and renew IDT, and keep collecting.
+
+        % IDT race condition when collecting digits
+        % ====================================================
+        % It is possible that IDT times out while processing a DTMF digit. What then?
+
+        % This probably isn't as bad as it sounds, or maybe not even bad at all. For example, a user is having trouble to dial digits quickly (device issues, disability, etc.), and one of the digits hits this race condition, but this is an important input, so IDT time-out can be ignore, and now this digit is saved and IDT extended.
+
+        % Is there a scenario where this can turn sour? Someone start dialing for a category, but then change their minds, and wants to hit the main menu, go back, etc. Even in not a race condition status they would have to wait until the IDT runs out. If they do get into a category, they can always go back with * (star).
+        % }}- }}-
+        case
+            #{ state => State
+             , received_digit => Digit
+             % `DTMFDigits` emptied after eval on `inter_digit_timer` timeout
+             , collecting_digits => DTMFDigits =/= []
+             , one_to_nine => OneToNine
+             }
+        of
+            % 1 to 9 pressed in any state, except when playing an article or in `main_menu` {{-
+            % No need to check whether we are collecting digits, because when digits 1 to 9 are pressed anywhere else, and we are not in `article` or in `main_menu` state, then just keep accumulating them, and the inter-digit time-out (IDT) clauses will determine whether if there is anything meaningful or not.
+            % Another reason is that * (star), # (pound), and 0 are instant actions (no IDT when pressed), so if those are pressed, this case clause will simply be skipped, and subsequent clauses will determine what to do with them, depending on whether digits are collected.
+            % The reason why `article` and `main_menu` are excluded is because they only have single digit instant actions (no IDT when a digit is dialed).
+            % }}-
+            #{ state := State
+             , received_digit := Digit
+             , one_to_nine := true
+             }
+            when State =/= article ->
+                { push_digit(Data, Digit)
+                , [ InterDigitTimeout ]
+                }
+
+% 0 pressed in any state
+% * (star) or # (pound) pressed in `greeting`
+% # (pound) pressed in `main_menu`
+% * (star) pressed in any state, except `greeting`
+% # (pound) pressed in any state, except `greeting` and `main_menu`
+            #{ state := State, digit := Digit, idt_running := true }
+                when
+                  State =/= article,
+                  Digit =/= "*",
+                  Digit =/= "#"
+            ->
+                Data;
 
             %% Brings to main menu (`main_menu`) in every state
-            {_State, Digit} when Digit =:= "0" ->                % |
-                stop_playback();                                   % |
-                Data#{ dtmf_digits := DTMFDigits ++ [Digit] };
+            {State, Digit} when Digit =:= "0" ->                % |
+                stop_playback(),                                   % |
+                Data#{ dtmf_digits   := DTMFDigits ++ [Digit]
+                     , prev_category := State
+                     };
                 % {next_state, main_menu, Data};                     % |
             %% ------------------------------------------------------*
 
             %% Stop   greeting,   and  (once   `PLAYBACK_STOP`   is
             %% received) jump to `?CATEGORIES`.
+            %% TODO * - unassigned
+            %% TODO # - unassigned
+            % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
             {greeting, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
-                stop_playback();                                   % |
+                stop_playback(),                                   % |
+                % No need to save * (star) or # (pound) because their only function in `greeting` state is to fast-forward to `?CATEGORIES`
+                Data;
                 % {next_state, ?CATEGORIES, Data};                   % |
 
             %% ?CATEGORIES - * (star) and # (pound) has no functionality;
             %%                ignored when pressed.
-    % When a user presses it accidentally when signing in,
-    % or when selecting the category, it will get filtered
-    % out.
+            % When a user presses it accidentally when signing in,
+            % or when selecting the category, it will get filtered
+            % out.
             %% TODO * - unassigned
             %% TODO # - unassigned
+            % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
             {?CATEGORIES, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
                 noop;
                 % keep_state_and_data;                   % |
@@ -500,27 +573,23 @@ handle_event(
                 % Data#{ dtmf_digits := DTMFDigits ++ [Digit] };
         end,
 
-    %% Why `keep_state`? {{- {{-
+    %% Why `keep_state` and no inserted events? {{- {{-
     %% ====================================================
-    %% Many  key press  (in  many states)  should stop  the
-    %% playback, and cause a state  change, but if state is
-    %% changed in this `handle_event/4` clause than it will
-    %% be hard to understand  how subsequent events need to
-    %% handled.
-    %%
-    %% For example, `stop_playback/0` will cause FreeSWITCH
-    %% to emit `PLAYBACK_STOP` events,  and if the state is
-    %% changed,  these events  will have  to be  handled in
-    %% those  states. But  these next  states will  have to
-    %% handle DTMF  events that stop the  playback as well,
-    %% where the  `PLAYBACK_STOP` events will be  pushed to
-    %% the subsequent events, and so on.
-    %%
-    %% Keeping   the  state,   and  handle   the  resulting
-    %% `PLAYBACK_STOP` events in the same state that caused
-    %% seems more logical. Not to mention the natural state
-    %% changes  that result  in playbacks  stopping because
-    %% all the text has been read (so loop, or next state).
+    % ### 1. Why no inserted events?
+    % 
+    % Already using inserted events to make FreeSWITCH events more manageable (see `MOD_ERL_EVENT_MASSAGE`), and adding extra `internal` events would cause a race condition; "_the order of these stored events is preserved, so the first next_event in the containing list becomes the first to process_", thus massaged FreeSWITCH earlier (read further why this is a problem).
+    % 
+    % It is also unnecessary because more natural transition opportunities will present themselves, such as `PLAYBACK_STOP` FreeSWITCH events whenever the playback is stopped. Adding an extra internal event is therefore superfluous as well.
+    % 
+    % There is a hitch though: `PLAYBACK_STOP` events won't provide a context regarding what key press (i.e., `DTMF` event) caused the playback to stop, so these will need to get stored.
+    % 
+    % ### 2. Why keep the state?
+    % 
+    % Many key presses (in many states) should stop the playback and cause a state change (e.g., from `greeting` to `?CATEGORIES`), but if state is changed in this `handle_event/4` clause then it will be hard to understand how subsequent events need to handled.
+    % 
+    % For example, `stop_playback/0` will cause FreeSWITCH to emit a `PLAYBACK_STOP` event, and if the state is changed, these events will have to be handled in those next states. But these next states will also receive DTMF events that stop the playback, and the handling of `PLAYBACK_STOP` events will be pushed to the subsequent states, and so on.
+    % 
+    % It seems more logical to keep the state, and handle the `PLAYBACK_STOP` events where the playbacks have been started. Not to mention the natural state changes that result in playbacks stopping because all the text has been read (so loop, or next state). So if a state change is forced on `DTMF` events, and then playback relating to a specific state will have to be handled in the same state and in the next one. Will get messy real quick.
 
     %% REMINDER
     %%
@@ -581,7 +650,7 @@ handle_event(
   hang_up,                       % EventContent
   State,
   #{ auth_status := AuthStatus } = Data
- ) ->
+) ->
     logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
 
     case AuthStatus of
@@ -598,6 +667,18 @@ handle_event(
             %% command above.
             {keep_state, Data#{termination_reason => "No logins during the demo period."}}
     end.
+%% }}-
+
+%% inter_digit_timer {{-
+handle_event(
+  {timeout, inter_digit_timer}, % EventType
+  eval_collected_digits,        % EventContent
+  _State,
+  #{ dtmf_digits := DTMFDigits } = _Data
+) ->
+    % TODO Prod system along, or play prompt (e.g., "Selection is invalid") if category does not exist.
+    handle_digits,
+    {keep_state, Data#{ dtmf_digits := [] }}.
 %% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
@@ -782,6 +863,7 @@ comfort_noise(Milliseconds) ->
 
 play({greeting, AuthStatus}) ->
     Welcome = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
+    SelectionSkip = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories",
     Unregistered =
         case AuthStatus of
             registered ->
@@ -799,6 +881,7 @@ play({greeting, AuthStatus}) ->
          Welcome
       ++ Unregistered
       % ++ GoToMainMenu
+      ++ SelectionSkip
       ++ GoToTutorial
       ++ GoToBlindnessServices
       ++ LeaveMessage
