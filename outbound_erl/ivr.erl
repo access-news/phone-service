@@ -88,6 +88,7 @@ init(_Args) ->
         #{ dtmf_digits => []
          , auth_status => unregistered
          , history     => [ ?CATEGORIES ]
+         , next_state_on_playback_stop => #{}
          % , idt_running => false %% If true, we are collecting DTMF digits
          },
     {ok, State, Data}.
@@ -280,7 +281,7 @@ handle_event(
     keep_state_and_data;
 %% }}-
 
-%% DEBUG (info)
+%% DEBUG (info) {{-
 %% Catch-all clause to see unhandled `info` events.
 handle_event(
   info,  % EventType
@@ -290,6 +291,7 @@ handle_event(
 ) ->
     logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
+%% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%%
 %% `internal` clauses %%
@@ -454,7 +456,9 @@ handle_event(
                 true
         end,
 
-    InterDigitTimeout =                  % Generic timeout
+        % The notion is that the `InterDigitTimer` is restarted whenever a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
+        % TODO Does timer cancellation produce an event?
+    InterDigitTimer =                  % Generic timeout
         { {timeout, inter_digit_timer}   % { {timeout, Name}
         , ?INTER_DIGIT_TIMEOUT           % , Time
         , eval_collected_digits          % , EventContent }
@@ -482,25 +486,56 @@ handle_event(
              , one_to_nine => OneToNine
              }
         of
-            % 1 to 9 pressed in any state, except when playing an article or in `main_menu` {{-
-            % No need to check whether we are collecting digits, because when digits 1 to 9 are pressed anywhere else, and we are not in `article` or in `main_menu` state, then just keep accumulating them, and the inter-digit time-out (IDT) clauses will determine whether if there is anything meaningful or not.
-            % Another reason is that * (star), # (pound), and 0 are instant actions (no IDT when pressed), so if those are pressed, this case clause will simply be skipped, and subsequent clauses will determine what to do with them, depending on whether digits are collected.
-            % The reason why `article` and `main_menu` are excluded is because they only have single digit instant actions (no IDT when a digit is dialed).
-            % }}-
+            % [1-9] in any state will trigger DTMF collection,
+            % (except when playing an article or in `main_menu`)
             #{ state := State
              , received_digit := Digit
              , one_to_nine := true
+            % Not checking whether we are collecting digits, because {{-
+            % this clause is explicitly for that scenario (i.e., digits 1 to 9 are pressed not in `main_menu` or in `article`), and collecting_digits may be `false` if this is the first round. With each new digit, the inter-digit timer (IDT) gets restarted. The "timeout" `handle_event/4` clauses will determine whether the contents of the DTMF buffer (`DTMFDigits`) is useful, and it will also clear it on timeout.
+            % Another reason is that * (star), # (pound), and 0 are instant actions (no IDT when pressed), so if those are pressed, this case clause will simply be skipped, and subsequent clauses will determine what to do with them, depending on whether digits are collected.
+            % }}-
+             % , collecting_digits := true
              }
-            when State =/= article ->
+            % The reason why `article` and `main_menu` are excluded is because they only have single digit instant actions (no IDT when a digit is dialed), and numbers have different semantics.
+            when State =/= article,
+                 State =/= main_menu
+            ->
+                % `next_state_on_playback_stop` and `history` fields update in `Data` not necessary, as any playback is allowed to run its course here
                 { push_digit(Data, Digit)
-                , [ InterDigitTimeout ]
-                }
+                , [ InterDigitTimer ]
+                };
 
-% 0 pressed in any state
-% * (star) or # (pound) pressed in `greeting`
-% # (pound) pressed in `main_menu`
-% * (star) pressed in any state, except `greeting`
-% # (pound) pressed in any state, except `greeting` and `main_menu`
+            % 0 in any state when collecting digits
+            #{ state := State
+             , received_digit := "0"
+             , collecting_digits := true
+             , one_to_nine := false % not necessary, but explicit
+             }
+            ->
+                % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `inter_digit_timer` expires
+                { push_digit(Data, Digit)
+                , [ InterDigitTimer ]
+                };
+
+            % 0 in any state when NOT collecting digits
+            #{ state := State
+             , received_digit := "0"
+             , collecting_digits := false
+             , one_to_nine := false % not necessary, but explicit
+             }
+            ->
+                stop_playback(),
+                % No need to cancel any timers as there shouldn't be any; if we were collecting digits, zero would be handled in the previous clause, otherwise we would never get here.
+                NewData =
+                    Data#{
+
+% * (star) or # (pound) in `greeting`
+% # (pound) in `main_menu`
+% * (star) in any state, except `greeting`
+% # (pound) in any state, except `greeting` and `main_menu`
+% 1-9 in `main_menu`
+% 1-9 when playing an article
             #{ state := State, digit := Digit, idt_running := true }
                 when
                   State =/= article,
@@ -573,7 +608,7 @@ handle_event(
                 % Data#{ dtmf_digits := DTMFDigits ++ [Digit] };
         end,
 
-    %% Why `keep_state` and no inserted events? {{- {{-
+    %% (Why `keep_state`)FALSE and no inserted events? {{- {{-
     %% ====================================================
     % ### 1. Why no inserted events?
     % 
@@ -583,14 +618,14 @@ handle_event(
     % 
     % There is a hitch though: `PLAYBACK_STOP` events won't provide a context regarding what key press (i.e., `DTMF` event) caused the playback to stop, so these will need to get stored.
     % 
-    % ### 2. Why keep the state?
+    % ### 2. Why keep the state? (KEEP! See update below)
     % 
     % Many key presses (in many states) should stop the playback and cause a state change (e.g., from `greeting` to `?CATEGORIES`), but if state is changed in this `handle_event/4` clause then it will be hard to understand how subsequent events need to handled.
     % 
     % For example, `stop_playback/0` will cause FreeSWITCH to emit a `PLAYBACK_STOP` event, and if the state is changed, these events will have to be handled in those next states. But these next states will also receive DTMF events that stop the playback, and the handling of `PLAYBACK_STOP` events will be pushed to the subsequent states, and so on.
     % 
     % It seems more logical to keep the state, and handle the `PLAYBACK_STOP` events where the playbacks have been started. Not to mention the natural state changes that result in playbacks stopping because all the text has been read (so loop, or next state). So if a state change is forced on `DTMF` events, and then playback relating to a specific state will have to be handled in the same state and in the next one. Will get messy real quick.
-
+    %
     %% REMINDER
     %%
     %% When  the   `PLAYBACK_STOP`  event  comes   in  from
@@ -601,6 +636,12 @@ handle_event(
     %% 3. will be inserted as an `internal` event,
     %% 4. and only then will the `PLAYBACK_STOP` FreeSWITCH
     %%    event really handled.
+
+% #### 2.1 Update - don't keep state
+
+% The problem is race condition again. Take the 0# combo (for unregistered users to sign in) in `greeting`: user hits 0, playback stops, and if # (pound) comes in almost immediately then it will be evaluated in `greeting`, having completely different semantics.
+
+% Another false assumption I made is that `PLAYBACK_STOP` is the only thing that needs checking, but `speak` (and probably other TTS engine players) only generate `CHANNEL_EXECUTION_COMPLETE`, although the problem remains the same.
 
     %% }}- }}-
     {keep_state, NewData};
@@ -668,16 +709,17 @@ handle_event(
             {keep_state, Data#{termination_reason => "No logins during the demo period."}}
     end.
 %% }}-
-
 %% inter_digit_timer {{-
+%% TODO Not sure if an event is generated when a timer is canceled. Be prepared for cryptic error messages if that is the case.
 handle_event(
   {timeout, inter_digit_timer}, % EventType
   eval_collected_digits,        % EventContent
   _State,
-  #{ dtmf_digits := DTMFDigits } = _Data
+  #{ dtmf_digits := _DTMFDigits } = Data
 ) ->
     % TODO Prod system along, or play prompt (e.g., "Selection is invalid") if category does not exist.
     handle_digits,
+    % Always clear DTMF buffer when the `inter_digit_timer` expires, because at this point the buffer has been evaluated (outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result), and so a clean slate is needed.
     {keep_state, Data#{ dtmf_digits := [] }}.
 %% }}-
 
@@ -751,23 +793,28 @@ look_up(PhoneNumber) ->
 %%
 %%      See available `sendmsg` commands at
 %%      https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket#mod_event_socket-3.9.1Commands
+event_uuid_header(UUID) ->
+    %% The most important header.
+    [ {"Event-UUID", UUID} ].
 
-sendmsg_headers(execute, [App, Args]) ->
+sendmsg_headers(execute, [App, Args], UUID) ->
     %% TODO "loops"  header   and  alternate  format   for  long
     %%      messages (is it needed here?)  not added as they are
     %%      not needed yet.
     [ {"execute-app-name", App}
     , {"execute-app-arg", Args}
+    , event_uuid_header(UUID)
     ];
 
-sendmsg_headers(hangup, [HangupCode]) ->
+sendmsg_headers(hangup, [HangupCode], _UUID) ->
     %% For hangup codes, see
     %% https://freeswitch.org/confluence/display/FREESWITCH/Hangup+Cause+Code+Table
-    [{"hangup-cause", HangupCode}];
+    [{"hangup-cause", HangupCode}
+    ];
 
 %% This will  blow up,  one way or  the other,  but not
 %% planning to get there anyway.
-sendmsg_headers(SendmsgCommand, Args) ->
+sendmsg_headers(_SendmsgCommand, _Args, _UUID) ->
     % filog:process_log(
     %   emergency,
     %   ["`sendmsg` command not implemented yet"
@@ -783,11 +830,14 @@ do_sendmsg(SendmsgCommand, Args, IsLocked) ->
             false -> [];
             true  -> [{"event-lock", "true"}]
         end,
+    PoorMansUUID =
+        lists:flatten(io_lib:format("~p", [now()])),
     FinalHeaders =
         [{"call-command", atom_to_list(SendmsgCommand)}]
-        ++ sendmsg_headers(SendmsgCommand, Args)
+        ++ sendmsg_headers(SendmsgCommand, Args, PoorMansUUID)
         ++ LockHeaderList,
-    fsend({sendmsg, get(uuid), FinalHeaders}).
+    fsend({sendmsg, get(uuid), FinalHeaders}),
+    PoorMansUUID.
 
 sendmsg(SendmsgCommand, Args) when is_list(Args) ->
     do_sendmsg(SendmsgCommand, Args, false).
@@ -802,6 +852,7 @@ fsend(Msg) ->
     {lofa, ?FS_NODE} ! Msg.
 
 stop_playback() ->
+    logger:debug("stop playback"),
     % TODO Should this  be `bgapi`? Will the  synchronous `api`
     %      call wreak havoc when many users are calling?
     fsend({api, uuid_break, get(uuid) ++ " all"}).
@@ -821,29 +872,6 @@ stop_playback() ->
 % Press # to skip to the last article in this category.
 % }}-
 
-% TR2 controls {{-
-% }}-
-
-% handle_dtmf({publication, _CallerStatus, DTMFString} = State, "5") ->
-%     timer:send_after(?DTMF_DIGIT_TIMEOUT, dtmf_digit_timeout),
-%     fsend({bgapi, uuid_fileman, get(uuid) ++ " restart"}),
-%     State;
-
-% handle_dtmf(greeting, #{ dtmf_digits := DTMFDigits} = Data, Digit) ->
-%     case
-%     stop_playback(UUID),
-%     case Digit of
-%         0 ->
-%             {next_state, {main_menu, CallerStatus}, Data};
-%         _ ->
-%             {
-
-handle_dtmf(State, Data, Digit, _UUID) ->
-    logger:debug(""),
-    logger:emergency(#{ self() => ["UNHANDLED_DTMF", #{ data => Data, digit => Digit, state => State}]}),
-    logger:debug(""),
-    keep_state_and_data.
-
 %% Playback-related {{-
 
 %% Using  `sendmsg_locked`  most   of  the  time  (with
@@ -851,6 +879,8 @@ handle_dtmf(State, Data, Digit, _UUID) ->
 %% synchronous execution on FreeSWITCH, so `event_lock`
 %% events  get  queued   up  and  called  sequentially.
 %% Otherwise playbacks would overlap.
+
+% NOTE: "Locked" (i.e., synced) and async events can be mix-and-matched. Just did a `comfort_noise/0`, followed by a `speak` (both "locked"), and then an async hangup (with simple `sendmsg/2`). Everything went fine, and after the all media played the channel got hung up. Another test: sync `comfort_noise/0` followed by an async `speak` and async `hangup`. Could hear the `speak` kick in, but once `hangup` was received the call got terminated.
 %%
 %% Although  this  does   not  mean  that  `gen_statem`
 %% stands  still! Once  the  command is  sent off  with
@@ -858,10 +888,12 @@ handle_dtmf(State, Data, Digit, _UUID) ->
 %% and waits for coming events (such as DTMF events).
 
 comfort_noise(Milliseconds) ->
+    logger:debug("play comfort noise"),
     ComfortNoise = "silence_stream://" ++ Milliseconds ++ ",1400",
     sendmsg_locked(execute, ["playback", ComfortNoise]).
 
 play({greeting, AuthStatus}) ->
+    logger:debug("play greeting"),
     Welcome = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
     SelectionSkip = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories",
     Unregistered =
@@ -890,6 +922,9 @@ play({greeting, AuthStatus}) ->
 
 speak(Text) ->
     sendmsg_locked(execute, ["speak", "flite|kal|" ++ Text]).
+
+push_digit(#{dtmf_digits := DTMFDigits} = Data, Digit) ->
+    Data#{dtmf_digits := DTMFDigits ++ [Digit]}.
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
