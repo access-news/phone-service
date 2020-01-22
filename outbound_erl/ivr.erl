@@ -17,7 +17,7 @@
 -define(CATEGORIES, {category, []}).
 
 -define(DEMO_TIMEOUT, 600000).
--define(INTER_DIGIT_TIMEOUT, 2000).
+-define(INTERDIGIT_TIMEOUT, 2000).
 -define(DTMF_DIGIT_TIMEOUT, 5000).
 
 start_link(Ref) ->
@@ -85,25 +85,23 @@ init(_Args) ->
 
     State = incoming_call,
     Data =
-        #{ dtmf_digits => []
+        #{ category_selectors => []
          , auth_status => unregistered
-         , history     => [ ?CATEGORIES ]
-         , next_state_on_playback_stop => #{}
-         % , idt_running => false %% If true, we are collecting DTMF digits
+         , history     => []
          },
     {ok, State, Data}.
 
 callback_mode() ->
     handle_event_function.
 
- terminate(Reason, State, Data) ->
+terminate(Reason, State, Data) ->
     logger:debug(#{ self() => ["TERMINATE (normal-ish)", #{ data => Data, reason => Reason, state => State }]}).
      % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
      % filog:remove_process_handler(?MODULE).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% `info` clauses (for FreeSWITCH events) %%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% {{-
 
 %% Rationale for using `handle_event_function` callbacks {{- {{-
 %% =====================================================
@@ -292,6 +290,7 @@ handle_event(
     logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 %% }}-
+%% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%%
 %% `internal` clauses %%
@@ -406,19 +405,20 @@ handle_event(
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
   },                                      % /
   greeting                                = State,
-  #{ auth_status := AuthStatus }      = Data
+  #{ auth_status := AuthStatus            % \
+   , history     := []                    % | Data
+   }                                      % /
 ) ->
     logger:debug(#{ self() => ["GREETING", #{ state => State}]}),
 
     comfort_noise(750),
-    play({State, AuthStatus}),
-
-    % TODO Try out `mod_vlc` to play aac and m4a files. {{-
-    % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
-    % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
-    % }}-
-
-    keep_state_and_data;
+    ApplicationUUID =
+        play({State, AuthStatus}),
+    NewHistory =
+        [{greeting, ApplicationUUID}],
+    NewData =
+        Data#{ history := NewHistory },
+    {keep_state, NewData};
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -429,8 +429,8 @@ handle_event(
   , #{ "DTMF-Digit" := Digit}  % | EventContent = MassagedModErlEvent
   },                           % /
   State,
-   % if `DTMFDigits =/= []`, we are collecting digits
-  #{ dtmf_digits := DTMFDigits
+   % if `CategorySelectors =/= []`, we are collecting digits
+  #{ category_selectors := CategorySelectors
    , auth_status := AuthStatus
    % When `idt_running` is true, it means we are collecting digits for category selection.
    % , collecting_digits := CollectorStatus
@@ -448,7 +448,22 @@ handle_event(
 
     % Then notion is that in every state when one of "123456789" is pressed, "collecting_digits" mode is initiated, and "*" and "#" will be ignored (except when received after the interdigit time-out (IDT) expired), but they will trigger an extra IDT seconds to get new digits.
 
-    OneToNine =
+    WhenCollectingDigits =
+        fun (#{category_selectors := CategorySelectors} = _Data, Digits) ->
+            NewData =
+                Data#{category_selectors := CategorySelectors ++ [Digit]},
+            % The notion is that the `InterDigitTimer` is restarted whenever {{-
+            % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
+            % }}-
+            % TODO Does timer cancellation produce an event?
+            InterDigitTimer =                 % Generic timeout
+                { {timeout, interdigit_timer} % { {timeout, Name}
+                , ?INTERDIGIT_TIMEOUT         % , Time
+                , eval_collected_digits       % , EventContent }
+                },
+            {keep_state, NewData, [ InterDigitTimer ]},
+
+    DigitIsOneToNine =
         case string:find("123456789", Digit) of
             nomatch ->
                 false;
@@ -456,174 +471,232 @@ handle_event(
                 true
         end,
 
-        % The notion is that the `InterDigitTimer` is restarted whenever a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
-        % TODO Does timer cancellation produce an event?
-    InterDigitTimer =                  % Generic timeout
-        { {timeout, inter_digit_timer}   % { {timeout, Name}
-        , ?INTER_DIGIT_TIMEOUT           % , Time
-        , eval_collected_digits          % , EventContent }
-        },
+    % DTMF tones are divided into two categories: category selectors, and single digit instant actions. Category selectors have interdigit timeout (that may be configurable), whereas single digits instant actions immediately respond by changing state, performing a command, etc.
+    % Another difference is that category selectors only change state once the `interdigit_timer` expires, hence they will keep the state as is in this clause, but single digit instant actions do whatever necessary to move on (stop playback, change state, etc.).
 
-    { NewData 
-    , TransitionActions
-    } =
-        % {{- {{-
-        % When `idt_running` is true, it means we are collecting digits for category selection. So when IDT is not running and 0 comes in, then go to main menu, but when IDT is running, then add it to `DTMFDigits`, renew IDT, and keep collecting. Another example is when IDT is not running, and * (star) and # (pound) arrives, go back or go to next category respectively, but when IDT is running, then ignore these inputs and renew IDT, and keep collecting.
+    % {{- {{-
+    % When `idt_running` is true, it means we are collecting digits for category selection. So when IDT is not running and 0 comes in, then go to main menu, but when IDT is running, then add it to `CategorySelectors`, renew IDT, and keep collecting. Another example is when IDT is not running, and * (star) and # (pound) arrives, go back or go to next category respectively, but when IDT is running, then ignore these inputs and renew IDT, and keep collecting.
 
-        % IDT race condition when collecting digits
-        % ====================================================
-        % It is possible that IDT times out while processing a DTMF digit. What then?
+    % IDT race condition when collecting digits
+    % ====================================================
+    % It is possible that IDT times out while processing a DTMF digit. What then?
 
-        % This probably isn't as bad as it sounds, or maybe not even bad at all. For example, a user is having trouble to dial digits quickly (device issues, disability, etc.), and one of the digits hits this race condition, but this is an important input, so IDT time-out can be ignore, and now this digit is saved and IDT extended.
+    % This probably isn't as bad as it sounds, or maybe not even bad at all. For example, a user is having trouble to dial digits quickly (device issues, disability, etc.), and one of the digits hits this race condition, but this is an important input, so IDT time-out can be ignore, and now this digit is saved and IDT extended.
 
-        % Is there a scenario where this can turn sour? Someone start dialing for a category, but then change their minds, and wants to hit the main menu, go back, etc. Even in not a race condition status they would have to wait until the IDT runs out. If they do get into a category, they can always go back with * (star).
-        % }}- }}-
-        case
-            #{ state => State
-             , received_digit => Digit
-             % `DTMFDigits` emptied after eval on `inter_digit_timer` timeout
-             , collecting_digits => DTMFDigits =/= []
-             , one_to_nine => OneToNine
-             }
-        of
-            % [1-9] in any state will trigger DTMF collection,
-            % (except when playing an article or in `main_menu`)
-            #{ state := State
-             , received_digit := Digit
-             , one_to_nine := true
-            % Not checking whether we are collecting digits, because {{-
-            % this clause is explicitly for that scenario (i.e., digits 1 to 9 are pressed not in `main_menu` or in `article`), and collecting_digits may be `false` if this is the first round. With each new digit, the inter-digit timer (IDT) gets restarted. The "timeout" `handle_event/4` clauses will determine whether the contents of the DTMF buffer (`DTMFDigits`) is useful, and it will also clear it on timeout.
-            % Another reason is that * (star), # (pound), and 0 are instant actions (no IDT when pressed), so if those are pressed, this case clause will simply be skipped, and subsequent clauses will determine what to do with them, depending on whether digits are collected.
+    % Is there a scenario where this can turn sour? Someone start dialing for a category, but then change their minds, and wants to hit the main menu, go back, etc. Even in not a race condition status they would have to wait until the IDT runs out. If they do get into a category, they can always go back with * (star).
+    % }}- }}-
+    case
+        #{                state => State
+         ,       received_digit => Digit
+         % `CategorySelectors` emptied after eval on `interdigit_timer` timeout
+         ,    collecting_digits => CategorySelectors =/= []
+         , digit_is_one_to_nine => DigitIsOneToNine
+         }
+    of
+        % Category selectors (i.e., collecting digits) {{-
+        % [1-9] in any state (except `article` and `main_menu`) {{-
+        % will trigger DTMF collection, [1-9] have different semantics though when in `main_menu` or playing an article.
+        #{ state := State
+         , received_digit := Digit
+         , digit_is_one_to_nine := true
+        % Not checking whether we are collecting digits, because {{-
+        % this clause is explicitly for that scenario (i.e., digits 1 to 9 are pressed not in `main_menu` or in `article`), and collecting_digits may be `false` if this is the first round. With each new digit, the interdigit timer (IDT) gets restarted. The "timeout" `handle_event/4` clauses will determine whether the contents of the DTMF buffer (`CategorySelectors`) is useful, and it will also clear it on timeout.
+        % Another reason is that * (star), # (pound), and 0 are instant actions (no IDT when pressed), so if those are pressed, this case clause will simply be skipped, and subsequent clauses will determine what to do with them, depending on whether digits are collected.
+        % }}-
+        %, collecting_digits := true
+         }
+        % The reason why `article` and `main_menu` are excluded is because they only have single digit instant actions (no IDT when a digit is dialed), and numbers have different semantics.
+        when State =/= article,
+             State =/= main_menu,
+
+             Digit =/= "0",
+             Digit =/= "*",
+             Digit =/= "#"
+        ->
+            % `next_state_on_playback_stop` and `history` fields update in `Data` not necessary, as any playback is allowed to run its course here, and state change only happens when the `interdigit_timer` expires (see timeout clauses).
+            WhenCollectingDigits(Data, Digit);
             % }}-
-             % , collecting_digits := true
-             }
-            % The reason why `article` and `main_menu` are excluded is because they only have single digit instant actions (no IDT when a digit is dialed), and numbers have different semantics.
-            when State =/= article,
-                 State =/= main_menu
-            ->
-                % `next_state_on_playback_stop` and `history` fields update in `Data` not necessary, as any playback is allowed to run its course here
-                { push_digit(Data, Digit)
-                , [ InterDigitTimer ]
-                };
 
-            % 0 in any state when collecting digits
-            #{ state := State
-             , received_digit := "0"
-             , collecting_digits := true
-             , one_to_nine := false % not necessary, but explicit
-             }
-            ->
-                % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `inter_digit_timer` expires
-                { push_digit(Data, Digit)
-                , [ InterDigitTimer ]
-                };
+        % 0 in any state when collecting digits {{-
+        #{                state := _State
+         ,       received_digit := "0"
+         ,    collecting_digits := true
+         , digit_is_one_to_nine := false % not necessary, but explicit
+         }
+        ->
+            % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
+            WhenCollectingDigits(Data, "0");
+            % }}-
 
-            % 0 in any state when NOT collecting digits
-            #{ state := State
-             , received_digit := "0"
-             , collecting_digits := false
-             , one_to_nine := false % not necessary, but explicit
-             }
-            ->
-                stop_playback(),
-                % No need to cancel any timers as there shouldn't be any; if we were collecting digits, zero would be handled in the previous clause, otherwise we would never get here.
-                NewData =
-                    Data#{
+        % * (star) and # (pound) in any state when collecting digits, and not in `greeting` {{-
+        % Simply ignore, but renew `interdigit_timer`
+        #{                state := _State
+         ,       received_digit := Digit
+         ,    collecting_digits := true
+         , digit_is_one_to_nine := false % not necessary, but explicit
+         }
+        when Digit =:= "*";
+             Digit =:= "#",
 
-% * (star) or # (pound) in `greeting`
-% # (pound) in `main_menu`
-% * (star) in any state, except `greeting`
-% # (pound) in any state, except `greeting` and `main_menu`
+             State =/= greeting
+        % Guards and logic reminder {{-
+        % (fun ({A, B})
+        %      when B =:= x,            B =:= x;                   B =:= z;
+        %           A =:= 0;            A =:= 0,                   A =:= 0,
+        %           B =:= y             B =:= y                    B =:= y;
+        %      ->                                                  A =/=7,
+        %          yay;                                            B =:= x
+        %      (_) ->
+        %          nono
+        %  end)    ({0, x}).  yay       ({0, x}).  yay            ({1, x}).  yay
+        %          ({1, x}).  nono      ({1, x}).  yay            ({0, z}).  yay
+        %          ({0, y}).  yay       ({0, y}).  yay            ({1, z}).  yay
+        %          ({1, y}).  yay       ({1, y}).  nono           ({7, z}).  yay
+        %                                                         ({0, y}).  yay
+        %                                                         ({7, y}).  nono
+        %                                                         ({7, x}).  nono
+        %                                                         ({6, x}).  yay
+        % }}-
+        ->
+            % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
+            WhenCollectingDigits(Data, "");
+            % }}-
+        % }}-
+
+        % * (star) and # (pound) in `greeting`  {{-
+        %   * (star)  \  skip to `?CATEGORIES`
+        %   # (pound) /
+        %   0         - go to `main_menu`
+        %   [1-9]     - collect digits to select next category
+        %               from `?CATEGORIES` (handled in "Category selectors" clauses above)
+        #{                state := greeting
+         ,       received_digit := Digit
+         ,    collecting_digits := false
+         , digit_is_one_to_nine := false % not necessary, but explicit
+         }
+        when Digit =:= "*";
+             Digit =:= "#"
+        ->
+            stop_playback(),
+            {next_state, ?CATEGORIES};
+        % }}-
+
+        % * (star) in `?CATEGORIES`
+        #{                state := `?CATEGORIES`
+         ,       received_digit := Digit
+         ,    collecting_digits := false
+         , digit_is_one_to_nine := false % not necessary, but explicit
+         }
+        when Digit =:= "*"
+        ->
+            keep_state_and_data;
+
+        % 0 in any state when NOT collecting digits, and not in `main_menu`
+        #{                state := State
+         ,       received_digit := "0"
+         ,    collecting_digits := false
+         , digit_is_one_to_nine := false % not necessary, but explicit
+         }
+        ->
+            stop_playback(),
+            % No need to cancel any timers as there shouldn't be any; if we were collecting digits, zero would be handled in the previous clause, otherwise we would never get here.
+            NewData =
+                Data#{
+
+% # (pound) in `?CATEGORIES`
+% * (star) in any state, except `greeting`, and `?CATEGORIES`
+% # (pound) in any state, except `greeting`, `main_menu`, and `?CATEGORIES`
 % 1-9 in `main_menu`
 % 1-9 when playing an article
-            #{ state := State, digit := Digit, idt_running := true }
-                when
-                  State =/= article,
-                  Digit =/= "*",
-                  Digit =/= "#"
-            ->
-                Data;
+% # (pound) in `main_menu` (just handle in a `main_menu` clause)
+        #{ state := State, digit := Digit, idt_running := true }
+            when
+                State =/= article,
+                Digit =/= "*",
+                Digit =/= "#"
+        ->
+            Data;
 
-            %% Brings to main menu (`main_menu`) in every state
-            {State, Digit} when Digit =:= "0" ->                % |
-                stop_playback(),                                   % |
-                Data#{ dtmf_digits   := DTMFDigits ++ [Digit]
-                     , prev_category := State
-                     };
-                % {next_state, main_menu, Data};                     % |
-            %% ------------------------------------------------------*
+        %% Brings to main menu (`main_menu`) in every state
+        {State, Digit} when Digit =:= "0" ->                % |
+            stop_playback(),                                   % |
+            Data#{ category_selectors   := CategorySelectors ++ [Digit]
+                    , prev_category := State
+                    };
+            % {next_state, main_menu, Data};                     % |
+        %% ------------------------------------------------------*
 
-            %% Stop   greeting,   and  (once   `PLAYBACK_STOP`   is
-            %% received) jump to `?CATEGORIES`.
-            %% TODO * - unassigned
-            %% TODO # - unassigned
-            % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
-            {greeting, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
-                stop_playback(),                                   % |
-                % No need to save * (star) or # (pound) because their only function in `greeting` state is to fast-forward to `?CATEGORIES`
-                Data;
-                % {next_state, ?CATEGORIES, Data};                   % |
+        %% Stop   greeting,   and  (once   `PLAYBACK_STOP`   is
+        %% received) jump to `?CATEGORIES`.
+        %% TODO * - unassigned
+        %% TODO # - unassigned
+        % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
+        {greeting, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
+            stop_playback(),                                   % |
+            % No need to save * (star) or # (pound) because their only function in `greeting` state is to fast-forward to `?CATEGORIES`
+            Data;
+            % {next_state, ?CATEGORIES, Data};                   % |
 
-            %% ?CATEGORIES - * (star) and # (pound) has no functionality;
-            %%                ignored when pressed.
-            % When a user presses it accidentally when signing in,
-            % or when selecting the category, it will get filtered
-            % out.
-            %% TODO * - unassigned
-            %% TODO # - unassigned
-            % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
-            {?CATEGORIES, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
-                noop;
-                % keep_state_and_data;                   % |
+        %% ?CATEGORIES - * (star) and # (pound) has no functionality;
+        %%                ignored when pressed.
+        % When a user presses it accidentally when signing in,
+        % or when selecting the category, it will get filtered
+        % out.
+        %% TODO * - unassigned
+        %% TODO # - unassigned
+        % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
+        {?CATEGORIES, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
+            noop;
+            % keep_state_and_data;                   % |
 
-            %% # (pound) means "next category" in any other state
-            %% (e.g., when  listening to an article,  it means jump
-            %% to the next publication)
-            {_State, Digit} when Digit =:= "#" ->                % |
-                stop_playback();                                   % |
-                % {next_state, main_menu, Data};                     % |
+        %% # (pound) means "next category" in any other state
+        %% (e.g., when  listening to an article,  it means jump
+        %% to the next publication)
+        {_State, Digit} when Digit =:= "#" ->                % |
+            stop_playback();                                   % |
+            % {next_state, main_menu, Data};                     % |
 
-            %% * (star) means "go back / previous menu" in any other state
-            {_State, Digit} when Digit =:= "*" ->                % |
-                stop_playback();                                   % |
-                % {next_state, main_menu, Data};                     % |
-            %% ------------------------------------------------------*
+        %% * (star) means "go back / previous menu" in any other state
+        {_State, Digit} when Digit =:= "*" ->                % |
+            stop_playback();                                   % |
+            % {next_state, main_menu, Data};                     % |
+        %% ------------------------------------------------------*
 
-            %% Keep  playing  the   greeting,  continue  collecting
-            %% digits,  and caller  will be  sent to  the specified
-            %% category, if the `DTMFString` contains a valid entry
-            %% after  the  interdigit  time-out.  Once  the  playback
-            %% finishes,  the `PLAYBACK_STOP`  event is  emitted by
-            %% FreeSWITCH,  and  the  state   will  be  changed  to
-            %% `?CATEGORIES`, but  the behavior  there will  be the
-            %% same, and  the digits will continue  to be collected
-            %% (until they make sense).
+        %% Keep  playing  the   greeting,  continue  collecting
+        %% digits,  and caller  will be  sent to  the specified
+        %% category, if the `DTMFString` contains a valid entry
+        %% after  the  interdigit  time-out.  Once  the  playback
+        %% finishes,  the `PLAYBACK_STOP`  event is  emitted by
+        %% FreeSWITCH,  and  the  state   will  be  changed  to
+        %% `?CATEGORIES`, but  the behavior  there will  be the
+        %% same, and  the digits will continue  to be collected
+        %% (until they make sense).
 
-            %% It is implicit  that `Digits` can only  be [1-9] (or
-            %% at least that is how it should be...)
-            {State, Digit} when State =/= article ->
-                % NewData = Data#{ dtmf_digits := DTMFDigits ++ [Digit] },
-                % {next_state, ?CATEGORIES, NewData};
-                lofa
-                % Data#{ dtmf_digits := DTMFDigits ++ [Digit] };
-        end,
+        %% It is implicit  that `Digits` can only  be [1-9] (or
+        %% at least that is how it should be...)
+        {State, Digit} when State =/= article ->
+            % NewData = Data#{ category_selectors := CategorySelectors ++ [Digit] },
+            % {next_state, ?CATEGORIES, NewData};
+            lofa
+            % Data#{ category_selectors := CategorySelectors ++ [Digit] };
+    end,
 
     %% (Why `keep_state`)FALSE and no inserted events? {{- {{-
     %% ====================================================
     % ### 1. Why no inserted events?
-    % 
+    %
     % Already using inserted events to make FreeSWITCH events more manageable (see `MOD_ERL_EVENT_MASSAGE`), and adding extra `internal` events would cause a race condition; "_the order of these stored events is preserved, so the first next_event in the containing list becomes the first to process_", thus massaged FreeSWITCH earlier (read further why this is a problem).
-    % 
+    %
     % It is also unnecessary because more natural transition opportunities will present themselves, such as `PLAYBACK_STOP` FreeSWITCH events whenever the playback is stopped. Adding an extra internal event is therefore superfluous as well.
-    % 
+    %
     % There is a hitch though: `PLAYBACK_STOP` events won't provide a context regarding what key press (i.e., `DTMF` event) caused the playback to stop, so these will need to get stored.
-    % 
+    %
     % ### 2. Why keep the state? (KEEP! See update below)
-    % 
+    %
     % Many key presses (in many states) should stop the playback and cause a state change (e.g., from `greeting` to `?CATEGORIES`), but if state is changed in this `handle_event/4` clause then it will be hard to understand how subsequent events need to handled.
-    % 
+    %
     % For example, `stop_playback/0` will cause FreeSWITCH to emit a `PLAYBACK_STOP` event, and if the state is changed, these events will have to be handled in those next states. But these next states will also receive DTMF events that stop the playback, and the handling of `PLAYBACK_STOP` events will be pushed to the subsequent states, and so on.
-    % 
+    %
     % It seems more logical to keep the state, and handle the `PLAYBACK_STOP` events where the playbacks have been started. Not to mention the natural state changes that result in playbacks stopping because all the text has been read (so loop, or next state). So if a state change is forced on `DTMF` events, and then playback relating to a specific state will have to be handled in the same state and in the next one. Will get messy real quick.
     %
     %% REMINDER
@@ -641,7 +714,7 @@ handle_event(
 
 % The problem is race condition again. Take the 0# combo (for unregistered users to sign in) in `greeting`: user hits 0, playback stops, and if # (pound) comes in almost immediately then it will be evaluated in `greeting`, having completely different semantics.
 
-% Another false assumption I made is that `PLAYBACK_STOP` is the only thing that needs checking, but `speak` (and probably other TTS engine players) only generate `CHANNEL_EXECUTION_COMPLETE`, although the problem remains the same.
+% Another false assumption I made is that `PLAYBACK_STOP` is the only thing that needs checking, but `speak` (and probably other TTS engine players) only generate `CHANNEL_EXECUTE_COMPLETE`, although the problem remains the same.
 
     %% }}- }}-
     {keep_state, NewData};
@@ -709,18 +782,18 @@ handle_event(
             {keep_state, Data#{termination_reason => "No logins during the demo period."}}
     end.
 %% }}-
-%% inter_digit_timer {{-
+%% interdigit_timer {{-
 %% TODO Not sure if an event is generated when a timer is canceled. Be prepared for cryptic error messages if that is the case.
 handle_event(
-  {timeout, inter_digit_timer}, % EventType
+  {timeout, interdigit_timer}, % EventType
   eval_collected_digits,        % EventContent
   _State,
-  #{ dtmf_digits := _DTMFDigits } = Data
+  #{ category_selectors := _DTMFDigits } = Data
 ) ->
     % TODO Prod system along, or play prompt (e.g., "Selection is invalid") if category does not exist.
     handle_digits,
-    % Always clear DTMF buffer when the `inter_digit_timer` expires, because at this point the buffer has been evaluated (outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result), and so a clean slate is needed.
-    {keep_state, Data#{ dtmf_digits := [] }}.
+    % Always clear DTMF buffer when the `interdigit_timer` expires, because at this point the buffer has been evaluated (outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result), and so a clean slate is needed.
+    {keep_state, Data#{ category_selectors := [] }}.
 %% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
@@ -794,7 +867,6 @@ look_up(PhoneNumber) ->
 %%      See available `sendmsg` commands at
 %%      https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket#mod_event_socket-3.9.1Commands
 event_uuid_header(UUID) ->
-    %% The most important header.
     [ {"Event-UUID", UUID} ].
 
 sendmsg_headers(execute, [App, Args], UUID) ->
@@ -830,14 +902,14 @@ do_sendmsg(SendmsgCommand, Args, IsLocked) ->
             false -> [];
             true  -> [{"event-lock", "true"}]
         end,
-    PoorMansUUID =
+    ApplicationUUID =
         lists:flatten(io_lib:format("~p", [now()])),
     FinalHeaders =
         [{"call-command", atom_to_list(SendmsgCommand)}]
-        ++ sendmsg_headers(SendmsgCommand, Args, PoorMansUUID)
+        ++ sendmsg_headers(SendmsgCommand, Args, ApplicationUUID)
         ++ LockHeaderList,
     fsend({sendmsg, get(uuid), FinalHeaders}),
-    PoorMansUUID.
+    ApplicationUUID.
 
 sendmsg(SendmsgCommand, Args) when is_list(Args) ->
     do_sendmsg(SendmsgCommand, Args, false).
@@ -892,6 +964,10 @@ comfort_noise(Milliseconds) ->
     ComfortNoise = "silence_stream://" ++ Milliseconds ++ ",1400",
     sendmsg_locked(execute, ["playback", ComfortNoise]).
 
+% TODO Try out `mod_vlc` to play aac and m4a files. {{-
+% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
+% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
+% }}-
 play({greeting, AuthStatus}) ->
     logger:debug("play greeting"),
     Welcome = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
@@ -922,9 +998,6 @@ play({greeting, AuthStatus}) ->
 
 speak(Text) ->
     sendmsg_locked(execute, ["speak", "flite|kal|" ++ Text]).
-
-push_digit(#{dtmf_digits := DTMFDigits} = Data, Digit) ->
-    Data#{dtmf_digits := DTMFDigits ++ [Digit]}.
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
