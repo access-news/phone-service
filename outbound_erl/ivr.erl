@@ -16,7 +16,6 @@
 
 % Replaced this with a `main_category()` function at one point but had to revert because needed to use this in guards when handling DTMFs, and that will not work.
 -define(CATEGORIES, {category, []}).
--define(HISTORY_ROOT, [ ?CATEGORIES ]).
 
 -define(DEMO_TIMEOUT, 600000).
 -define(INTERDIGIT_TIMEOUT, 2000).
@@ -92,7 +91,19 @@ init(_Args) ->
          ,        history     => ?HISTORY_ROOT
          ,       playback_ids => #{}
          },
-    % History is pushed in the `handle_event/4` clause that initiates the state change
+    % When to push history {{-
+    % ====================================================
+    % Push history when leaving a category other than `?CATEGORIES`, `greeting`, and `incoming_call`.
+    % quick example:
+    %                                                                                   (the only other option from main_menu menu would be ?CATEGORIES
+    % `main_menu` state is special in that it is not added to the history
+    % TODO add flowchart
+    % }}-
+    % Why not worry about `main_menu` (and states beneath)
+    % showing up in history? {{-
+    % ====================================================
+    % Because the only way out of `main_menu` is by going forward to `?CATEGORIES` or going back/up, which always pops the history. Inside `main_menu`, whenever an option is chosen, `main_menu` gets pushed to the history, but the only way out of submenus is to go back, which will pop it.
+    % }}-
     {ok, State, Data}.
 
 callback_mode() ->
@@ -409,7 +420,7 @@ handle_event(
   },                                      % /
   greeting                                = State,
   #{ auth_status  := AuthStatus           % \         Made  explicit  all  values  that  are  known,
-   , history      := ?HISTORY_ROOT        % | Data    because the only state change to this state is
+   , history      := []                   % | Data    because the only state change to this state is
    , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
    }                                      % /         set there must also be true.
 ) ->
@@ -435,8 +446,8 @@ handle_event(
   State,
    % if `CategorySelectors =/= []`, we are collecting digits
   #{ category_selectors := CategorySelectors
-   , auth_status := AuthStatus
-   , history := History
+   ,        auth_status := AuthStatus
+   ,            history := History
    } = Data
 ) ->
     logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
@@ -480,6 +491,8 @@ handle_event(
          }
     of
         % Category selectors (i.e., collecting digits) KEEP_STATE {{-
+        % TODO don't forget that GREETING -> CATEGORY N is a valid transition!
+        %      When the `interdigit_timer` expires in `greeting` to (signaling that digit collection is finished), do not use `next_menu/1` but the two lines from "* (star) and # (pound) in `greeting`", otherwise `greeting` will be added to the navigation history, and navigation should not be possible back there
         % [1-9] in any state (except `article` and `main_menu`) {{-
         % will trigger DTMF collection, [1-9] have different semantics though when in `main_menu` or playing an article.
         #{ state := State
@@ -563,8 +576,9 @@ handle_event(
         when Digit =:= "*";
              Digit =:= "#"
         ->
-            stop_playback(),
+            % No `next_menu/1` here to keep the history empty, making `?CATEGORIES` the root. Whatever navigations happen therekkkk
             % TODO Wait for `CHANNEL_EXECUTE_COMPLETE` and start menu playback
+            stop_playback(),
             {next_state, ?CATEGORIES, Data};
         % }}-
 
@@ -584,7 +598,7 @@ handle_event(
         % }}-
 
         % Go to main menu
-        % 0 in any state when NOT collecting digits, and not in `main_menu` {{-
+        % 0 in any state when NOT collecting digits, except `main_menu` {{-
         #{                state := State
          ,       received_digit := "0"
          ,    collecting_digits := false
@@ -592,12 +606,15 @@ handle_event(
          }
         when State =/= main_menu
         ->
-            stop_playback(),
-            NewData = push_history(Data, State),
-            {next_state, main_menu, NewData};
+            next_menu(
+              #{ from => State
+               , to   => main_menu
+               , data => Data
+               }
+            );
         % }}-
 
-        % Go up/back
+        % Go up/back (the forward direction is only 0 or collecting digits!)
         % * (star) in any state, except `greeting` {{-
         #{                state := State
          ,       received_digit := "*"
@@ -607,17 +624,21 @@ handle_event(
         when State =/= greeting
         ->
             case {State, History} of
-                {?CATEGORIES, ?HISTORY_ROOT} ->
+                {?CATEGORIES, []} ->
                     keep_state_and_data;
+                % {main_menu, ?HISTORY_ROOT} ->
+                %     stop_playback(),
+                %     {next_state, ?CATEGORIES, Data};
                 _ ->
+                    % When (or if) moving forward in history with # (pound) will be implemented, this could be the template for `prev_menu/1` (after `next_menu/1`).
                     stop_playback(),
                     {NextState, NewData} = pop_history(Data),
                     {next_state, NextState, NewData}
             end;
         % }}-
 
-        % No function
-        % # (pound) in any state {{-
+        % No function (TODO maybe to move forward in history? would need a double linked list though)
+        % # (pound) in any state except `greeting` and `main_menu`{{-
 
         % ON HOLD - category browsing with # (pound) {{-
         % # (pound) in any state, except `greeting`, `main_menu`, and `?CATEGORIES`
@@ -653,8 +674,35 @@ handle_event(
          ,    collecting_digits := false
          , digit_is_one_to_nine := false % not necessary, but explicit
          }
+        when State =/= greeting, % not necessary, but explicit
+             State =/= main_menu
+             % TODO prepare to include `?CATEGORIES` when # will allow moving forward in history
         ->
             keep_state_and_data;
+        % }}-
+
+        % # (pound) in `main_menu` (sign-in or favorites) {{-
+        #{                state := main_menu
+         ,       received_digit := "#"
+         ,    collecting_digits := false
+         , digit_is_one_to_nine := false
+         }
+        ->
+            NextState =
+                case AuthStatus of
+                    registered ->
+                        % TODO replace this placeholder with `favorites` when its implementation is done
+                        % favorites
+                        sign_in;
+                    unregistered ->
+                        sign_in
+                end,
+            next_menu(
+              #{ from => main_menu
+               , to   => NextState
+               , data => Data
+               }
+            );
         % }}-
 
         % [1-9] in `main_menu`
@@ -664,6 +712,19 @@ handle_event(
          , digit_is_one_to_nine := true
          }
         ->
+            case Digit of
+                0 ->
+                1 ->
+                2 ->
+                3 ->
+                5 ->
+                8 ->
+                % * -> see "* (star) in any state, except `greeting`"
+                % # -> see "# (pound) in `main_menu` (sign-in or favorites)"
+                _ ->
+                    % TODO prompt: invalid entry
+                    keep_state_and_data
+            end
             stop_playback(),
             {NextState, NewData} = pop_history(Data),
             {next_state, NextState, NewData};
@@ -843,6 +904,9 @@ handle_event(
             {keep_state, Data#{termination_reason => "No logins during the demo period."}}
     end.
 %% }}-
+
+% TODO don't forget that GREETING -> CATEGORY N is a valid transition!
+%      When the `interdigit_timer` expires in `greeting` to (signaling that digit collection is finished), do not use `next_menu/1` but the two lines from "* (star) and # (pound) in `greeting`", otherwise `greeting` will be added to the navigation history, and navigation should not be possible back there
 %% interdigit_timer {{-
 %% TODO Not sure if an event is generated when a timer is canceled. Be prepared for cryptic error messages if that is the case.
 handle_event(
@@ -1072,7 +1136,9 @@ push_history(#{ history := History } = Data, State) ->
 
 % Why not check if history is empty? {{-
 % ====================================================
-% Because it will (or at least should) not happen: Call comes in, FreeSWITCH start `ivr.erl`, `init/0` sets history to `[?CATEGORIES]`, meaning that states before that (i.e., `incoming_call` and `greeting`) can never be revisited. When traversing the history backwards with * (star), `HANDLE_DTMF_FOR_ALL_STATES` will make sure that when the `?HISTORY_ROOT` is reached, pressing the * (star) will be ignored.
+% Because it will (or at least should) not happen: Call comes in, FreeSWITCH start `ivr.erl`, `init/0` sets history to `[?CATEGORIES]`, meaning that states before that (i.e., `incoming_call` and `greeting`) can never be revisited. When traversing the history backwards with * (star), `HANDLE_DTMF_FOR_ALL_STATES` will make sure that when the `?HISTORY_ROOT` is reached, pressing the * (star) will be ignored (see `case` clause starting with comment "Go up/back").
+% UPDATE
+% What is said above still holds, but the root is now [].
 % }}-
 pop_history(#{ history := [PrevState | RestHistory] } = Data) ->
     { PrevState
@@ -1107,6 +1173,16 @@ category(N, M, O) ->
 
 category(N, M, O, P) ->
     {category, [N, M, O, P]}.
+
+next_menu(
+  #{ from := CurrentState
+   , to   := NextState
+   , data := Data
+   }
+) ->
+    stop_playback(),
+    NewData = push_history(Data, CurrentState),
+    {next_state, NextState, NewData}.
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
