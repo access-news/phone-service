@@ -14,6 +14,10 @@
 
 -define(FS_NODE, 'freeswitch@tr2').
 
+% Replaced this with a `main_category()` function at one point but had to revert because needed to use this in guards when handling DTMFs, and that will not work.
+-define(CATEGORIES, {category, []}).
+-define(HISTORY_ROOT, [ ?CATEGORIES ]).
+
 -define(DEMO_TIMEOUT, 600000).
 -define(INTERDIGIT_TIMEOUT, 2000).
 -define(DTMF_DIGIT_TIMEOUT, 5000).
@@ -85,7 +89,7 @@ init(_Args) ->
     Data =
         #{ category_selectors => [] % ["7", "2", "", "3", ...]
          ,        auth_status => unregistered % | registered
-         ,        history     => [] % [{state_1, playback_app_id}, ... ]
+         ,        history     => ?HISTORY_ROOT
          ,       playback_ids => #{}
          },
     % History is pushed in the `handle_event/4` clause that initiates the state change
@@ -390,9 +394,7 @@ handle_event(
 
     { next_state
     , greeting
-    , Data#{ auth_status := NewAuthStatus
-           ,     history := [ greeting, incoming_call ]
-           }
+    , Data#{ auth_status := NewAuthStatus }
     , TransitionActions
     };
 %% }}-
@@ -400,16 +402,16 @@ handle_event(
 %% CALL_ANSWERED (STATE: greeting -> greeting) (internal) {{-
 
 handle_event(
-  internal,                                        % EventType
-  { _UUID                                          % \
-  , call_event                                     % |
-  , #{ "Event-Name" := "CHANNEL_ANSWER" }          % | EventContent = MassagedModErlEvent
-  },                                               % /
-  greeting                                         = State,
-  #{ auth_status  := AuthStatus                    % \         Made  explicit  all  values  that  are  known,
-   , history      := [ greeting, incoming_call ]   % | Data    because the only state change to this state is
-   , playback_ids := #{}                           % |         from  `incoming_call`, and  whatever has  been
-   }                                               % /         set there must also be true.
+  internal,                               % EventType
+  { _UUID                                 % \
+  , call_event                            % |
+  , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
+  },                                      % /
+  greeting                                = State,
+  #{ auth_status  := AuthStatus           % \         Made  explicit  all  values  that  are  known,
+   , history      := ?HISTORY_ROOT        % | Data    because the only state change to this state is
+   , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
+   }                                      % /         set there must also be true.
 ) ->
     logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
@@ -446,21 +448,6 @@ handle_event(
     %% * 0 #   Interdigit time-out = 0
 
     % Then notion is that in every state when one of "123456789" is pressed, "collecting_digits" mode is initiated, and "*" and "#" will be ignored (except when received after the interdigit time-out (IDT) expired), but they will trigger an extra IDT seconds to get new digits.
-
-    ToReturnWhenCollectingDigits =
-        fun (#{category_selectors := CategorySelectors} = _Data, Digits) ->
-            NewData =
-                Data#{category_selectors := CategorySelectors ++ [Digit]},
-            % The notion is that the `InterDigitTimer` is restarted whenever {{-
-            % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
-            % }}-
-            % TODO Does timer cancellation produce an event?
-            InterDigitTimer =                 % Generic timeout
-                { {timeout, interdigit_timer} % { {timeout, Name}
-                , ?INTERDIGIT_TIMEOUT         % , Time
-                , eval_collected_digits       % , EventContent }
-                },
-            {keep_state, NewData, [ InterDigitTimer ]},
 
     DigitIsOneToNine =
         case string:find("123456789", Digit) of
@@ -513,7 +500,7 @@ handle_event(
              Digit =/= "#"
         ->
             % `next_state_on_playback_stop` and `history` fields update in `Data` not necessary, as any playback is allowed to run its course here, and state change only happens when the `interdigit_timer` expires (see timeout clauses).
-            ToReturnWhenCollectingDigits(Data, Digit);
+            to_return_when_collecting_digits(Data, Digit);
             % }}-
 
         % 0 in any state when collecting digits {{-
@@ -524,7 +511,7 @@ handle_event(
          }
         ->
             % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
-            ToReturnWhenCollectingDigits(Data, "0");
+            to_return_when_collecting_digits(Data, "0");
             % }}-
 
         % * (star) and # (pound) in any state when collecting digits, and not in `greeting` {{-
@@ -558,16 +545,16 @@ handle_event(
         % }}-
         ->
             % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
-            ToReturnWhenCollectingDigits(Data, "");
+            to_return_when_collecting_digits(Data, "");
             % }}-
         % }}-
 
         % * (star) and # (pound) in `greeting`  {{-
-        %   * (star)  \  skip to `main_category()`
+        %   * (star)  \  skip to `?CATEGORIES`
         %   # (pound) /
         %   0         - go to `main_menu`
         %   [1-9]     - collect digits to select next category
-        %               from `main_category()` (handled in "Category selectors" clauses above)
+        %               from `?CATEGORIES` (handled in "Category selectors" clauses above)
         #{                state := greeting
          ,       received_digit := Digit
          ,    collecting_digits := false
@@ -577,26 +564,80 @@ handle_event(
              Digit =:= "#"
         ->
             stop_playback(),
-            NewData = push_history(Data, main_category()),
             % TODO Wait for `CHANNEL_EXECUTE_COMPLETE` and start menu playback
-            {next_state, main_category(), NewData};
+            {next_state, ?CATEGORIES, Data};
         % }}-
 
-        % * (star) and # (pound) in `main_category()` {{-
-        #{                state := main_category()
-         ,       received_digit := Digit
+        % * (star) and # (pound) in `?CATEGORIES` {{-
+        % a) Put category browsing with # (pound) on hold for now (see clause "# (pound) in any state"
+        % b) Decided to put an option `main_menu` to be able to jump to the main categories, which means that * (star) should make it possible to jump back to where we came from
+        % #{                state := ?CATEGORIES
+        %  ,       received_digit := Digit
+        %  ,    collecting_digits := false
+        %  , digit_is_one_to_nine := false % not necessary, but explicit
+        %  }
+        % when Digit =:= "*";
+        %      Digit =:= "#"
+        % ->
+        %     % Ignore
+        %     keep_state_and_data;
+        % }}-
+
+        % Go to main menu
+        % 0 in any state when NOT collecting digits, and not in `main_menu` {{-
+        #{                state := State
+         ,       received_digit := "0"
          ,    collecting_digits := false
          , digit_is_one_to_nine := false % not necessary, but explicit
          }
-        when Digit =:= "*";
-             Digit =:= "#"
+        when State =/= main_menu
         ->
-            % Ignore
-            keep_state_and_data;
+            stop_playback(),
+            NewData = push_history(Data, State),
+            {next_state, main_menu, NewData};
         % }}-
 
-        % # (pound) in `main_category()` ABANDONED {{-
-        % #{                state := main_category()
+        % Go up/back
+        % * (star) in any state, except `greeting` {{-
+        #{                state := State
+         ,       received_digit := "*"
+         ,    collecting_digits := false
+         , digit_is_one_to_nine := false % not necessary, but explicit
+         }
+        when State =/= greeting
+        ->
+            case {State, History} of
+                {?CATEGORIES, ?HISTORY_ROOT} ->
+                    keep_state_and_data;
+                _ ->
+                    stop_playback(),
+                    {NextState, NewData} = pop_history(Data),
+                    {next_state, NextState, NewData}
+            end;
+        % }}-
+
+        % No function
+        % # (pound) in any state {{-
+
+        % ON HOLD - category browsing with # (pound) {{-
+        % # (pound) in any state, except `greeting`, `main_menu`, and `?CATEGORIES`
+        % #{                state := State
+        %  ,       received_digit := "#"
+        %  ,    collecting_digits := false
+        %  , digit_is_one_to_nine := false % not necessary, but explicit
+        %  }
+        % when State =/= greeting,
+        %      State =/= ?CATEGORIES,
+        %      State =/= main_menu
+        % ->
+        %     stop_playback(),
+        %     NextState = next_category
+        %     {next_state, NextState, NewData};
+        % }}-
+
+        % ON HOLD - category browsing with # (pound) {{-
+        % # (pound) in `?CATEGORIES`
+        % #{                state := ?CATEGORIES
         %  ,       received_digit := "#"
         %  ,    collecting_digits := false
         %  , digit_is_one_to_nine := false % not necessary, but explicit
@@ -607,22 +648,28 @@ handle_event(
         %     {next_state, category(1), NewData};
         % }}-
 
-        % 0 in any state when NOT collecting digits, and not in `main_menu`
         #{                state := State
-         ,       received_digit := "0"
+         ,       received_digit := "#"
          ,    collecting_digits := false
          , digit_is_one_to_nine := false % not necessary, but explicit
          }
         ->
-            stop_playback(),
-            % No need to cancel any timers as there shouldn't be any; if we were collecting digits, zero would be handled in the previous clause, otherwise we would never get here.
-            NewData =
-                Data#{
+            keep_state_and_data;
+        % }}-
 
-% * (star) in any state, except `greeting`, and `main_category()`
-% # (pound) in any state, except `greeting`, `main_menu`, and `main_category()`
-% 1-9 in `main_menu`
-% 1-9 when playing an article
+        % [1-9] in `main_menu`
+        #{                state := main_menu
+         ,       received_digit := Digit
+         ,    collecting_digits := false
+         , digit_is_one_to_nine := true
+         }
+        ->
+            stop_playback(),
+            {NextState, NewData} = pop_history(Data),
+            {next_state, NextState, NewData};
+
+        % [1-9] when playing an article
+
 % # (pound) in `main_menu` (just handle in a `main_menu` clause)
         #{ state := State, digit := Digit, idt_running := true }
             when
@@ -642,17 +689,17 @@ handle_event(
         %% ------------------------------------------------------*
 
         %% Stop   greeting,   and  (once   `PLAYBACK_STOP`   is
-        %% received) jump to `main_category()`.
+        %% received) jump to `?CATEGORIES`.
         %% TODO * - unassigned
         %% TODO # - unassigned
         % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
         {greeting, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
             stop_playback(),                                   % |
-            % No need to save * (star) or # (pound) because their only function in `greeting` state is to fast-forward to `main_category()`
+            % No need to save * (star) or # (pound) because their only function in `greeting` state is to fast-forward to `?CATEGORIES`
             Data;
-            % {next_state, main_category(), Data};                   % |
+            % {next_state, ?CATEGORIES, Data};                   % |
 
-        %% main_category() - * (star) and # (pound) has no functionality;
+        %% ?CATEGORIES - * (star) and # (pound) has no functionality;
         %%                ignored when pressed.
         % When a user presses it accidentally when signing in,
         % or when selecting the category, it will get filtered
@@ -660,7 +707,7 @@ handle_event(
         %% TODO * - unassigned
         %% TODO # - unassigned
         % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
-        {main_category(), Digit} when Digit =:= "*"; Digit =:= "#" -> % |
+        {?CATEGORIES, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
             noop;
             % keep_state_and_data;                   % |
 
@@ -683,7 +730,7 @@ handle_event(
         %% after  the  interdigit  time-out.  Once  the  playback
         %% finishes,  the `PLAYBACK_STOP`  event is  emitted by
         %% FreeSWITCH,  and  the  state   will  be  changed  to
-        %% `main_category()`, but  the behavior  there will  be the
+        %% `?CATEGORIES`, but  the behavior  there will  be the
         %% same, and  the digits will continue  to be collected
         %% (until they make sense).
 
@@ -691,7 +738,7 @@ handle_event(
         %% at least that is how it should be...)
         {State, Digit} when State =/= article ->
             % NewData = Data#{ category_selectors := CategorySelectors ++ [Digit] },
-            % {next_state, main_category(), NewData};
+            % {next_state, ?CATEGORIES, NewData};
             lofa
             % Data#{ category_selectors := CategorySelectors ++ [Digit] };
     end,
@@ -708,7 +755,7 @@ handle_event(
     %
     % ### 2. Why keep the state? (KEEP! See update below)
     %
-    % Many key presses (in many states) should stop the playback and cause a state change (e.g., from `greeting` to `main_category()`), but if state is changed in this `handle_event/4` clause then it will be hard to understand how subsequent events need to handled.
+    % Many key presses (in many states) should stop the playback and cause a state change (e.g., from `greeting` to `?CATEGORIES`), but if state is changed in this `handle_event/4` clause then it will be hard to understand how subsequent events need to handled.
     %
     % For example, `stop_playback/0` will cause FreeSWITCH to emit a `PLAYBACK_STOP` event, and if the state is changed, these events will have to be handled in those next states. But these next states will also receive DTMF events that stop the playback, and the handling of `PLAYBACK_STOP` events will be pushed to the subsequent states, and so on.
     %
@@ -732,7 +779,6 @@ handle_event(
 % Another false assumption I made is that `PLAYBACK_STOP` is the only thing that needs checking, but `speak` (and probably other TTS engine players) only generate `CHANNEL_EXECUTE_COMPLETE`, although the problem remains the same.
 
     %% }}- }}-
-    {keep_state, NewData};
 %% }}-
 
 %% Debug clauses for `internal` events {{-
@@ -1021,11 +1067,34 @@ play({category, []}) ->
 speak(Text) ->
     sendmsg_locked(execute, ["speak", "flite|kal|" ++ Text]).
 
-push_history(#{ history := History } = Data, StateHistory) ->
-    Data#{ history := [StateHistory | History] }.
+push_history(#{ history := History } = Data, State) ->
+    Data#{ history := [State | History] }.
 
-main_category() ->
-    {category, []}.
+% Why not check if history is empty? {{-
+% ====================================================
+% Because it will (or at least should) not happen: Call comes in, FreeSWITCH start `ivr.erl`, `init/0` sets history to `[?CATEGORIES]`, meaning that states before that (i.e., `incoming_call` and `greeting`) can never be revisited. When traversing the history backwards with * (star), `HANDLE_DTMF_FOR_ALL_STATES` will make sure that when the `?HISTORY_ROOT` is reached, pressing the * (star) will be ignored.
+% }}-
+pop_history(#{ history := [PrevState | RestHistory] } = Data) ->
+    { PrevState
+    , Data#{ history := RestHistory }
+    }.
+
+to_return_when_collecting_digits(
+  #{category_selectors := CategorySelectors} = Data,
+  Digit
+) ->
+    NewData =
+        Data#{category_selectors := CategorySelectors ++ [Digit]},
+    % The notion is that the `InterDigitTimer` is restarted whenever {{-
+    % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
+    % }}-
+    % TODO Does timer cancellation produce an event?
+    InterDigitTimer =                 % Generic timeout
+        { {timeout, interdigit_timer} % { {timeout, Name}
+        , ?INTERDIGIT_TIMEOUT         % , Time
+        , eval_collected_digits       % , EventContent }
+        },
+    {keep_state, NewData, [ InterDigitTimer ]}.
 
 category(N) ->
     {category, [N]}.
