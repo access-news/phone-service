@@ -529,6 +529,9 @@ handle_event(
 
         % * (star) and # (pound) in any state when collecting digits, and not in `greeting` {{-
         % Simply ignore, but renew `interdigit_timer`
+        % When a user presses them accidentally when signing in,
+        % or when selecting the category, it will get filtered
+        % out.
         #{                state := _State
          ,       received_digit := Digit
          ,    collecting_digits := true
@@ -626,9 +629,6 @@ handle_event(
             case {State, History} of
                 {?CATEGORIES, []} ->
                     keep_state_and_data;
-                % {main_menu, ?HISTORY_ROOT} ->
-                %     stop_playback(),
-                %     {next_state, ?CATEGORIES, Data};
                 _ ->
                     % When (or if) moving forward in history with # (pound) will be implemented, this could be the template for `prev_menu/1` (after `next_menu/1`).
                     stop_playback(),
@@ -705,85 +705,40 @@ handle_event(
             );
         % }}-
 
-        % [1-9] in `main_menu`
+        % [1-9] in `main_menu` {{-
         #{                state := main_menu
          ,       received_digit := Digit
          ,    collecting_digits := false
          , digit_is_one_to_nine := true
          }
         ->
-            case Digit of
-                0 ->
-                1 ->
-                2 ->
-                3 ->
-                5 ->
-                8 ->
-                % * -> see "* (star) in any state, except `greeting`"
-                % # -> see "# (pound) in `main_menu` (sign-in or favorites)"
-                _ ->
-                    % TODO prompt: invalid entry
-                    keep_state_and_data
-            end
-            stop_playback(),
-            {NextState, NewData} = pop_history(Data),
-            {next_state, NextState, NewData};
+            NextState =
+                case Digit of
+                    0 -> quick_help;
+                    1 -> tutorial;
+                    2 -> leave_message;
+                    3 -> blindness_services;
+                    5 -> settings;
+                    8 -> ?CATEGORIES;
+                  % * -> see "* (star) in any state, except `greeting`"
+                  % # -> see "# (pound) in `main_menu` (sign-in or favorites)"
+                    _ ->
+                        % TODO prompt: invalid entry
+                        main_menu
+                end,
+
+            next_menu(
+              #{ from => main_menu
+               , to   => NextState
+               , data => Data
+               }
+            )
+        % }}-
 
         % [1-9] when playing an article
+        % TODO NEXT
 
-% # (pound) in `main_menu` (just handle in a `main_menu` clause)
-        #{ state := State, digit := Digit, idt_running := true }
-            when
-                State =/= article,
-                Digit =/= "*",
-                Digit =/= "#"
-        ->
-            Data;
-
-        %% Brings to main menu (`main_menu`) in every state
-        {State, Digit} when Digit =:= "0" ->                % |
-            stop_playback(),                                   % |
-            Data#{ category_selectors   := CategorySelectors ++ [Digit]
-                    , prev_category := State
-                    };
-            % {next_state, main_menu, Data};                     % |
-        %% ------------------------------------------------------*
-
-        %% Stop   greeting,   and  (once   `PLAYBACK_STOP`   is
-        %% received) jump to `?CATEGORIES`.
-        %% TODO * - unassigned
-        %% TODO # - unassigned
-        % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
-        {greeting, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
-            stop_playback(),                                   % |
-            % No need to save * (star) or # (pound) because their only function in `greeting` state is to fast-forward to `?CATEGORIES`
-            Data;
-            % {next_state, ?CATEGORIES, Data};                   % |
-
-        %% ?CATEGORIES - * (star) and # (pound) has no functionality;
-        %%                ignored when pressed.
-        % When a user presses it accidentally when signing in,
-        % or when selecting the category, it will get filtered
-        % out.
-        %% TODO * - unassigned
-        %% TODO # - unassigned
-        % Leaving them unassigned (for now) because it may ease the cognitive load if functionality is consistent across menus. With that said, they may be utilized as a shortcat for "favorites", "language selection", etc., or just have the user re-define them.
-        {?CATEGORIES, Digit} when Digit =:= "*"; Digit =:= "#" -> % |
-            noop;
-            % keep_state_and_data;                   % |
-
-        %% # (pound) means "next category" in any other state
-        %% (e.g., when  listening to an article,  it means jump
-        %% to the next publication)
-        {_State, Digit} when Digit =:= "#" ->                % |
-            stop_playback();                                   % |
-            % {next_state, main_menu, Data};                     % |
-
-        %% * (star) means "go back / previous menu" in any other state
-        {_State, Digit} when Digit =:= "*" ->                % |
-            stop_playback();                                   % |
-            % {next_state, main_menu, Data};                     % |
-        %% ------------------------------------------------------*
+        %% TODO When greeting stops (`PLAYBACK_STOP` is received) jump to `?CATEGORIES`.
 
         %% Keep  playing  the   greeting,  continue  collecting
         %% digits,  and caller  will be  sent to  the specified
@@ -794,15 +749,7 @@ handle_event(
         %% `?CATEGORIES`, but  the behavior  there will  be the
         %% same, and  the digits will continue  to be collected
         %% (until they make sense).
-
-        %% It is implicit  that `Digits` can only  be [1-9] (or
-        %% at least that is how it should be...)
-        {State, Digit} when State =/= article ->
-            % NewData = Data#{ category_selectors := CategorySelectors ++ [Digit] },
-            % {next_state, ?CATEGORIES, NewData};
-            lofa
-            % Data#{ category_selectors := CategorySelectors ++ [Digit] };
-    end,
+    end;
 
     %% (Why `keep_state`)FALSE and no inserted events? {{- {{-
     %% ====================================================
@@ -912,13 +859,14 @@ handle_event(
 handle_event(
   {timeout, interdigit_timer}, % EventType
   eval_collected_digits,        % EventContent
-  _State,
+  State,
   #{ category_selectors := _DTMFDigits } = Data
 ) ->
     % TODO Prod system along, or play prompt (e.g., "Selection is invalid") if category does not exist.
     handle_digits,
     % Always clear DTMF buffer when the `interdigit_timer` expires, because at this point the buffer has been evaluated (outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result), and so a clean slate is needed.
-    {keep_state, Data#{ category_selectors := [] }}.
+    NewData = Data#{ category_selectors := [] },
+    keep_menu(State, NewData).
 %% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
@@ -1181,8 +1129,26 @@ next_menu(
    }
 ) ->
     stop_playback(),
-    NewData = push_history(Data, CurrentState),
-    {next_state, NextState, NewData}.
+
+    case {CurrentState, NextState} of
+
+        {main_menu, ?CATEGORIES} ->
+            % NOTE: `main_menu` -> `?CATEGORIES` {{-
+            % Go to `?CATEGORIES` from `main_menu` (only forward option from `main_menu`), but do not add `main_menu` to history
+            % NOTE Currently it is possible to accumulate `?CATEGORIES` in history by going to `main_menu` and forward to `?CATEGORIES`, as it will add `?CATEGORIES` each time but leaving it as is
+            % }}-
+            {next_state, ?CATEGORIES, Data};
+
+        _ when CurrentState =:= NextState ->
+            {keep_state, Data};
+
+        _ ->
+            NewData = push_history(Data, CurrentState),
+            {next_state, NextState, NewData}
+    end.
+
+keep_menu(State, Data) ->
+    next_menu(#{ from => State, to => State, data => Data}).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
