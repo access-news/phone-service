@@ -795,6 +795,26 @@ handle_event(
     %% }}- }}-
 %% }}-
 
+%% HANDLE_CHANNEL_EXECUTE_COMPLETE (catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly) {{-
+handle_event(
+  internal,                    % EventType
+  { _UUID                      % \
+  , call_event                 % |
+  , #{ "Event-Name" := "CHANNEL_EXECUTE_COMPLETE"
+     , "Application" := "speak"
+     , "Application-UUID" := ApplicationUUID
+     }                            % | EventContent = MassagedModErlEvent
+  },                           % /
+  State,
+   % if `CategorySelectors =/= []`, we are collecting digits
+  #{ category_selectors := CategorySelectors
+   ,        auth_status := AuthStatus
+   ,            history := History
+   ,       playback_ids := PlaybackIDs
+   } = Data
+) ->
+%% }}-
+
 %% Debug clauses for `internal` events {{-
 handle_event(
   internal,                          % EventType
