@@ -88,7 +88,7 @@ init(_Args) ->
     Data =
         #{ category_selectors => [] % ["7", "2", "", "3", ...]
          ,        auth_status => unregistered % | registered
-         ,        history     => ?HISTORY_ROOT
+         ,        history     => []
          ,       playback_ids => #{}
          },
     % When to push history {{-
@@ -410,7 +410,7 @@ handle_event(
     };
 %% }}-
 
-%% CALL_ANSWERED (STATE: greeting -> greeting) (internal) {{-
+%% CALL_ANSWERED (STATE: greeting -> greeting) {{-
 
 handle_event(
   internal,                               % EventType
@@ -418,22 +418,21 @@ handle_event(
   , call_event                            % |
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
   },                                      % /
-  greeting                                = State,
+  greeting = State,                       % State
   #{ auth_status  := AuthStatus           % \         Made  explicit  all  values  that  are  known,
    , history      := []                   % | Data    because the only state change to this state is
    , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
-   }                                      % /         set there must also be true.
+   } = Data                               % /         set there must also be true.
 ) ->
     logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
     comfort_noise(750),
-    % Play greeting, no loop
     ApplicationUUID =
-        play({State, AuthStatus}),
+        play({greeting, AuthStatus}),
+    NewData =
+        Data#{playback_ids := #{ State => ApplicationUUID }},
 
-    { keep_state
-    , Data#{playback_ids := #{ State => ApplicationUUID }}
-    };
+    keep_menu(greeting, NewData);
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -452,6 +451,7 @@ handle_event(
 ) ->
     logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
 
+    % {{-
     %% 1 2 3   \
     %% 4 5 6    > Interdigit time-out (IDT) = 2 sec (?)
     %% 7 8 9   /  EXCEPT when playing an article, then IDT = 0
@@ -460,6 +460,10 @@ handle_event(
 
     % Then notion is that in every state when one of "123456789" is pressed, "collecting_digits" mode is initiated, and "*" and "#" will be ignored (except when received after the interdigit time-out (IDT) expired), but they will trigger an extra IDT seconds to get new digits.
 
+    % DTMF tones are divided into two categories: category selectors, and single digit instant actions. Category selectors have interdigit timeout (that may be configurable), whereas single digits instant actions immediately respond by changing state, performing a command, etc.
+    % Another difference is that category selectors only change state once the `interdigit_timer` expires, hence they will keep the state as is in this clause, but single digit instant actions do whatever necessary to move on (stop playback, change state, etc.).
+    % }}-
+
     DigitIsOneToNine =
         case string:find("123456789", Digit) of
             nomatch ->
@@ -467,9 +471,6 @@ handle_event(
             _ ->
                 true
         end,
-
-    % DTMF tones are divided into two categories: category selectors, and single digit instant actions. Category selectors have interdigit timeout (that may be configurable), whereas single digits instant actions immediately respond by changing state, performing a command, etc.
-    % Another difference is that category selectors only change state once the `interdigit_timer` expires, hence they will keep the state as is in this clause, but single digit instant actions do whatever necessary to move on (stop playback, change state, etc.).
 
     % {{- {{-
     % When `idt_running` is true, it means we are collecting digits for category selection. So when IDT is not running and 0 comes in, then go to main menu, but when IDT is running, then add it to `CategorySelectors`, renew IDT, and keep collecting. Another example is when IDT is not running, and * (star) and # (pound) arrives, go back or go to next category respectively, but when IDT is running, then ignore these inputs and renew IDT, and keep collecting.
@@ -495,6 +496,8 @@ handle_event(
         %      When the `interdigit_timer` expires in `greeting` to (signaling that digit collection is finished), do not use `next_menu/1` but the two lines from "* (star) and # (pound) in `greeting`", otherwise `greeting` will be added to the navigation history, and navigation should not be possible back there
         % [1-9] in any state (except `article` and `main_menu`) {{-
         % will trigger DTMF collection, [1-9] have different semantics though when in `main_menu` or playing an article.
+
+        % also triggered when collecting digits for passcode when logging in
         #{ state := State
          , received_digit := Digit
          , digit_is_one_to_nine := true
@@ -609,6 +612,7 @@ handle_event(
          }
         when State =/= main_menu
         ->
+            stop_playback(),
             next_menu(
               #{ from => State
                , to   => main_menu
@@ -697,6 +701,7 @@ handle_event(
                     unregistered ->
                         sign_in
                 end,
+            stop_playback(), % TODO play prompt on `CHANNEL_EXECUTE_COMPLETE`
             next_menu(
               #{ from => main_menu
                , to   => NextState
@@ -727,6 +732,7 @@ handle_event(
                         main_menu
                 end,
 
+            stop_playback(),
             next_menu(
               #{ from => main_menu
                , to   => NextState
@@ -849,7 +855,7 @@ handle_event(
             %% there will be further events related to the `hangup`
             %% command above.
             {keep_state, Data#{termination_reason => "No logins during the demo period."}}
-    end.
+    end;
 %% }}-
 
 % TODO don't forget that GREETING -> CATEGORY N is a valid transition!
@@ -860,13 +866,28 @@ handle_event(
   {timeout, interdigit_timer}, % EventType
   eval_collected_digits,        % EventContent
   State,
-  #{ category_selectors := _DTMFDigits } = Data
+  #{ category_selectors := CategorySelectors } = Data
 ) ->
-    % TODO Prod system along, or play prompt (e.g., "Selection is invalid") if category does not exist.
-    handle_digits,
+    % TODO Prod system along, or .
     % Always clear DTMF buffer when the `interdigit_timer` expires, because at this point the buffer has been evaluated (outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result), and so a clean slate is needed.
+    stop_playback(),
     NewData = Data#{ category_selectors := [] },
-    keep_menu(State, NewData).
+
+    case handle_digits(CategorySelectors) of
+        invalid ->
+            % On CHANNEL_EXECUTE_COMPLETE, play prompt (e.g., "Selection is invalid, please try again") if category does not exist
+            keep_menu(State, NewData);
+       Category ->
+            next_menu(
+              #{ from => State
+               , to   => Category
+               , data => NewData
+               }
+            )
+    end.
+
+handle_digits(_) ->
+    noop.
 %% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
@@ -940,7 +961,7 @@ look_up(PhoneNumber) ->
 %%      See available `sendmsg` commands at
 %%      https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket#mod_event_socket-3.9.1Commands
 event_uuid_header(UUID) ->
-    [ {"Event-UUID", UUID} ].
+    {"Event-UUID", UUID}.
 
 sendmsg_headers(execute, [App, Args], UUID) ->
     %% TODO "loops"  header   and  alternate  format   for  long
@@ -1034,7 +1055,10 @@ stop_playback() ->
 
 comfort_noise(Milliseconds) ->
     logger:debug("play comfort noise"),
-    ComfortNoise = "silence_stream://" ++ Milliseconds ++ ",1400",
+    ComfortNoise =
+        "silence_stream://"
+        ++ integer_to_list(Milliseconds)
+        ++ ",1400",
     sendmsg_locked(execute, ["playback", ComfortNoise]).
 
 % TODO Try out `mod_vlc` to play aac and m4a files. {{-
@@ -1063,7 +1087,6 @@ play({greeting, AuthStatus}) ->
       ++ GoToBlindnessServices
       ++ LeaveMessage
     );
-%% }}-
 
 play({category, []}) ->
     MainCategory = "Main category.",
@@ -1075,6 +1098,7 @@ play({category, []}) ->
       ++ GoToMainMenu
       % ++ EnterFirstCategory % nem kene
      ).
+%% }}-
 
 speak(Text) ->
     sendmsg_locked(execute, ["speak", "flite|kal|" ++ Text]).
@@ -1128,8 +1152,6 @@ next_menu(
    , data := Data
    }
 ) ->
-    stop_playback(),
-
     case {CurrentState, NextState} of
 
         {main_menu, ?CATEGORIES} ->
