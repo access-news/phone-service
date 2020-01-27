@@ -33,19 +33,6 @@ start(Ref) ->
 %% gen_statem callbacks %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% Welcome to Access News, a service of Society For The Blind in Sacramento, California for blind, low-vision, and print-impaired individuals.
-
-% You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0# followed by your code, or if you would like to sign up up for Access News, please call us at 916 889 7519, or dial 02 to leave a message with your contact details.
-
-% For the main menu, press 0.
-% To listen to the tutorial, dial 00.
-% To learn about other blindness services, dial 01.
-% If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.
-% To start exploring menu items one by one, press the pound sign.
-% Press # again to skip to the next, and dial #0 to jump back to the previous one.
-
-% If you would like to learn about the national Federation of the blind nfb newsline service with access to more than 300 newspapers and magazines including the Sacramento Bee. Please call 410-659-9314. If you would like to learn about the California Braille and talking book Library, please call 80095 to 5666.
-
 % State transition cheat sheat {{- {{-
 % ============================
 
@@ -71,7 +58,7 @@ start(Ref) ->
 % *------------------------------------*
 
 % }}- }}-
-init(_Args) ->
+init(_Args) -> % {{-
     %% Set up logging to file. {{- {{-
     % filog:add_process_handler(?MODULE, Ref),
     % filog:process_handler_filter(?MODULE, Ref),
@@ -89,6 +76,7 @@ init(_Args) ->
         #{ category_selectors => [] % ["7", "2", "", "3", ...]
          ,        auth_status => unregistered % | registered
          ,        history     => []
+         % There should be only one playback running at any time, and, a corollary, each state should only have one active playback associated in this map. T
          ,       playback_ids => #{}
          },
     % When to push history {{-
@@ -105,6 +93,7 @@ init(_Args) ->
     % Because the only way out of `main_menu` is by going forward to `?CATEGORIES` or going back/up, which always pops the history. Inside `main_menu`, whenever an option is chosen, `main_menu` gets pushed to the history, but the only way out of submenus is to go back, which will pop it.
     % }}-
     {ok, State, Data}.
+% }}-
 
 callback_mode() ->
     handle_event_function.
@@ -427,10 +416,12 @@ handle_event(
     logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
     comfort_noise(750),
-    ApplicationUUID =
-        play({greeting, AuthStatus}),
     NewData =
-        Data#{playback_ids := #{ State => ApplicationUUID }},
+        play(
+          {greeting, AuthStatus},
+          {key_for_app_id, Status},
+          Data
+        ),
 
     keep_menu(greeting, NewData);
 %% }}-
@@ -516,7 +507,7 @@ handle_event(
              Digit =/= "#"
         ->
             % `next_state_on_playback_stop` and `history` fields update in `Data` not necessary, as any playback is allowed to run its course here, and state change only happens when the `interdigit_timer` expires (see timeout clauses).
-            to_return_when_collecting_digits(Data, Digit);
+            collect_digits(Data, Digit);
             % }}-
 
         % 0 in any state when collecting digits {{-
@@ -527,7 +518,8 @@ handle_event(
          }
         ->
             % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
-            to_return_when_collecting_digits(Data, "0");
+            % Could've put in previous clause, but more explicit this way
+            collect_digits(Data, "0");
             % }}-
 
         % * (star) and # (pound) in any state when collecting digits, and not in `greeting` {{-
@@ -563,8 +555,7 @@ handle_event(
         %                                                         ({6, x}).  yay
         % }}-
         ->
-            % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
-            to_return_when_collecting_digits(Data, "");
+            collect_digits(Data, "");
             % }}-
         % }}-
 
@@ -588,7 +579,7 @@ handle_event(
             {next_state, ?CATEGORIES, Data};
         % }}-
 
-        % * (star) and # (pound) in `?CATEGORIES` {{-
+        % NOTE ONLY: * (star) and # (pound) in `?CATEGORIES` {{-
         % a) Put category browsing with # (pound) on hold for now (see clause "# (pound) in any state"
         % b) Decided to put an option `main_menu` to be able to jump to the main categories, which means that * (star) should make it possible to jump back to where we came from
         % #{                state := ?CATEGORIES
@@ -623,6 +614,7 @@ handle_event(
 
         % Go up/back (the forward direction is only 0 or collecting digits!)
         % * (star) in any state, except `greeting` {{-
+        % NOTE - `?CATEGORIES` may use * (star) because it can be part of the history, whereas `greeting` should not be reached (only from a new incoming call)
         #{                state := State
          ,       received_digit := "*"
          ,    collecting_digits := false
@@ -631,6 +623,7 @@ handle_event(
         when State =/= greeting
         ->
             case {State, History} of
+                % In `?CATEGORIES, and history is empty, so ignore
                 {?CATEGORIES, []} ->
                     keep_state_and_data;
                 _ ->
@@ -813,6 +806,10 @@ handle_event(
    ,       playback_ids := PlaybackIDs
    } = Data
 ) ->
+    % RESERVED Playback stopped by `unregistered_timer`
+    % RESERVED Exit prompt finished playing -> hang up
+
+    % 
 %% }}-
 
 %% Debug clauses for `internal` events {{-
@@ -868,6 +865,9 @@ handle_event(
             keep_state_and_data;
 
         registered ->
+            % TODO Prompt for kicking out user in a proper way?
+            %      It would somewhat complicate things, as current playback would need to be stopped, handle the stopped playback in a `HANDLE_CHANNEL_EXECUTE_COMPLETE` clause by starting the exit prompt, make it uninterruptable, and handle when it stops playing (that is, hang up)
+
             %% The generated `CALL_HANGUP` event  will be caught by
             %% "CALL_HANGUP" `handle_event/4`.
             sendmsg(hangup, ["16"]),
@@ -888,10 +888,11 @@ handle_event(
   State,
   #{ category_selectors := CategorySelectors } = Data
 ) ->
+    stop_playback(),
     % TODO Prod system along, or .
     % Always clear DTMF buffer when the `interdigit_timer` expires, because at this point the buffer has been evaluated (outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result), and so a clean slate is needed.
-    stop_playback(),
-    NewData = Data#{ category_selectors := [] },
+    NewData =
+        Data#{ category_selectors := [] },
 
     case handle_digits(CategorySelectors) of
         invalid ->
@@ -1073,6 +1074,20 @@ stop_playback() ->
 %% `sendmsg_locked`,  the process  continues execution,
 %% and waits for coming events (such as DTMF events).
 
+% Welcome to Access News, a service of Society For The Blind in Sacramento, California for blind, low-vision, and print-impaired individuals.
+
+% You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0# followed by your code, or if you would like to sign up up for Access News, please call us at 916 889 7519, or dial 02 to leave a message with your contact details.
+
+% For the main menu, press 0.
+% To listen to the tutorial, dial 00.
+% To learn about other blindness services, dial 01.
+% If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.
+% To start exploring menu items one by one, press the pound sign.
+% Press # again to skip to the next, and dial #0 to jump back to the previous one.
+
+% If you would like to learn about the national Federation of the blind nfb newsline service with access to more than 300 newspapers and magazines including the Sacramento Bee. Please call 410-659-9314. If you would like to learn about the California Braille and talking book Library, please call 80095 to 5666.
+
+
 comfort_noise(Milliseconds) ->
     logger:debug("play comfort noise"),
     ComfortNoise =
@@ -1085,7 +1100,7 @@ comfort_noise(Milliseconds) ->
 % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
 % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
 % }}-
-play({greeting, AuthStatus}) ->
+play({greeting, AuthStatus}) -> % {{-
     logger:debug("play greeting"),
     Welcome = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
     SelectionSkip = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories",
@@ -1107,8 +1122,9 @@ play({greeting, AuthStatus}) ->
       ++ GoToBlindnessServices
       ++ LeaveMessage
     );
+% }}-
 
-play({category, []}) ->
+play({category, []}) -> % {{-
     MainCategory = "Main category.",
     GoToMainMenu = "For the main menu, press 0.",
     % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
@@ -1118,10 +1134,28 @@ play({category, []}) ->
       ++ GoToMainMenu
       % ++ EnterFirstCategory % nem kene
      ).
-%% }}-
+% }}-
+
+% `What` is either a state name or custom designation (such a prompt on timeout).
+% `Data` always refers to `gen_fsm` process data (a.k.a., state in `gen_server`)
+play(
+  What,
+  {key_for_app_id, Key},
+  #{ playback_ids := PlaybackIDs } = Data
+) ->
+    ApplicationUUID =
+        play(What),
+    NewPlaybackIDs =
+        % `=>` update if present, or create new
+        % `:=` only update when present, otherwise crash
+        PlaybackIDs#{ Key => ApplicationUUID },
+    NewData =
+        Data#{playback_ids := NewPlaybackIDs }.
 
 speak(Text) ->
     sendmsg_locked(execute, ["speak", "flite|kal|" ++ Text]).
+
+%% }}-
 
 push_history(#{ history := History } = Data, State) ->
     Data#{ history := [State | History] }.
@@ -1137,7 +1171,7 @@ pop_history(#{ history := [PrevState | RestHistory] } = Data) ->
     , Data#{ history := RestHistory }
     }.
 
-to_return_when_collecting_digits(
+collect_digits(
   #{category_selectors := CategorySelectors} = Data,
   Digit
 ) ->
