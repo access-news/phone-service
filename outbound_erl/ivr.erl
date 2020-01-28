@@ -392,8 +392,7 @@ handle_event(
                 }
         end,
 
-    { next_state
-    , greeting
+    { keep_state
     , Data#{ auth_status := NewAuthStatus }
     , TransitionActions
     };
@@ -407,7 +406,7 @@ handle_event(
   , call_event                            % |
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
   },                                      % /
-  greeting = State,                       % State
+  incoming_call = State,                       % State
   #{ auth_status  := AuthStatus           % \         Made  explicit  all  values  that  are  known,
    , history      := []                   % | Data    because the only state change to this state is
    , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
@@ -416,14 +415,14 @@ handle_event(
     logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
     comfort_noise(750),
-    NewData =
-        play(
-          {greeting, AuthStatus},
-          {key_for_app_id, Status},
-          Data
-        ),
 
-    keep_menu(greeting, NewData);
+    enter_menu(
+      #{ from => incoming_call
+       , to   => greeting
+       , data => Data
+       , play => greeting
+       }
+    );
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -573,10 +572,13 @@ handle_event(
         when Digit =:= "*";
              Digit =:= "#"
         ->
-            % No `next_menu/1` here to keep the history empty, making `?CATEGORIES` the root. Whatever navigations happen therekkkk
             % TODO Wait for `CHANNEL_EXECUTE_COMPLETE` and start menu playback
-            stop_playback(),
-            {next_state, ?CATEGORIES, Data};
+            leave_menu(
+              #{ from => greeting
+               , to   => ?CATEGORIES
+               , data => Data
+               }
+            );
         % }}-
 
         % NOTE ONLY: * (star) and # (pound) in `?CATEGORIES` {{-
@@ -603,8 +605,7 @@ handle_event(
          }
         when State =/= main_menu
         ->
-            stop_playback(),
-            next_menu(
+            leave_menu(
               #{ from => State
                , to   => main_menu
                , data => Data
@@ -612,8 +613,26 @@ handle_event(
             );
         % }}-
 
-        % Go up/back (the forward direction is only 0 or collecting digits!)
-        % * (star) in any state, except `greeting` {{-
+        % Go up/back (the forward direction is only 0 or collecting digits!) {{-
+
+        %     * (star) in main_menu, when previously in `greeting` {{-
+        #{                state := main_menu
+         ,       received_digit := "*"
+         ,    collecting_digits := false
+         , digit_is_one_to_nine := false % not necessary, but explicit
+         }
+        % The only time when history is not updated when entering `main_menu` is when coming from `greeting` (or at least, this should be the case). See "* (star) and # (pound) in `greeting`" case clause above (it does not update the history).
+        when History =/= []
+        ->
+            leave_menu(
+              #{ from => main_menu
+               , to   => ?CATEGORIES
+               , data => Data
+               }
+            );
+        % }}-
+
+        %     * (star) in any state, except `greeting` {{-
         % NOTE - `?CATEGORIES` may use * (star) because it can be part of the history, whereas `greeting` should not be reached (only from a new incoming call)
         #{                state := State
          ,       received_digit := "*"
@@ -625,13 +644,19 @@ handle_event(
             case {State, History} of
                 % In `?CATEGORIES, and history is empty, so ignore
                 {?CATEGORIES, []} ->
-                    keep_state_and_data;
+                    % keep_state_and_data;
+
+                    % step 1. prompt: nowhere to go back (or smth like it)
+                    %    1a - stop_playback
+                    %    1b - start new playback in HANDLE_CHANNEL_EXECUTE_COMPLETE
+                    % step 2. 
                 _ ->
                     % When (or if) moving forward in history with # (pound) will be implemented, this could be the template for `prev_menu/1` (after `next_menu/1`).
                     stop_playback(),
                     {NextState, NewData} = pop_history(Data),
                     {next_state, NextState, NewData}
             end;
+        % }}-
         % }}-
 
         % No function (TODO maybe to move forward in history? would need a double linked list though)
@@ -694,8 +719,7 @@ handle_event(
                     unregistered ->
                         sign_in
                 end,
-            stop_playback(), % TODO play prompt on `CHANNEL_EXECUTE_COMPLETE`
-            next_menu(
+            leave_menu(
               #{ from => main_menu
                , to   => NextState
                , data => Data
@@ -725,8 +749,7 @@ handle_event(
                         main_menu
                 end,
 
-            stop_playback(),
-            next_menu(
+            leave_menu(
               #{ from => main_menu
                , to   => NextState
                , data => Data
@@ -794,22 +817,79 @@ handle_event(
   { _UUID                      % \
   , call_event                 % |
   , #{ "Event-Name" := "CHANNEL_EXECUTE_COMPLETE"
+       % TODO re-eval on any playback change! (external engine etc)
      , "Application" := "speak"
      , "Application-UUID" := ApplicationUUID
      }                            % | EventContent = MassagedModErlEvent
   },                           % /
   State,
    % if `CategorySelectors =/= []`, we are collecting digits
-  #{ category_selectors := CategorySelectors
-   ,        auth_status := AuthStatus
+  #{        auth_status := AuthStatus % TODO needed?
    ,            history := History
    ,       playback_ids := PlaybackIDs
    } = Data
 ) ->
-    % RESERVED Playback stopped by `unregistered_timer`
-    % RESERVED Exit prompt finished playing -> hang up
+    case
+        #{        state => State
+                 app_id => ApplicationUUID
+         , playback_ids => PlaybackIDs
+         }
+    of
+        % RESERVED Playback stopped by `unregistered_timer`
+        % RESERVED Exit prompt finished playing -> hang up
 
-    % 
+        % `greeting` stopped (for whatever reason; no loop anyway) {{-
+
+        %     IN main_menu {{-
+        % An example on how to get here:
+        % 1. playback started in CALL_ANSWERED via `enter_menu/1`
+        %    (state change: incoming_call -> greeting)
+        % 2. 0 pressed while greeting was playing, async playback stop command issued, and state changed from `greeting` to `main_menu` via `leave_menu/1`
+        % 3. A `CHANNEL_EXECUTE_COMPLETE` FreeSWITCH event arrived, signifying that something stopped a playback. The current state is main_menu (because of step 2. above), the map in Data#playback_ids only has one entry containing the application UUID when starting a playback in greeting. If the guard matches, it means that this event is a confirmation from FreeSWITCH is from the stopped greeting.
+        #{        state := main_menu
+         , playback_ids := #{ greeting := PlaybackID }
+         }
+        when PlaybackID =:= ApplicationUUID
+        ->
+            play_menu(main_menu, Data);
+        % }}-
+
+        %     IN ?CATEGORIES {{-
+        #{        state := ?CATEGORIES
+         , playback_ids := #{ greeting := PlaybackID }
+         }
+        when PlaybackID =:= ApplicationUUID
+        ->
+            play_menu(?CATEGORIES, Data);
+        % }}-
+
+        %     IN a sub-category (i.e., `{category, [..]}`) {{-
+        #{        state := State
+         , playback_ids := #{ greeting := PlaybackID }
+         }
+        when element(1, State) =:= category,
+             PlaybackID =:= ApplicationUUID
+        ->
+            play_menu(State, Data);
+        % }}-
+
+        %     IN greeting (i.e., playback ran its course) {{-
+        #{        state := greeting
+         % This and the guard shouldn't even be necessary, because the only other playback that can end in `greeting` is the comfort noise, but why not check it if it is already there (plus I may have messed up)
+         , playback_ids := #{ greeting := PlaybackID }
+         }
+        when PlaybackID =:= ApplicationUUID
+        ->
+            enter_menu(
+              #{ from => greeting
+               , to   => ?CATEGORIES
+               , data => Data
+               , play => Prompt
+               }
+            )
+        % }}-
+    end;
+        % }}-
 %% }}-
 
 %% Debug clauses for `internal` events {{-
@@ -888,26 +968,27 @@ handle_event(
   State,
   #{ category_selectors := CategorySelectors } = Data
 ) ->
-    stop_playback(),
     % TODO Prod system along, or .
     % Always clear DTMF buffer when the `interdigit_timer` expires, because at this point the buffer has been evaluated (outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result), and so a clean slate is needed.
     NewData =
         Data#{ category_selectors := [] },
 
-    case handle_digits(CategorySelectors) of
+    case eval_collected_digits(CategorySelectors) of
         invalid ->
             % On CHANNEL_EXECUTE_COMPLETE, play prompt (e.g., "Selection is invalid, please try again") if category does not exist
-            keep_menu(State, NewData);
+            play_menu( [State, invalid_selection] );
+
        Category ->
-            next_menu(
+            enter_menu(
               #{ from => State
                , to   => Category
                , data => NewData
+               , play => Category
                }
             )
     end.
 
-handle_digits(_) ->
+eval_collected_digits(_) ->
     noop.
 %% }}-
 
@@ -1100,7 +1181,7 @@ comfort_noise(Milliseconds) ->
 % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
 % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
 % }}-
-play({greeting, AuthStatus}) -> % {{-
+play(greeting, #{ auth_status := AuthStatus}) -> % {{-
     logger:debug("play greeting"),
     Welcome = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
     SelectionSkip = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories",
@@ -1124,7 +1205,11 @@ play({greeting, AuthStatus}) -> % {{-
     );
 % }}-
 
-play({category, []}) -> % {{-
+play(main_menu) ->
+    
+    speak().
+
+play(?CATEGORIES, _Data) -> % {{-
     MainCategory = "Main category.",
     GoToMainMenu = "For the main menu, press 0.",
     % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
@@ -1136,21 +1221,20 @@ play({category, []}) -> % {{-
      ).
 % }}-
 
-% `What` is either a state name or custom designation (such a prompt on timeout).
+% `Prompt` is either a state name or custom designation (such a prompt on timeout).
 % `Data` always refers to `gen_fsm` process data (a.k.a., state in `gen_server`)
-play(
-  What,
-  {key_for_app_id, Key},
-  #{ playback_ids := PlaybackIDs } = Data
-) ->
-    ApplicationUUID =
-        play(What),
-    NewPlaybackIDs =
-        % `=>` update if present, or create new
-        % `:=` only update when present, otherwise crash
-        PlaybackIDs#{ Key => ApplicationUUID },
-    NewData =
-        Data#{playback_ids := NewPlaybackIDs }.
+% play(
+%   Prompt,
+%   #{ playback_ids := PlaybackIDs } = Data
+% ) ->
+%     ApplicationUUID =
+%         play(Prompt, Data),
+%     NewPlaybackIDs =
+%         % `=>` update if present, or create new
+%         % `:=` only update when present, otherwise crash
+%         PlaybackIDs#{ Prompt => ApplicationUUID },
+%     NewData =
+%         Data#{playback_ids := NewPlaybackIDs }.
 
 speak(Text) ->
     sendmsg_locked(execute, ["speak", "flite|kal|" ++ Text]).
@@ -1200,31 +1284,110 @@ category(N, M, O) ->
 category(N, M, O, P) ->
     {category, [N, M, O, P]}.
 
-next_menu(
+do_next_menu(
   #{ from := CurrentState
    , to   := NextState
-   , data := Data
+   , data := #{ playback_ids := PlaybackIDs } = Data
+   , play := Prompt
    }
 ) ->
+    NewData =
+        case Prompt of
+            stop ->
+                stop_playback(),
+                Data;
+            _ ->
+                ApplicationUUID =
+                    play(Prompt, Data),
+                NewPlaybackIDs =
+                    % `=>` update if present, or create new
+                    % `:=` only update when present, otherwise crash
+                    PlaybackIDs#{ Prompt => ApplicationUUID },
+
+                Data#{playback_ids := NewPlaybackIDs }
+        end,
+
     case {CurrentState, NextState} of
 
-        {main_menu, ?CATEGORIES} ->
+        % State changes when history is not updated  with prev
+        % state (corner cases)
+        % ====================================================
+        % NOTE: This is adding behaviour to `next_menu/1`, which {{-
+        % I do not like, but these are the only cases when history is not pushed (so far). Another advantage is that all corner cases are listed in one place.
+        % }}-
+
+        %   + `main_menu` -> `?CATEGORIES` (i.e., when pressing 8 in `main_menu`)
+        {main_menu, ?CATEGORIES} -> % {{-
             % NOTE: `main_menu` -> `?CATEGORIES` {{-
             % Go to `?CATEGORIES` from `main_menu` (only forward option from `main_menu`), but do not add `main_menu` to history
             % NOTE Currently it is possible to accumulate `?CATEGORIES` in history by going to `main_menu` and forward to `?CATEGORIES`, as it will add `?CATEGORIES` each time but leaving it as is
             % }}-
-            {next_state, ?CATEGORIES, Data};
+            {next_state, ?CATEGORIES, NewData};
+        % }}-
 
+        %   + `greeting` -> `?CATEGORIES` (i.e., when pressing * or #  in `greeting` or playback stops)
+        {greeting, ?CATEGORIES} -> % {{-
+            % No `next_menu/1` here to keep the history empty so that `greeting` cannot be revisited, making `?CATEGORIES` the root. Whatever navigations happen there
+            % Why not keep state? Reminder: 0# (not very relevant in this particular case, but keeping state changes consistent makes it easier to think about each `handle_event/4` clause. Read note at the very end of HANDLE_DTMF_FOR_ALL_STATES `handle_event/4` clause)
+            {next_state, ?CATEGORIES, NewData};
+        % }}-
+
+        %   + `greeting`  -> `main_menu`
+        {greeting, main_menu} -> % {{-
+            {next_state, main_menu, NewData};
+        % }}-
+
+        %   + `incoming_call` -> `greeting`
+        {incoming_call, greeting} -> % {{-
+            {next_state, greeting, NewData};
+        % }}-
+
+        % On any other state change
+        _ when CurrentState =/= NextState ->
+            DatUpdate = push_history(NewData, CurrentState),
+            {next_state, NextState, DatUpdate};
+
+        % On state transition (don't push history)
         _ when CurrentState =:= NextState ->
-            {keep_state, Data};
-
-        _ ->
-            NewData = push_history(Data, CurrentState),
-            {next_state, NextState, NewData}
+            {keep_state, NewData}
     end.
 
-keep_menu(State, Data) ->
-    next_menu(#{ from => State, to => State, data => Data}).
+leave_menu(
+  #{ from := _CurrentState
+   , to   := _NextState
+   , data := _Data
+   } = Map
+) ->
+    do_next_menu(Map#{ play => stop }).
+
+enter_menu(
+  #{ from := _CurrentState
+   , to   := _NextState
+   , data := _Data
+   , play := Prompt
+   } = Map
+)
+when Prompt =:= stop
+->
+    do_next_menu(Map).
+
+play_menu(Prompt, Data) ->
+    do_next_menu(
+      #{ from => Prompt
+       , to   => Prompt
+       , data => Data
+       , play => Prompt
+       }
+    );
+
+play_menu([State, SubPrompt], Data) ->
+    do_next_menu(
+      #{ from => State
+       , to   => State
+       , data => Data
+       , play => SubPrompt
+       }
+    ).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
