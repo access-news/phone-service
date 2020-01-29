@@ -17,9 +17,14 @@
 % Replaced this with a `main_category()` function at one point but had to revert because needed to use this in guards when handling DTMFs, and that will not work.
 -define(CATEGORIES, {category, []}).
 
--define(DEMO_TIMEOUT, 600000).
+
+% a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
+-define(DEMO_TIMEOUT, 300000). % 5 min
 -define(INTERDIGIT_TIMEOUT, 2000).
--define(DTMF_DIGIT_TIMEOUT, 5000).
+-define(INACTIVITY_WARNING_TIMEOUT, 600000). % 10 min
+-define(INACTIVITY__TIMEOUT, 720000). % 12 min
+
+% -define(DTMF_DIGIT_TIMEOUT, 5000). % TODO ???
 
 start_link(Ref) ->
     {ok, Pid} = gen_statem:start_link(?MODULE, [], []),
@@ -1006,10 +1011,11 @@ handle_event(
 
     case AuthStatus of
 
-        unregistered ->
+        registered ->
+            % ignore if user already signed in in the meantime
             keep_state_and_data;
 
-        registered ->
+        unregistered ->
             % TODO Prompt for kicking out user in a proper way?
             %      It would somewhat complicate things, as current playback would need to be stopped, handle the stopped playback in a `HANDLE_CHANNEL_EXECUTE_COMPLETE` clause by starting the exit prompt, make it uninterruptable, and handle when it stops playing (that is, hang up)
 
@@ -1041,7 +1047,13 @@ handle_event(
     case eval_collected_digits(CategorySelectors) of
         invalid ->
             % On CHANNEL_EXECUTE_COMPLETE, play prompt (e.g., "Selection is invalid, please try again") if category does not exist
-            play_menu( [State, invalid_selection], NewData );
+            % play_menu( [State, invalid_selection], NewData );
+            leave_menu(
+              #{ from => State
+               , to   => invalid_category
+               , data => _Data
+               }
+            );
 
        Category ->
             enter_menu(
@@ -1050,11 +1062,31 @@ handle_event(
                , data => NewData
                }
             )
-    end.
+    end;
+%% }}-
+
+%% inactivity timers {{-
+handle_event(
+  state_timeout, % EventType
+  inactivity_prompt,        % EventContent
+  State,
+  Data
+) ->
+    stop_menu(State, Data);
+    % play_menu([State, inactivity_prompt], Data);
+
+handle_event(
+  state_timeout, % EventType
+  hang_up,        % EventContent
+  _State,
+  Data
+) ->
+    sendmsg(hangup, ["16"]),
+    {keep_state, Data#{termination_reason => "No activity for 12 minutes."}}.
+%% }}-
 
 eval_collected_digits(_) ->
     noop.
-%% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions %%
@@ -1409,8 +1441,12 @@ do_next_menu(
 
         % On any other state change
         _ when CurrentState =/= NextState ->
+            TransitionActions =
+                [ {state_timeout, ?INACTIVITY_WARNING_TIMEOUT, inactivity_prompt}
+                , {state_timeout, ?INACTIVITY__TIMEOUT, hang_up}
+                ],
             DatUpdate = push_history(NewData, CurrentState),
-            {next_state, NextState, DatUpdate};
+            {next_state, NextState, DatUpdate, TransitionActions};
 
         % On state transition (don't push history)
         _ when CurrentState =:= NextState ->
