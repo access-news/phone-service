@@ -420,7 +420,6 @@ handle_event(
       #{ from => incoming_call
        , to   => greeting
        , data => Data
-       , play => greeting
        }
     );
 %% }}-
@@ -642,14 +641,15 @@ handle_event(
         when State =/= greeting
         ->
             case {State, History} of
-                % In `?CATEGORIES, and history is empty, so ignore
+                % In `?CATEGORIES, and history is empty, i.e., nowhere to go back to, so ignore
                 {?CATEGORIES, []} ->
-                    % keep_state_and_data;
-
+                    keep_state_and_data;
+                    % TODO maybe? {{-
                     % step 1. prompt: nowhere to go back (or smth like it)
                     %    1a - stop_playback
                     %    1b - start new playback in HANDLE_CHANNEL_EXECUTE_COMPLETE
-                    % step 2. 
+                    % step 2.
+                    % }}-
                 _ ->
                     % When (or if) moving forward in history with # (pound) will be implemented, this could be the template for `prev_menu/1` (after `next_menu/1`).
                     stop_playback(),
@@ -811,7 +811,7 @@ handle_event(
     %% }}- }}-
 %% }}-
 
-%% HANDLE_CHANNEL_EXECUTE_COMPLETE (catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly)(catching stopped playbacks mostly) {{-
+%% HANDLE_CHANNEL_EXECUTE_COMPLETE (catching stopped playbacks mostly) {{-
 handle_event(
   internal,                    % EventType
   { _UUID                      % \
@@ -829,67 +829,131 @@ handle_event(
    ,       playback_ids := PlaybackIDs
    } = Data
 ) ->
+    logger:debug(#{ from => "HANDLE_CHANNEL_EXECUTE_COMPLETE", app_id => ApplicationUUID, play_ids => PlaybackIDs}),
     case
         #{        state => State
-                 app_id => ApplicationUUID
-         , playback_ids => PlaybackIDs
+         % , playback_ids => PlaybackIDs
          }
     of
-        % RESERVED Playback stopped by `unregistered_timer`
-        % RESERVED Exit prompt finished playing -> hang up
-
-        % `greeting` stopped (for whatever reason; no loop anyway) {{-
-
-        %     IN main_menu {{-
-        % An example on how to get here:
-        % 1. playback started in CALL_ANSWERED via `enter_menu/1`
-        %    (state change: incoming_call -> greeting)
-        % 2. 0 pressed while greeting was playing, async playback stop command issued, and state changed from `greeting` to `main_menu` via `leave_menu/1`
-        % 3. A `CHANNEL_EXECUTE_COMPLETE` FreeSWITCH event arrived, signifying that something stopped a playback. The current state is main_menu (because of step 2. above), the map in Data#playback_ids only has one entry containing the application UUID when starting a playback in greeting. If the guard matches, it means that this event is a confirmation from FreeSWITCH is from the stopped greeting.
-        #{        state := main_menu
-         , playback_ids := #{ greeting := PlaybackID }
-         }
-        when PlaybackID =:= ApplicationUUID
-        ->
-            play_menu(main_menu, Data);
-        % }}-
-
-        %     IN ?CATEGORIES {{-
-        #{        state := ?CATEGORIES
-         , playback_ids := #{ greeting := PlaybackID }
-         }
-        when PlaybackID =:= ApplicationUUID
-        ->
-            play_menu(?CATEGORIES, Data);
-        % }}-
-
-        %     IN a sub-category (i.e., `{category, [..]}`) {{-
-        #{        state := State
-         , playback_ids := #{ greeting := PlaybackID }
-         }
-        when element(1, State) =:= category,
-             PlaybackID =:= ApplicationUUID
-        ->
-            play_menu(State, Data);
-        % }}-
-
-        %     IN greeting (i.e., playback ran its course) {{-
-        #{        state := greeting
-         % This and the guard shouldn't even be necessary, because the only other playback that can end in `greeting` is the comfort noise, but why not check it if it is already there (plus I may have messed up)
-         , playback_ids := #{ greeting := PlaybackID }
-         }
-        when PlaybackID =:= ApplicationUUID
-        ->
+        % The only playback that can be stopped in `greeting` is when the `greeting` playback stops by itself, and so we would like to naturally transition to `?CATEGORIES`
+        #{ state := greeting } ->
+            logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN greeting (natural stop)"),
             enter_menu(
               #{ from => greeting
                , to   => ?CATEGORIES
                , data => Data
-               , play => Prompt
                }
-            )
-        % }}-
+            );
+
+        % TODO inactivity timeout! (state timeouts?)
+        % #{        state := ?CATEGORIES
+        %  , playback_ids := #{ ?CATEGORIES := PlaybackID }
+        %  }
+        % when PlaybackID =:= ApplicationUUID
+        % % i.e., the playback of `?CATEGORIES` menu has finished, no input from user
+        % ->
+
+        #{        state := State
+         % , playback_ids => PlaybackIDs
+         }
+        ->
+            play_menu(State, Data)
     end;
-        % }}-
+
+        % % `greeting` stopped (for whatever reason; no loop anyway) {{-
+        % RESERVED Playback stopped by `unregistered_timer`
+        % RESERVED Exit prompt finished playing -> hang up
+
+
+        % %     IN main_menu {{-
+        % % An example on how to get here: {{-
+        % % 1. playback started in CALL_ANSWERED via `enter_menu/1`
+        % %    (state change: incoming_call -> greeting)
+        % % 2. 0 pressed while greeting was playing, async playback stop command issued, and state changed from `greeting` to `main_menu` via `leave_menu/1`
+        % % 3. A `CHANNEL_EXECUTE_COMPLETE` FreeSWITCH event arrived, signifying that something stopped a playback. The current state is main_menu (because of step 2. above), the map in Data#playback_ids only has one entry containing the application UUID when starting a playback in greeting. If the guard matches, it means that this event is a confirmation from FreeSWITCH is from the stopped greeting.
+        % % }}-
+        % #{        state := main_menu
+        %  , playback_ids := #{ greeting := PlaybackID }
+        %  }
+        % when PlaybackID =:= ApplicationUUID
+        % ->
+        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN main_menu"),
+        %     play_menu(main_menu, Data);
+        % % }}-
+
+        % %     IN ?CATEGORIES {{-
+        % #{        state := ?CATEGORIES
+        %  , playback_ids := #{ greeting := PlaybackID }
+        %  }
+        % when PlaybackID =:= ApplicationUUID
+        % ->
+        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN ?CATEGORIES"),
+        %     play_menu(?CATEGORIES, Data);
+        % % }}-
+
+        % %     IN a sub-category (i.e., `{category, [..]}`) {{-
+        % #{        state := State
+        %  , playback_ids := #{ greeting := PlaybackID }
+        %  }
+        % when element(1, State) =:= category,
+        %      PlaybackID =:= ApplicationUUID
+        % ->
+        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN " ++ s(State)),
+        %     play_menu(State, Data);
+        % % }}-
+
+        % %     IN greeting (i.e., playback ran its course) {{-
+        % #{        state := greeting
+        %  % NOTE This and the guard shouldn't even be necessary, {{-
+        %  % because the only other playback that can end in `greeting` is the comfort noise, but why not check it if it is already there (plus I may have messed up)
+        %  % }}-
+        %  , playback_ids := #{ greeting := PlaybackID }
+        %  }
+        % when PlaybackID =:= ApplicationUUID
+        % ->
+        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN greeting (natural stop)"),
+        %     enter_menu(
+        %       #{ from => greeting
+        %        , to   => ?CATEGORIES
+        %        , data => Data
+        %        }
+        %     );
+        % % }}-
+
+        % %     IN any other state, start the menu where it arrived {{-
+        % % TODO is this going to be a general case?
+
+        % % TODO so how to deal with events like the 0# transition?
+        % % 1. incoming_call -> greeting starts
+        % % 2. (STATE: greeting) 0 pressed
+        % % 3. (STATE: greeting)
+        % %    FreeSWITCH DTMF event processed in HANDLE_DTMF_FOR_ALL_STATES the case clause,
+        % %    issues `leave_menu/1` (requests async playback stop, and sets state to main_menu)
+
+        % % SCENARIO I
+        % % 4. (STATE: main_menu)
+        % %    CHANNEL_EXECUTE_COMPLETE (confirming that playback stopped) processed in
+        % %    HANDLE_CHANNEL_EXECUTE_COMPLETE (`enter_menu/1` resulting in `main_menu` playback
+
+        % % SCENARIO II
+        % % 4. (STATE: main_menu) # pressed
+        % % 5. DTMF event processed in HANDLE_DTMF_FOR_ALL_STATES
+        % %    calling `leave_menu/1` (async playback stop, and go to sign_in/favorites)
+        % %    ===> will not result any event, because there is no other playback
+        % % 6. (STATE: sign_in/favorites) CHANNEL_EXECUTE_COMPLETE comes in for the stopped greeting
+        % % 7. HANDLE_CHANNEL_EXECUTE_COMPLETE clause
+        % #{        state := State
+        %  , playback_ids := #{ greeting := PlaybackID }
+        %  }
+        % when PlaybackID =:= ApplicationUUID
+        % ->
+        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN " ++ s(State)),
+        %     % Ignore this event entirely
+        %     keep_state_and_data;
+        % % }}-
+
+    % end;
+        % % }}-
 %% }}-
 
 %% Debug clauses for `internal` events {{-
@@ -903,7 +967,8 @@ handle_event(
   _Data                               % Data
 ) ->
     logger:debug(""),
-    logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, fs_event_data => FSEvent,  state => State}]}),
+    % logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, fs_event_data => FSEvent,  state => State}]}),
+    logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State}]}),
     logger:debug(""),
     keep_state_and_data;
 
@@ -976,14 +1041,13 @@ handle_event(
     case eval_collected_digits(CategorySelectors) of
         invalid ->
             % On CHANNEL_EXECUTE_COMPLETE, play prompt (e.g., "Selection is invalid, please try again") if category does not exist
-            play_menu( [State, invalid_selection] );
+            play_menu( [State, invalid_selection], NewData );
 
        Category ->
             enter_menu(
               #{ from => State
                , to   => Category
                , data => NewData
-               , play => Category
                }
             )
     end.
@@ -1099,7 +1163,8 @@ do_sendmsg(SendmsgCommand, Args, IsLocked) ->
             true  -> [{"event-lock", "true"}]
         end,
     ApplicationUUID =
-        lists:flatten(io_lib:format("~p", [now()])),
+        % lists:flatten(io_lib:format("~p", [now()])),
+        integer_to_list( erlang:system_time() ),
     FinalHeaders =
         [{"call-command", atom_to_list(SendmsgCommand)}]
         ++ sendmsg_headers(SendmsgCommand, Args, ApplicationUUID)
@@ -1184,7 +1249,7 @@ comfort_noise(Milliseconds) ->
 play(greeting, #{ auth_status := AuthStatus}) -> % {{-
     logger:debug("play greeting"),
     Welcome = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
-    SelectionSkip = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories",
+    SelectionSkip = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
     Unregistered =
         case AuthStatus of
             registered ->
@@ -1196,18 +1261,18 @@ play(greeting, #{ auth_status := AuthStatus}) -> % {{-
     GoToBlindnessServices = "To learn about other blindness services, dial 03.",
     LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.",
     speak(
-         Welcome
-      ++ Unregistered
-      ++ SelectionSkip
-      ++ GoToTutorial
-      ++ GoToBlindnessServices
-      ++ LeaveMessage
+         Welcome ++ " "
+      ++ Unregistered          ++ " "
+      ++ SelectionSkip         ++ " "
+      ++ GoToTutorial          ++ " "
+      ++ GoToBlindnessServices ++ " "
+      ++ LeaveMessage          ++ " "
     );
 % }}-
 
-play(main_menu) ->
-    
-    speak().
+% play(main_menu) ->
+
+%     speak().
 
 play(?CATEGORIES, _Data) -> % {{-
     MainCategory = "Main category.",
@@ -1362,23 +1427,12 @@ leave_menu(
 
 enter_menu(
   #{ from := _CurrentState
-   , to   := _NextState
+   , to   := NextState
    , data := _Data
-   , play := Prompt
    } = Map
 )
-when Prompt =:= stop
 ->
-    do_next_menu(Map).
-
-play_menu(Prompt, Data) ->
-    do_next_menu(
-      #{ from => Prompt
-       , to   => Prompt
-       , data => Data
-       , play => Prompt
-       }
-    );
+    do_next_menu(Map#{ play => NextState }).
 
 play_menu([State, SubPrompt], Data) ->
     do_next_menu(
@@ -1387,7 +1441,20 @@ play_menu([State, SubPrompt], Data) ->
        , data => Data
        , play => SubPrompt
        }
+    );
+
+play_menu(Prompt, Data) ->
+    do_next_menu(
+      #{ from => Prompt
+       , to   => Prompt
+       , data => Data
+       , play => Prompt
+       }
     ).
+
+s(Term) ->
+    R = io_lib:format("~p",[{lofa, 27}]),
+    lists:flatten(R).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
