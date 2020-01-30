@@ -288,6 +288,29 @@ handle_event(
     keep_state_and_data;
 %% }}-
 
+%% inactivity timers (info) {{-
+handle_event(
+  info,
+  inactivity_warning,
+  State,
+  Data
+) ->
+    InactiveWarning =
+        "Please press 0 if you are still there.",
+
+    % TODO how is this applicable when in {article, _}?
+    repeat_menu(State, Data, #{with_warning => InactiveWarning});
+
+handle_event(
+  info,
+  inactivity_hangup,
+  State,
+  Data
+) ->
+
+    next_menu({hangup, inactivity}, State, Data);
+%% }}-
+
 %% DEBUG (info) {{-
 %% Catch-all clause to see unhandled `info` events.
 handle_event(
@@ -1077,30 +1100,7 @@ handle_event(
 
         Category ->
             next_menu(Category, State, NewData)
-    end;
-%% }}-
-
-%% inactivity timers (info) {{-
-handle_event(
-  info,
-  inactivity_warning,
-  State,
-  Data
-) ->
-    InactiveWarning =
-        "Please press 0 if you are still there.",
-
-    % TODO how is this applicable when in {article, _}?
-    repeat_menu(State, Data, #{with_warning => InactiveWarning});
-
-handle_event(
-  info,
-  inactivity_hangup,
-  State,
-  Data
-) ->
-
-    next_menu({hangup, inactivity}, State, Data).
+    end.
 %% }}-
 
 eval_collected_digits(_) ->
@@ -1333,9 +1333,9 @@ play(greeting, #{ auth_status := AuthStatus}) -> % {{-
     );
 % }}-
 
-% play(main_menu) ->
+play(main_menu, _Data) ->
 
-%     speak().
+    speak("ofa");
 
 play(?CATEGORIES, _Data) -> % {{-
     MainCategory = "Main category.",
@@ -1343,18 +1343,18 @@ play(?CATEGORIES, _Data) -> % {{-
     % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
     % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
     speak(
-         MainCategory
-      ++ GoToMainMenu
+         MainCategory ++ " "
+      ++ GoToMainMenu ++ " "
       % ++ EnterFirstCategory % nem kene
      );
 % }}-
 
 play({hangup, demo}, _Data) ->
-    DemoTimedOut =
-            "End of demo session."
-        ++ sign_up_prompt()
-        ++ "Thank you for trying out the service!",
-    speak(DemoTimedOut);
+    speak(
+         "End of demo session."                  ++ " "
+      ++ sign_up_prompt()                        ++ " "
+      ++ "Thank you for trying out the service!" ++ " "
+    );
 
 play({hangup, inactivity}, _Data) ->
     speak("Goodbye.").
@@ -1440,7 +1440,7 @@ repeat_menu(Menu, Data, #{ with_warning := WarningPrompt}) ->
     % Not necessary when playback ends naturally,
     % but calling it multiple times doesn't hurt.
     stop_playback(),
-    speak(WarningPrompt),
+    speak_warning(WarningPrompt),
     comfort_noise(),
     play(Menu, Data),
     {keep_state, Data}.
