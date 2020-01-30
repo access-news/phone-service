@@ -21,8 +21,8 @@
 % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
 -define(DEMO_TIMEOUT, 300000). % 5 min
 -define(INTERDIGIT_TIMEOUT, 2000).
--define(INACTIVITY_WARNING_TIMEOUT, 600000). % 10 min
--define(INACTIVITY__TIMEOUT, 720000). % 12 min
+% -define(INACTIVITY_WARNING_TIMEOUT, 600000). % 10 min
+% -define(INACTIVITY_TIMEOUT, 720000). % 12 min
 
 % -define(DTMF_DIGIT_TIMEOUT, 5000). % TODO ???
 
@@ -107,6 +107,26 @@ terminate(Reason, State, Data) ->
     logger:debug(#{ self() => ["TERMINATE (normal-ish)", #{ data => Data, reason => Reason, state => State }]}).
      % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
      % filog:remove_process_handler(?MODULE).
+
+%%%%%%%%%%%%%%%%%%%%
+%% `hangup` state %%
+%%%%%%%%%%%%%%%%%%%%
+
+handle_event(
+  ET, % EventType
+  EC, % EventContent
+  hangup,                % State
+  Data                  % Data
+) ->
+    logger:debug(#{ self() => ["in HANGUP state", #{ data => Data, state => hangup, event_type => ET, event_content => EC }]}),
+
+    % sending it synchronously to allow the playback to end
+    sendmsg_locked(hangup, ["16"]),
+    %% Not stopping the  `gen_statem` process here, because
+    %% there will be further events related to the `hangup`
+    %% command above. See "CALL_HANGUP" `info` clause below.
+    keep_state_and_data;
+%% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% `info` clauses (for FreeSWITCH events) %%
@@ -412,21 +432,15 @@ handle_event(
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
   },                                      % /
   incoming_call = State,                       % State
-  #{ auth_status  := AuthStatus           % \         Made  explicit  all  values  that  are  known,
+  #{ auth_status  := _AuthStatus           % \         Made  explicit  all  values  that  are  known,
    , history      := []                   % | Data    because the only state change to this state is
    , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
    } = Data                               % /         set there must also be true.
 ) ->
     logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
-    comfort_noise(750),
-
-    enter_menu(
-      #{ from => incoming_call
-       , to   => greeting
-       , data => Data
-       }
-    );
+    re_start_inactivity_timer(State),
+    next_menu(greeting, State, Data);
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -445,6 +459,11 @@ handle_event(
 ) ->
     logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
 
+    % Reset inactivity timers whenever a new DTMF signal comes in
+    % TODO Amend when voice commands get implemented
+
+    re_start_inactivity_timer(State),
+
     % {{-
     %% 1 2 3   \
     %% 4 5 6    > Interdigit time-out (IDT) = 2 sec (?)
@@ -458,13 +477,13 @@ handle_event(
     % Another difference is that category selectors only change state once the `interdigit_timer` expires, hence they will keep the state as is in this clause, but single digit instant actions do whatever necessary to move on (stop playback, change state, etc.).
     % }}-
 
-    DigitIsOneToNine =
-        case string:find("123456789", Digit) of
-            nomatch ->
-                false;
-            _ ->
-                true
-        end,
+    % DigitIsOneToNine =
+    %     case string:find("123456789", Digit) of
+    %         nomatch ->
+    %             false;
+    %         _ ->
+    %             true
+    %     end,
 
     % {{- {{-
     % When `idt_running` is true, it means we are collecting digits for category selection. So when IDT is not running and 0 comes in, then go to main menu, but when IDT is running, then add it to `CategorySelectors`, renew IDT, and keep collecting. Another example is when IDT is not running, and * (star) and # (pound) arrives, go back or go to next category respectively, but when IDT is running, then ignore these inputs and renew IDT, and keep collecting.
@@ -482,19 +501,22 @@ handle_event(
          ,       received_digit => Digit
          % `CategorySelectors` emptied after eval on `interdigit_timer` timeout
          ,    collecting_digits => CategorySelectors =/= []
-         , digit_is_one_to_nine => DigitIsOneToNine
+         % , digit_is_one_to_nine => DigitIsOneToNine
          }
     of
         % Category selectors (i.e., collecting digits) KEEP_STATE {{-
         % TODO don't forget that GREETING -> CATEGORY N is a valid transition!
         %      When the `interdigit_timer` expires in `greeting` to (signaling that digit collection is finished), do not use `next_menu/1` but the two lines from "* (star) and # (pound) in `greeting`", otherwise `greeting` will be added to the navigation history, and navigation should not be possible back there
+
         % [1-9] in any state (except `article` and `main_menu`) {{-
         % will trigger DTMF collection, [1-9] have different semantics though when in `main_menu` or playing an article.
 
         % also triggered when collecting digits for passcode when logging in
         #{ state := State
          , received_digit := Digit
-         , digit_is_one_to_nine := true
+        % , digit_is_one_to_nine := true
+        % G = fun ({Digit, S}) when Digit =/= "0", Digit =/= "*", Digit =/= "#", S =/= lofa, S =/= miez -> {yay, Digit, S}; ({Digit, State}) -> {nono, Digit, State} end.
+        % lists:map(G, [{"*", lofa}, {"#", miez}, {"0", mas}, {"1", lofa}, {"2", miez}, {"3", finally}]).
         % Not checking whether we are collecting digits, because {{-
         % this clause is explicitly for that scenario (i.e., digits 1 to 9 are pressed not in `main_menu` or in `article`), and collecting_digits may be `false` if this is the first round. With each new digit, the interdigit timer (IDT) gets restarted. The "timeout" `handle_event/4` clauses will determine whether the contents of the DTMF buffer (`CategorySelectors`) is useful, and it will also clear it on timeout.
         % Another reason is that * (star), # (pound), and 0 are instant actions (no IDT when pressed), so if those are pressed, this case clause will simply be skipped, and subsequent clauses will determine what to do with them, depending on whether digits are collected.
@@ -517,7 +539,7 @@ handle_event(
         #{                state := _State
          ,       received_digit := "0"
          ,    collecting_digits := true
-         , digit_is_one_to_nine := false % not necessary, but explicit
+         % , digit_is_one_to_nine := false % not necessary, but explicit
          }
         ->
             % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
@@ -526,14 +548,14 @@ handle_event(
             % }}-
 
         % * (star) and # (pound) in any state when collecting digits, and not in `greeting` {{-
-        % Simply ignore, but renew `interdigit_timer`
+        % Ignore (i.e., add empty string, will be flattened during eval anyway), but renew `interdigit_timer`
         % When a user presses them accidentally when signing in,
         % or when selecting the category, it will get filtered
         % out.
         #{                state := _State
          ,       received_digit := Digit
          ,    collecting_digits := true
-         , digit_is_one_to_nine := false % not necessary, but explicit
+         % , digit_is_one_to_nine := false % not necessary, but explicit
          }
         when Digit =:= "*";
              Digit =:= "#",
@@ -571,18 +593,21 @@ handle_event(
         #{                state := greeting
          ,       received_digit := Digit
          ,    collecting_digits := false
-         , digit_is_one_to_nine := false % not necessary, but explicit
+         % , digit_is_one_to_nine := false % not necessary, but explicit
          }
         when Digit =:= "*";
              Digit =:= "#"
         ->
-            % TODO Wait for `CHANNEL_EXECUTE_COMPLETE` and start menu playback
-            leave_menu(
-              #{ from => greeting
-               , to   => ?CATEGORIES
-               , data => Data
-               }
-            );
+            stop_playback(),
+            comfort_noise(),
+            play(?CATEGORIES, Data),
+            {next_state, ?CATEGORIES, Data};
+            % leave_menu(
+            %   #{ from => greeting
+            %    , to   => ?CATEGORIES
+            %    , data => Data
+            %    }
+            % );
         % }}-
 
         % NOTE ONLY: * (star) and # (pound) in `?CATEGORIES` {{-
@@ -973,7 +998,7 @@ handle_event(
 ) ->
     logger:debug(""),
     % logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, fs_event_data => FSEvent,  state => State}]}),
-    logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State}]}),
+    logger:debug(#{ self() => ["UNKNOWN_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State}]}),
     logger:debug(""),
     keep_state_and_data;
 
@@ -1010,22 +1035,11 @@ handle_event(
     logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
 
     case AuthStatus of
-
         registered ->
             % ignore if user already signed in in the meantime
             keep_state_and_data;
-
         unregistered ->
-            % TODO Prompt for kicking out user in a proper way?
-            %      It would somewhat complicate things, as current playback would need to be stopped, handle the stopped playback in a `HANDLE_CHANNEL_EXECUTE_COMPLETE` clause by starting the exit prompt, make it uninterruptable, and handle when it stops playing (that is, hang up)
-
-            %% The generated `CALL_HANGUP` event  will be caught by
-            %% "CALL_HANGUP" `handle_event/4`.
-            sendmsg(hangup, ["16"]),
-            %% Not stopping the  `gen_statem` process here, because
-            %% there will be further events related to the `hangup`
-            %% command above.
-            {keep_state, Data#{termination_reason => "No logins during the demo period."}}
+            next_menu(hangup, State, Data)
     end;
 %% }}-
 
@@ -1040,43 +1054,40 @@ handle_event(
   #{ category_selectors := CategorySelectors } = Data
 ) ->
     % TODO Prod system along, or .
-    % Always clear DTMF buffer when the `interdigit_timer` expires, because at this point the buffer has been evaluated (outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result), and so a clean slate is needed.
+    % Always clear DTMF buffer when the `interdigit_timer` expires, because this is the point the buffer is evaluated. Outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result, and so a clean slate is needed.
     NewData =
         Data#{ category_selectors := [] },
 
     case eval_collected_digits(CategorySelectors) of
         invalid ->
-            % On CHANNEL_EXECUTE_COMPLETE, play prompt (e.g., "Selection is invalid, please try again") if category does not exist
-            % play_menu( [State, invalid_selection], NewData );
-            leave_menu(
-              #{ from => State
-               , to   => invalid_category
-               , data => _Data
-               }
+            InvalidSelection =
+                    "Invalid selection."
+                 ++ " "
+                 ++ "Please try again from the following categories.",
+
+            repeat_menu(
+              State,
+              NewData,
+              #{with_warning => InvalidSelection}
             );
 
-       Category ->
-            enter_menu(
-              #{ from => State
-               , to   => Category
-               , data => NewData
-               }
-            )
+        Category ->
+            next_menu(Category, State, NewData)
     end;
 %% }}-
 
 %% inactivity timers {{-
 handle_event(
-  state_timeout, % EventType
-  inactivity_prompt,        % EventContent
+  {timeout, inactivity_warning},
+  warning,        % EventContent
   State,
   Data
 ) ->
-    stop_menu(State, Data);
-    % play_menu([State, inactivity_prompt], Data);
+    InactiveWarning =
+    repeat_menu(State, NewData, #{with_warning => InactiveWarning});
 
 handle_event(
-  state_timeout, % EventType
+  {timeout, inactivity_hangup}
   hang_up,        % EventContent
   _State,
   Data
@@ -1274,6 +1285,12 @@ comfort_noise(Milliseconds) ->
         ++ ",1400",
     sendmsg_locked(execute, ["playback", ComfortNoise]).
 
+comfort_noise() ->
+    comfort_noise(750).
+
+sign_up_prompt() ->
+    "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
+
 % TODO Try out `mod_vlc` to play aac and m4a files. {{-
 % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
 % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
@@ -1287,7 +1304,9 @@ play(greeting, #{ auth_status := AuthStatus}) -> % {{-
             registered ->
                 "";
             unregistered ->
-                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0, pound, followed by your code, or if you would like to sign up up for Access News, please call us at 916, 889, 7519, or dial 0 2 to leave a message with your contact details."
+                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0, pound, followed by your code."
+                ++ sign_up_prompt()
+                ++ "To leave a message with your contact details, dial 0 2."
         end,
     GoToTutorial = "To listen to the tutorial, dial 01.",
     GoToBlindnessServices = "To learn about other blindness services, dial 03.",
@@ -1315,8 +1334,15 @@ play(?CATEGORIES, _Data) -> % {{-
          MainCategory
       ++ GoToMainMenu
       % ++ EnterFirstCategory % nem kene
-     ).
+     );
 % }}-
+
+play(hangup, Data) ->
+    DemoTimedOut =
+            "End of demo session."
+        ++ sign_up_prompt()
+        ++ "Thank you for trying out the service!",
+    speak(DemoTimedOut).
 
 % `Prompt` is either a state name or custom designation (such a prompt on timeout).
 % `Data` always refers to `gen_fsm` process data (a.k.a., state in `gen_server`)
@@ -1334,7 +1360,15 @@ play(?CATEGORIES, _Data) -> % {{-
 %         Data#{playback_ids := NewPlaybackIDs }.
 
 speak(Text) ->
+    % return the application UUID string.
     sendmsg_locked(execute, ["speak", "flite|kal|" ++ Text]).
+
+speak_warning(none) ->
+    "";
+
+speak_warning(WarningPrompt) ->
+    comfort_noise(),
+    speak(WarningPrompt).
 
 %% }}-
 
@@ -1352,6 +1386,10 @@ pop_history(#{ history := [PrevState | RestHistory] } = Data) ->
     , Data#{ history := RestHistory }
     }.
 
+% Playback keeps going while accepting DTMFs, and each subsequent entry has a pre-set IDT
+% 1-9 trigger collection (all states except some, see HANDLE_DTMF_FOR_ALL_STATES)
+% *, 0, # are single digit instant actions
+% (TODO make users able to set it)
 collect_digits(
   #{category_selectors := CategorySelectors} = Data,
   Digit
@@ -1381,115 +1419,102 @@ category(N, M, O) ->
 category(N, M, O, P) ->
     {category, [N, M, O, P]}.
 
-do_next_menu(
-  #{ from := CurrentState
-   , to   := NextState
-   , data := #{ playback_ids := PlaybackIDs } = Data
-   , play := Prompt
-   }
-) ->
+% never push history (no point because just replaying menu prompt)
+repeat_menu(Menu, Data, #{ with_warning := WarningPrompt}) ->
+    % Not necessary when playback ends naturally,
+    % but calling it multiple times doesn't hurt.
+    stop_playback(),
+    speak(WarningPrompt),
+    comfort_noise(),
+    play(Menu, Data),
+    {keep_state, Data}.
+
+repeat_menu(Menu, Data) ->
+    repeat_menu(Menu, Data, #{ with_warning => none }).
+
+next_menu(NextMenu, CurrentState, Data)
+when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
+->
+    % NewData =
+    %     case Prompt of
+    %         stop ->
+    %             stop_playback(),
+    %             Data;
+    %         _ ->
+    %             ApplicationUUID =
+    %                 play(Prompt, Data),
+    %             NewPlaybackIDs =
+    %                 % `=>` update if present, or create new
+    %                 % `:=` only update when present, otherwise crash
+    %                 PlaybackIDs#{ Prompt => ApplicationUUID },
+
+    %             Data#{playback_ids := NewPlaybackIDs }
+    %     end,
+
+    stop_playback(),
+    comfort_noise(),
+    play(NextMenu, Data),
+
     NewData =
-        case Prompt of
-            stop ->
-                stop_playback(),
-                Data;
-            _ ->
-                ApplicationUUID =
-                    play(Prompt, Data),
-                NewPlaybackIDs =
-                    % `=>` update if present, or create new
-                    % `:=` only update when present, otherwise crash
-                    PlaybackIDs#{ Prompt => ApplicationUUID },
+        case {CurrentState, NextMenu} of
 
-                Data#{playback_ids := NewPlaybackIDs }
-        end,
-
-    case {CurrentState, NextState} of
-
-        % State changes when history is not updated  with prev
-        % state (corner cases)
-        % ====================================================
-        % NOTE: This is adding behaviour to `next_menu/1`, which {{-
-        % I do not like, but these are the only cases when history is not pushed (so far). Another advantage is that all corner cases are listed in one place.
-        % }}-
-
-        %   + `main_menu` -> `?CATEGORIES` (i.e., when pressing 8 in `main_menu`)
-        {main_menu, ?CATEGORIES} -> % {{-
+            % State changes when history is not updated  with prev
+            % state (corner cases)
+            % ====================================================
+            % NOTE: This is adding behaviour to `next_menu/1`, which {{-
+            % I do not like, but these are the only cases when history is not pushed (so far). Another advantage is that all corner cases are listed in one place.
+            % }}-
             % NOTE: `main_menu` -> `?CATEGORIES` {{-
             % Go to `?CATEGORIES` from `main_menu` (only forward option from `main_menu`), but do not add `main_menu` to history
             % NOTE Currently it is possible to accumulate `?CATEGORIES` in history by going to `main_menu` and forward to `?CATEGORIES`, as it will add `?CATEGORIES` each time but leaving it as is
             % }}-
-            {next_state, ?CATEGORIES, NewData};
-        % }}-
+            {main_menu, ?CATEGORIES}  -> Data;
+            % {{-
+            %   + `greeting` -> `?CATEGORIES` (i.e., when pressing * or #  in `greeting` or playback stops)
+                % No `next_menu/1` here to keep the history empty so that `greeting` cannot be revisited, making `?CATEGORIES` the root. Whatever navigations happen there
+                % Why not keep state? Reminder: 0# (not very relevant in this particular case, but keeping state changes consistent makes it easier to think about each `handle_event/4` clause. Read note at the very end of HANDLE_DTMF_FOR_ALL_STATES `handle_event/4` clause)
+            % }}-
+            {greeting, ?CATEGORIES}   -> Data;
+            {greeting, main_menu}     -> Data;
+            {incoming_call, greeting} -> Data;
 
-        %   + `greeting` -> `?CATEGORIES` (i.e., when pressing * or #  in `greeting` or playback stops)
-        {greeting, ?CATEGORIES} -> % {{-
-            % No `next_menu/1` here to keep the history empty so that `greeting` cannot be revisited, making `?CATEGORIES` the root. Whatever navigations happen there
-            % Why not keep state? Reminder: 0# (not very relevant in this particular case, but keeping state changes consistent makes it easier to think about each `handle_event/4` clause. Read note at the very end of HANDLE_DTMF_FOR_ALL_STATES `handle_event/4` clause)
-            {next_state, ?CATEGORIES, NewData};
-        % }}-
+            % On any other state change
+            _ ->
+                push_history(Data, CurrentState)
+        end,
 
-        %   + `greeting`  -> `main_menu`
-        {greeting, main_menu} -> % {{-
-            {next_state, main_menu, NewData};
-        % }}-
+    {next_state, NextMenu, NewData}.
 
-        %   + `incoming_call` -> `greeting`
-        {incoming_call, greeting} -> % {{-
-            {next_state, greeting, NewData};
-        % }}-
+% start,   when call is answered
+% restart, when a DTMF signal comes in
+re_start_inactivity_timer(State) ->
 
-        % On any other state change
-        _ when CurrentState =/= NextState ->
-            TransitionActions =
-                [ {state_timeout, ?INACTIVITY_WARNING_TIMEOUT, inactivity_prompt}
-                , {state_timeout, ?INACTIVITY__TIMEOUT, hang_up}
-                ],
-            DatUpdate = push_history(NewData, CurrentState),
-            {next_state, NextState, DatUpdate, TransitionActions};
+    timer = timer:cancel( get(inactivity_warning) ),
+    timer = timer:cancel( get(inactivity_hangup ) ),
 
-        % On state transition (don't push history)
-        _ when CurrentState =:= NextState ->
-            {keep_state, NewData}
-    end.
+    TimeoutsInMinutes =
+        case State of
+            % TODO this should be variable; there can be long articles, but after e.g., 3 hours of no activity they may be asleep (nudge: "if you are still there, please press 0 (that will pause and they can always start from the same place)
+            {article, _} ->
+                {90, 100};
+            _ ->
+                {10, 12}
+        end,
+    % TODO Handle `article` state!
+    % For example, once a recording finished playing, there is a state change jumping to the next. (TODO: {article, ArticleID} as state?).
+    % BUT,
+    %   if no DTMF events received in an hour (?) the do the prompt, 10 minutes later kick out
+    WarningTimeout    = element(1, TimeoutsInMinutes) * 60 * 1000,
+    InactivityTimeout = element(2, TimeoutsInMinutes) * 60 * 1000,
 
-leave_menu(
-  #{ from := _CurrentState
-   , to   := _NextState
-   , data := _Data
-   } = Map
-) ->
-    do_next_menu(Map#{ play => stop }).
+    {ok, IWref} = timer:send_after(WarningTimeout,    inactivity_warning),
+    {ok, ITref} = timer:send_after(InactivityTimeout, inactivity_hangup),
 
-enter_menu(
-  #{ from := _CurrentState
-   , to   := NextState
-   , data := _Data
-   } = Map
-)
-->
-    do_next_menu(Map#{ play => NextState }).
-
-play_menu([State, SubPrompt], Data) ->
-    do_next_menu(
-      #{ from => State
-       , to   => State
-       , data => Data
-       , play => SubPrompt
-       }
-    );
-
-play_menu(Prompt, Data) ->
-    do_next_menu(
-      #{ from => Prompt
-       , to   => Prompt
-       , data => Data
-       , play => Prompt
-       }
-    ).
+    put(inactivity_warning, IWref),
+    put(inactivity_hangup,  ITref).
 
 s(Term) ->
-    R = io_lib:format("~p",[{lofa, 27}]),
+    R = io_lib:format("~p",[Term]),
     lists:flatten(R).
 
 % vim: set fdm=marker:
