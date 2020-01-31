@@ -289,6 +289,8 @@ handle_event(
 %% }}-
 
 %% inactivity timers (info) {{-
+% The timers are started with `re_start_inactivity_timer/0` when a call comes in, or a DTMF signal is received. The purpose of button presses to change the state, so it is not important to restart the timers on the actual state change, and interdigit timers have a short value compared to the inactivity ones.
+% This way is even better, because on invalid category selection the user will remain in the same state as long as they can't input a correct number, but the timers will get reset on each try.
 handle_event(
   info,
   inactivity_warning,
@@ -526,47 +528,285 @@ handle_event(
     % This probably isn't as bad as it sounds, or maybe not even bad at all. For example, a user is having trouble to dial digits quickly (device issues, disability, etc.), and one of the digits hits this race condition, but this is an important input, so IDT time-out can be ignore, and now this digit is saved and IDT extended.
 
     % Is there a scenario where this can turn sour? Someone start dialing for a category, but then change their minds, and wants to hit the main menu, go back, etc. Even in not a race condition status they would have to wait until the IDT runs out. If they do get into a category, they can always go back with * (star).
+
+        %% Keep  playing  the   greeting,  continue  collecting
+        %% digits,  and caller  will be  sent to  the specified
+        %% category, if the `DTMFString` contains a valid entry
+        %% after  the  interdigit  time-out.  Once  the  playback
+        %% finishes,  the `PLAYBACK_STOP`  event is  emitted by
+        %% FreeSWITCH,  and  the  state   will  be  changed  to
+        %% `?CATEGORIES`, but  the behavior  there will  be the
+        %% same, and  the digits will continue  to be collected
+        %% (until they make sense).
+        % NOTE ONLY: * (star) and # (pound) in `?CATEGORIES` {{-
+        % a) Put category browsing with # (pound) on hold for now (see clause "# (pound) in any state"
+        % b) Decided to put an option `main_menu` to be able to jump to the main categories, which means that * (star) should make it possible to jump back to where we came from
+        % #{                state := ?CATEGORIES
+        %  ,       received_digit := Digit
+        %  ,    collecting_digits := false
+        %  , digit_is_one_to_nine := false % not necessary, but explicit
+        %  }
+        % when Digit =:= "*";
+        %      Digit =:= "#"
+        % ->
+        %     % Ignore
+        %     keep_state_and_data;
+        % }}-
+
     % }}- }}-
+
     case
         #{                state => State
          ,       received_digit => Digit
          % `CategorySelectors` emptied after eval on `interdigit_timer` timeout
          ,    collecting_digits => CategorySelectors =/= []
-         % , digit_is_one_to_nine => DigitIsOneToNine
          }
     of
-        % Category selectors (i.e., collecting digits) KEEP_STATE {{-
-        % TODO don't forget that GREETING -> CATEGORY N is a valid transition!
-        %      When the `interdigit_timer` expires in `greeting` to (signaling that digit collection is finished), do not use `next_menu/1` but the two lines from "* (star) and # (pound) in `greeting`", otherwise `greeting` will be added to the navigation history, and navigation should not be possible back there
+        % TODO # has no function (except greeting, main_menu, article)
+        % Use it to browse categories (step into the next one, like in article?)
+        % or forward in history instead of back?
 
-        % Start collecting digits
-        % [1-9] in any state (except `article` and `main_menu`) {{-
-        % will trigger DTMF collection, [1-9] have different semantics though when in `main_menu` or playing an article.
+        % === GREETING
+        % * (star)   {{- => ?CATEGORIES
+        #{                state := greeting = State
+         ,       received_digit := "*"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => ?CATEGORIES
+               , data => Data
+               , current_state => State
+               });
 
-        % also triggered when collecting digits for passcode when logging in
+        % }}-
+        % # (pound)  {{- => ?CATEGORIES
+        #{                state := greeting = State
+         ,       received_digit := "#"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => ?CATEGORIES
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % 0          {{- => main_menu 
+        #{                state := greeting = State
+         ,       received_digit := "0"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => main_menu
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % [1-9]      {{- => sub-categories (via COLLECT DIGITS)
+        %   See COLLECT DIGITS case clause at the end.
+        % }}-
+
+        % === MAIN_MENU 
+        % * (star)  {{- <- Go back (previous menu)
+        #{                state := main_menu = State
+         ,       received_digit := "*"
+         ,    collecting_digits := false
+         } ->
+            prev_menu(
+              #{ current_state => State
+               , data => Data
+               });
+
+        % }}-
+        % # (pound) {{- => Log in / Favorites (depending on AuthStatus)
+        #{                state := main_menu = State
+         ,       received_digit := "#"
+         ,    collecting_digits := false
+         } ->
+            NextMenu =
+                case AuthStatus of
+                    registered   -> favourites;
+                    unregistered -> sign_in
+                end,
+
+            next_menu(
+              #{ menu => NextMenu
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % 0         {{- => quick_help
+        #{                state := main_menu = State
+         ,       received_digit := "0"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => quick_help
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % 1         {{- => tutorial
+        #{                state := main_menu = State
+         ,       received_digit := "1"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => tutorial
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % 2         {{- => leave_message
+        #{                state := main_menu = State
+         ,       received_digit := "2"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => leave_menu
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % 3         {{- => blindness_services
+        #{                state := main_menu = State
+         ,       received_digit := "3"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => blindness_services
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % 4 UNASSIGNED  => (ignored; see very last case clause)
+        % 5         {{- => settings
+        #{                state := main_menu = State
+         ,       received_digit := "5"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => settings
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % 6 UNASSIGNED  => (ignored; see very last case clause)
+        % 7 UNASSIGNED  => (ignored; see very last case clause)
+        % 8         {{- => ?CATEGORIES
+        #{                state := main_menu = State
+         ,       received_digit := "8"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => ?CATEGORIES
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % 9 UNASSIGNED  => (ignored; see very last case clause)
+
+        % === ?CATEGORIES (i.e., `{category, []}`)
+        % * (star)  {{- => Go back (previous menu) OR ignore
+        #{                state := ?CATEGORIES = State
+         ,       received_digit := "*"
+         ,    collecting_digits := false
+         } ->
+            prev_menu(
+              #{ current_state => State
+               , data => Data
+               });
+
+        % }}-
+        % # UNASSIGNED  => (ignored; see very last case clause)
+        % 0         {{- => main_menu
+        #{                state := ?CATEGORIES = State
+         ,       received_digit := "0"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => main_menu
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % [1-9]     {{- => sub-categories (via COLLECT DIGITS)
+        %   See COLLECT DIGITS case clause at the end.
+        % }}-
+
+        % === SUB-CATEGORIES (i.e., `{category, [..]}`) {{-
+
+        % Almost identical to the `?CATEGORIES` section but the
+        % latter may have more functionality in the future, so
+        % saving efforts to duplicate sections.
+
+        % * (star)  {{- => Go back (previous menu) OR ignore
+        #{                state := State
+         ,       received_digit := "*"
+         ,    collecting_digits := false
+         }
+        when element(1, State) =:= category
+        ->
+            prev_menu(
+              #{ current_state => State
+               , data => Data
+               });
+
+        % }}-
+        % # UNASSIGNED  => (ignored; see very last case clause)
+        % 0         {{- => main_menu
+        #{                state := State
+         ,       received_digit := "0"
+         ,    collecting_digits := false
+         }
+        when element(1, State) =:= category
+        ->
+            next_menu(
+              #{ menu => main_menu
+               , data => Data
+               , current_state => State
+               });
+
+        % }}-
+        % [1-9]     {{- => sub-categories (via COLLECT DIGITS)
+        %   See COLLECT DIGITS case clause at the end.
+        % }}-
+        % }}-
+
+        % === PLAY ARTICLE
+        % [1-9] when playing an article % TODO NEXT
+
+        % === COLLECT DIGITS
+
+        % [1-9] in any state  {{- => Start collecting digits
         #{ state := State
          , received_digit := Digit
-        % , digit_is_one_to_nine := true
-        % G = fun ({Digit, S}) when Digit =/= "0", Digit =/= "*", Digit =/= "#", S =/= lofa, S =/= miez -> {yay, Digit, S}; ({Digit, State}) -> {nono, Digit, State} end.
-        % lists:map(G, [{"*", lofa}, {"#", miez}, {"0", mas}, {"1", lofa}, {"2", miez}, {"3", finally}]).
         % Not checking whether we are collecting digits, because {{-
-        % this clause is explicitly for that scenario (i.e., digits 1 to 9 are pressed not in `main_menu` or in `article`), and collecting_digits may be `false` if this is the first round. With each new digit, the interdigit timer (IDT) gets restarted. The "timeout" `handle_event/4` clauses will determine whether the contents of the DTMF buffer (`CategorySelectors`) is useful, and it will also clear it on timeout.
-        % Another reason is that * (star), # (pound), and 0 are instant actions (no IDT when pressed), so if those are pressed, this case clause will simply be skipped, and subsequent clauses will determine what to do with them, depending on whether digits are collected.
+        % this clause should be executed either way when digits 1 to 9 are pressed any time; if false, it means we are starting a new collection, and if true, we should keep collecting until the `interdigit_timer` times out (when the collected digits get evaluated).
         % }}-
         %, collecting_digits := true
          }
-        % The reason why `article` and `main_menu` are excluded is because they only have single digit instant actions (no IDT when a digit is dialed), and numbers have different semantics.
+        % These states never collect digits and so [1-9] are instant actions without any IDTs. Only listin them here because they make this clause nice and explicit.
         when State =/= article,
              State =/= main_menu,
 
+             % Only take digits in the [1-9] range
              Digit =/= "0",
              Digit =/= "*",
              Digit =/= "#"
         ->
-            % `next_state_on_playback_stop` and `history` fields update in `Data` not necessary, as any playback is allowed to run its course here, and state change only happens when the `interdigit_timer` expires (see timeout clauses).
             collect_digits(Data, Digit);
-            % }}-
 
+        % }}-
         % 0 in any state when collecting digits {{-
         #{                state := _State
          ,       received_digit := "0"
@@ -616,258 +856,12 @@ handle_event(
         ->
             collect_digits(Data, "");
             % }}-
-        % }}-
-
-        % * (star) and # (pound) in `greeting`  {{-
-        %   * (star)  \  skip to `?CATEGORIES`
-        %   # (pound) /
-        %   0         - go to `main_menu`
-        %   [1-9]     - collect digits to select next category
-        %               from `?CATEGORIES` (handled in "Category selectors" clauses above)
-        #{                state := greeting
-         ,       received_digit := Digit
-         ,    collecting_digits := false
-         % , digit_is_one_to_nine := false % not necessary, but explicit
-         }
-        when Digit =:= "*";
-             Digit =:= "#"
-        ->
-            next_menu(
-              #{ menu => ?CATEGORIES
-               , data => Data
-               , current_state => greeting
-               });
-            % stop_playback(),
-            % comfort_noise(),
-            % play(?CATEGORIES, Data),
-            % {next_state, ?CATEGORIES, Data};
-            % leave_menu(
-            %   #{ from => greeting
-            %    , to   => ?CATEGORIES
-            %    , data => Data
-            %    }
-            % );
-        % }}-
-
-        % NOTE ONLY: * (star) and # (pound) in `?CATEGORIES` {{-
-        % a) Put category browsing with # (pound) on hold for now (see clause "# (pound) in any state"
-        % b) Decided to put an option `main_menu` to be able to jump to the main categories, which means that * (star) should make it possible to jump back to where we came from
-        % #{                state := ?CATEGORIES
-        %  ,       received_digit := Digit
-        %  ,    collecting_digits := false
-        %  , digit_is_one_to_nine := false % not necessary, but explicit
-        %  }
-        % when Digit =:= "*";
-        %      Digit =:= "#"
-        % ->
-        %     % Ignore
-        %     keep_state_and_data;
-        % }}-
-
-        % Go to main menu
-        % 0 in any state when NOT collecting digits, except `main_menu` {{-
-        #{                state := State
-         ,       received_digit := "0"
-         ,    collecting_digits := false
-         % , digit_is_one_to_nine := false % not necessary, but explicit
-         }
-        when State =/= main_menu
-        ->
-            next_menu(
-              #{ menu => main_menu
-               , data => Data
-               , current_state => State
-               });
-            % leave_menu(
-            %   #{ from => State
-            %    , to   => main_menu
-            %    , data => Data
-            %    }
-            % );
-        % }}-
-
-        % Go up/back (the forward direction is only 0 or collecting digits!) {{-
-
-        %     * (star) in main_menu, when previously in `greeting` {{-
-        #{                state := main_menu
-         ,       received_digit := "*"
-         ,    collecting_digits := false
-         % , digit_is_one_to_nine := false % not necessary, but explicit
-         }
-        % The only time when history is not updated when entering `main_menu` is when coming from `greeting` (or at least, this should be the case). See "* (star) and # (pound) in `greeting`" case clause above (it does not update the history).
-        when History =/= []
-        ->
-            next_menu(
-              #{ menu => ?CATEGORIES
-               , data => Data
-               , current_state => main_menu
-               });
-            % leave_menu(
-            %   #{ from => main_menu
-            %    , to   => ?CATEGORIES
-            %    , data => Data
-            %    }
-            % );
-        % }}-
-
-        %     * (star) in any state, except `greeting` {{-
-        % NOTE - `?CATEGORIES` may use * (star) because it can be part of the history, whereas `greeting` should not be reached (only from a new incoming call)
-        #{                state := State
-         ,       received_digit := "*"
-         ,    collecting_digits := false
-         % , digit_is_one_to_nine := false % not necessary, but explicit
-         }
-        when State =/= greeting
-        ->
-            case {State, History} of
-                % In `?CATEGORIES, and history is empty, i.e., nowhere to go back to, so ignore
-                {?CATEGORIES, []} ->
-                    keep_state_and_data;
-                    % TODO maybe? {{-
-                    % step 1. prompt: nowhere to go back (or smth like it)
-                    %    1a - stop_playback
-                    %    1b - start new playback in HANDLE_CHANNEL_EXECUTE_COMPLETE
-                    % step 2.
-                    % }}-
-                _ ->
-                    % When (or if) moving forward in history with # (pound) will be implemented, this could be the template for `prev_menu/1` (after `next_menu/1`).
-                    comfort_noise(),
-                    stop_playback(),
-                    {PrevState, NewData} = pop_history(Data),
-                    play(PrevState, Data),
-                    {next_state, PrevState, NewData}
-            end;
-        % }}-
-        % }}-
-
-        % No function (TODO maybe to move forward in history? would need a double linked list though)
-        % # (pound) in any state except `greeting` and `main_menu`{{-
-
-        % ON HOLD - category browsing with # (pound) {{-
-        % # (pound) in any state, except `greeting`, `main_menu`, and `?CATEGORIES`
-        % #{                state := State
-        %  ,       received_digit := "#"
-        %  ,    collecting_digits := false
-        %  , digit_is_one_to_nine := false % not necessary, but explicit
-        %  }
-        % when State =/= greeting,
-        %      State =/= ?CATEGORIES,
-        %      State =/= main_menu
-        % ->
-        %     stop_playback(),
-        %     NextState = next_category
-        %     {next_state, NextState, NewData};
-        % }}-
-        % ON HOLD - category browsing with # (pound) {{-
-        % # (pound) in `?CATEGORIES`
-        % #{                state := ?CATEGORIES
-        %  ,       received_digit := "#"
-        %  ,    collecting_digits := false
-        %  , digit_is_one_to_nine := false % not necessary, but explicit
-        %  }
-        % ->
-        %     stop_playback()
-        %     NewData = push_history(Data, category(1)),
-        %     {next_state, category(1), NewData};
-        % }}-
-
-        #{                state := State
-         ,       received_digit := "#"
-         ,    collecting_digits := false
-         % , digit_is_one_to_nine := false % not necessary, but explicit
-         }
-        when State =/= greeting, % not necessary, but explicit
-             State =/= main_menu
-             % TODO prepare to include `?CATEGORIES` when # will allow moving forward in history
-        ->
-            keep_state_and_data;
-        % }}-
-
-        % # (pound) in `main_menu` (sign-in or favorites) {{-
-        #{                state := main_menu
-         ,       received_digit := "#"
-         ,    collecting_digits := false
-         % , digit_is_one_to_nine := false
-         }
-        ->
-            NextMenu =
-                case AuthStatus of
-                    registered ->
-                        % TODO replace this placeholder with `favorites` when its implementation is done
-                        % favorites
-                        sign_in;
-                    unregistered ->
-                        sign_in
-                end,
-
-            next_menu(
-              #{ menu => NextMenu
-               , data => Data
-               , current_state => main_menu
-               });
-            % leave_menu(
-            %   #{ from => main_menu
-            %    , to   => NextState
-            %    , data => Data
-            %    }
-            % );
-        % }}-
-
-        % [1-9] in `main_menu` {{-
-        #{                state := main_menu
-         ,       received_digit := Digit
-         ,    collecting_digits := false
-         % , digit_is_one_to_nine := true
-         }
-        ->
-            NextMenu =
-                case Digit of
-                    0 -> quick_help;
-                    1 -> tutorial;
-                    2 -> leave_message;
-                    3 -> blindness_services;
-                    5 -> settings;
-                    8 -> ?CATEGORIES;
-                  % * -> see "* (star) in any state, except `greeting`"
-                  % # -> see "# (pound) in `main_menu` (sign-in or favorites)"
-                    _ ->
-                        % TODO prompt: invalid entry
-                        main_menu
-                end,
-
-            case NextMenu of
-                main_menu ->
-                    repeat_menu(
-                      #{ menu => main_menu
-                       , data => Data
-                       , with_warning => invalid_selection()
-                       });
-                _ ->
-                    next_menu(
-                      #{ menu => NextMenu
-                       , data => Data
-                       , current_state => main_menu
-                       })
-            end;
-        % }}-
-
-        % [1-9] when playing an article
-        % TODO NEXT
 
         UnhandledDigit ->
-            logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit]})
+            logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit]}),
+            keep_state_and_data
 
         %% TODO When greeting stops (`PLAYBACK_STOP` is received) jump to `?CATEGORIES`.
-
-        %% Keep  playing  the   greeting,  continue  collecting
-        %% digits,  and caller  will be  sent to  the specified
-        %% category, if the `DTMFString` contains a valid entry
-        %% after  the  interdigit  time-out.  Once  the  playback
-        %% finishes,  the `PLAYBACK_STOP`  event is  emitted by
-        %% FreeSWITCH,  and  the  state   will  be  changed  to
-        %% `?CATEGORIES`, but  the behavior  there will  be the
-        %% same, and  the digits will continue  to be collected
-        %% (until they make sense).
     end;
 
     %% (Why `keep_state`)FALSE and no inserted events? {{- {{-
@@ -1122,10 +1116,7 @@ handle_event(
     end;
 %% }}-
 
-% TODO don't forget that GREETING -> CATEGORY N is a valid transition!
-%      When the `interdigit_timer` expires in `greeting` to (signaling that digit collection is finished), do not use `next_menu/1` but the two lines from "* (star) and # (pound) in `greeting`", otherwise `greeting` will be added to the navigation history, and navigation should not be possible back there
 %% interdigit_timer {{-
-%% TODO Not sure if an event is generated when a timer is canceled. Be prepared for cryptic error messages if that is the case.
 handle_event(
   {timeout, interdigit_timer}, % EventType
   eval_collected_digits,        % EventContent
@@ -1138,6 +1129,20 @@ handle_event(
         Data#{ category_selectors := [] },
 
     case eval_collected_digits(CategorySelectors) of
+
+        % `greeting`  -> `Category`  state change  is a  valid
+        % one, so when there is an invalid entry in `greeting`
+        % when collecting  digits, play  `?CATEGORIES`, ignore
+        % the return value  (because `repeat_menu/1` ends with
+        % `keep_state`), and drop to `?CATEGORIES
+        invalid when State =:= greeting ->
+            repeat_menu(
+              #{ menu => ?CATEGORIES
+               , data => NewData
+               , with_warning => invalid_selection()
+               }),
+            {next_state, ?CATEGORIES, NewData};
+
         invalid ->
             repeat_menu(
               #{ menu => State
@@ -1512,6 +1517,7 @@ collect_digits(
         , ?INTERDIGIT_TIMEOUT         % , Time
         , eval_collected_digits       % , EventContent }
         },
+    % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
     {keep_state, NewData, [ InterDigitTimer ]}.
 
 category(N) ->
@@ -1603,11 +1609,44 @@ when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
             {incoming_call, greeting} -> Data;
 
             % On any other state change
-            _ ->
-                push_history(Data, CurrentState)
+            _ -> push_history(Data, CurrentState)
         end,
 
     {next_state, NextMenu, NewData}.
+
+prev_menu(
+  #{ current_state := CurrentState
+   , data := #{ history := History } = Data
+   }
+) ->
+    case {CurrentState, History} of
+        {?CATEGORIES, []} -> % {{-
+        % Nowhere to go back to; give warning and repeat
+            EmptyHistory = "Nothing in history.",
+            repeat_menu(
+              #{ menu => ?CATEGORIES
+               , data => Data
+               , with_warning => EmptyHistory
+               });
+        % }}-
+        {main_menu, []} -> % {{-
+        % The only  way this is  (or should be)  possible when
+        % coming to `main_menu` from `greeting` (`greeting` is
+        % not pushed  to history  during that  transition; see
+        % `next_menu/1`).
+            next_menu(
+              #{ menu => ?CATEGORIES
+               , data => Data
+               , current_state => main_menu
+               });
+        % }}-
+        _ ->
+            stop_playback(),
+            comfort_noise(),
+            {PrevState, NewData} = pop_history(Data),
+            play(PrevState, Data),
+            {next_state, PrevState, NewData}
+    end.
 
 % start,   when call is answered
 % restart, when a DTMF signal comes in
