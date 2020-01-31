@@ -299,7 +299,11 @@ handle_event(
         "Please press 0 if you are still there.",
 
     % TODO how is this applicable when in {article, _}?
-    repeat_menu(State, Data, #{with_warning => InactiveWarning});
+    repeat_menu(
+      #{ menu => State
+       , data => Data
+       , with_warning => InactiveWarning
+       });
 
 handle_event(
   info,
@@ -308,7 +312,11 @@ handle_event(
   Data
 ) ->
 
-    next_menu({hangup, inactivity}, State, Data);
+    next_menu(
+      #{ menu => {hangup, inactivity}
+       , data => Data
+       , current_state => State
+       });
 %% }}-
 
 %% DEBUG (info) {{-
@@ -327,7 +335,7 @@ handle_event(
 %% `internal` clauses %%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
-% Hanging up, so stop processing `internal` events
+% Hanging up, so stop processing other `internal` events [..] {{-
 % NOTE `info` (i.e., external) events are still processed, but they are irrelevant at this point. If need to save them for debugging, just modify MOD_ERL_EVENT_MASSAGE, or the DEBUG clause in the "`info` clauses (for FreeSwITCH events)" section above
 handle_event(
   internal, % EventType
@@ -343,6 +351,7 @@ handle_event(
     %% there will be further events related to the `hangup`
     %% command above. See "CALL_HANGUP" `info` clause below.
     keep_state_and_data;
+% }}-
 
 %% INCOMING_CALL (STATE: incoming_call -> greeting) {{-
 
@@ -459,7 +468,11 @@ handle_event(
     logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
     re_start_inactivity_timer(State),
-    next_menu(greeting, State, Data);
+    next_menu(
+      #{ menu => greeting
+       , data => Data
+       , current_state => State
+       });
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -526,6 +539,7 @@ handle_event(
         % TODO don't forget that GREETING -> CATEGORY N is a valid transition!
         %      When the `interdigit_timer` expires in `greeting` to (signaling that digit collection is finished), do not use `next_menu/1` but the two lines from "* (star) and # (pound) in `greeting`", otherwise `greeting` will be added to the navigation history, and navigation should not be possible back there
 
+        % Start collecting digits
         % [1-9] in any state (except `article` and `main_menu`) {{-
         % will trigger DTMF collection, [1-9] have different semantics though when in `main_menu` or playing an article.
 
@@ -576,9 +590,11 @@ handle_event(
          % , digit_is_one_to_nine := false % not necessary, but explicit
          }
         when Digit =:= "*";
-             Digit =:= "#",
+             Digit =:= "#"
+             % Digit =:= "#",
 
-             State =/= greeting
+             % Innecessary; if collecting digits then `greeting` cannot be skipped anyway
+             % State =/= greeting
         % Guards and logic reminder {{-
         % (fun ({A, B})
         %      when B =:= x,            B =:= x;                   B =:= z;
@@ -616,7 +632,11 @@ handle_event(
         when Digit =:= "*";
              Digit =:= "#"
         ->
-            next_menu(?CATEGORIES, greeting, Data);
+            next_menu(
+              #{ menu => ?CATEGORIES
+               , data => Data
+               , current_state => greeting
+               });
             % stop_playback(),
             % comfort_noise(),
             % play(?CATEGORIES, Data),
@@ -653,7 +673,11 @@ handle_event(
          }
         when State =/= main_menu
         ->
-            next_menu(main_menu, State, Data);
+            next_menu(
+              #{ menu => main_menu
+               , data => Data
+               , current_state => State
+               });
             % leave_menu(
             %   #{ from => State
             %    , to   => main_menu
@@ -673,7 +697,11 @@ handle_event(
         % The only time when history is not updated when entering `main_menu` is when coming from `greeting` (or at least, this should be the case). See "* (star) and # (pound) in `greeting`" case clause above (it does not update the history).
         when History =/= []
         ->
-            next_menu(?CATEGORIES, main_menu, Data);
+            next_menu(
+              #{ menu => ?CATEGORIES
+               , data => Data
+               , current_state => main_menu
+               });
             % leave_menu(
             %   #{ from => main_menu
             %    , to   => ?CATEGORIES
@@ -771,7 +799,12 @@ handle_event(
                     unregistered ->
                         sign_in
                 end,
-            next_menu(NextMenu, main_menu, Data);
+
+            next_menu(
+              #{ menu => NextMenu
+               , data => Data
+               , current_state => main_menu
+               });
             % leave_menu(
             %   #{ from => main_menu
             %    , to   => NextState
@@ -805,12 +838,16 @@ handle_event(
             case NextMenu of
                 main_menu ->
                     repeat_menu(
-                      main_menu,
-                      Data,
-                      #{with_warning => invalid_selection()}
-                    );
+                      #{ menu => main_menu
+                       , data => Data
+                       , with_warning => invalid_selection()
+                       });
                 _ ->
-                    next_menu(NextMenu, main_menu, Data)
+                    next_menu(
+                      #{ menu => NextMenu
+                       , data => Data
+                       , current_state => main_menu
+                       })
             end;
         % }}-
 
@@ -898,7 +935,11 @@ handle_event(
         % The only playback that can be stopped in `greeting` is when the `greeting` playback stops by itself, and so we would like to naturally transition to `?CATEGORIES`
         #{ state := greeting } ->
             logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN greeting (natural stop)"),
-            next_menu(?CATEGORIES, greeting, Data);
+            next_menu(
+              #{ menu => ?CATEGORIES
+               , data => Data
+               , current_state => greeting
+               });
             % enter_menu(
             %   #{ from => greeting
             %    , to   => ?CATEGORIES
@@ -1067,11 +1108,17 @@ handle_event(
     logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
 
     case AuthStatus of
+
         registered ->
             % ignore if user already signed in in the meantime
             keep_state_and_data;
+
         unregistered ->
-            next_menu({hangup, demo}, State, Data)
+            next_menu(
+              #{ menu => {hangup, demo}
+               , data => Data
+               , current_state => State
+               })
     end;
 %% }}-
 
@@ -1093,13 +1140,17 @@ handle_event(
     case eval_collected_digits(CategorySelectors) of
         invalid ->
             repeat_menu(
-              State,
-              NewData,
-              #{with_warning => invalid_selection()}
-            );
+              #{ menu => State
+               , data => NewData
+               , with_warning => invalid_selection()
+               });
 
         Category ->
-            next_menu(Category, State, NewData)
+            next_menu(
+              #{ menu => Category
+               , data => NewData
+               , current_state => State
+               })
     end.
 %% }}-
 
@@ -1256,7 +1307,7 @@ stop_playback() ->
 % }}-
 
 %% Playback-related {{-
-
+% TODO Sift throught these notes. {{-
 %% Using  `sendmsg_locked`  most   of  the  time  (with
 %% `speak`   or   `playback`)    because   it   enables
 %% synchronous execution on FreeSWITCH, so `event_lock`
@@ -1283,82 +1334,6 @@ stop_playback() ->
 
 % If you would like to learn about the national Federation of the blind nfb newsline service with access to more than 300 newspapers and magazines including the Sacramento Bee. Please call 410-659-9314. If you would like to learn about the California Braille and talking book Library, please call 80095 to 5666.
 
-
-comfort_noise(Milliseconds) ->
-    logger:debug("play comfort noise"),
-    ComfortNoise =
-        "silence_stream://"
-        ++ integer_to_list(Milliseconds)
-        ++ ",1400",
-    sendmsg_locked(execute, ["playback", ComfortNoise]).
-
-comfort_noise() ->
-    comfort_noise(750).
-
-sign_up_prompt() ->
-    "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
-
-invalid_selection() ->
-    "Invalid selection."
-    ++ " "
-    ++ "Please try again from the following categories.".
-
-% TODO Try out `mod_vlc` to play aac and m4a files. {{-
-% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
-% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
-% }}-
-play(greeting, #{ auth_status := AuthStatus}) -> % {{-
-    logger:debug("play greeting"),
-    Welcome = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
-    SelectionSkip = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
-    Unregistered =
-        case AuthStatus of
-            registered ->
-                "";
-            unregistered ->
-                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0, pound, followed by your code."
-                ++ sign_up_prompt()
-                ++ "To leave a message with your contact details, dial 0 2."
-        end,
-    GoToTutorial = "To listen to the tutorial, dial 01.",
-    GoToBlindnessServices = "To learn about other blindness services, dial 03.",
-    LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.",
-    speak(
-         Welcome ++ " "
-      ++ Unregistered          ++ " "
-      ++ SelectionSkip         ++ " "
-      ++ GoToTutorial          ++ " "
-      ++ GoToBlindnessServices ++ " "
-      ++ LeaveMessage          ++ " "
-    );
-% }}-
-
-play(main_menu, _Data) ->
-
-    speak("ofa");
-
-play(?CATEGORIES, _Data) -> % {{-
-    MainCategory = "Main category.",
-    GoToMainMenu = "For the main menu, press 0.",
-    % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
-    % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
-    speak(
-         MainCategory ++ " "
-      ++ GoToMainMenu ++ " "
-      % ++ EnterFirstCategory % nem kene
-     );
-% }}-
-
-play({hangup, demo}, _Data) ->
-    speak(
-         "End of demo session."                  ++ " "
-      ++ sign_up_prompt()                        ++ " "
-      ++ "Thank you for trying out the service!" ++ " "
-    );
-
-play({hangup, inactivity}, _Data) ->
-    speak("Goodbye.").
-
 % `Prompt` is either a state name or custom designation (such a prompt on timeout).
 % `Data` always refers to `gen_fsm` process data (a.k.a., state in `gen_server`)
 % play(
@@ -1373,6 +1348,118 @@ play({hangup, inactivity}, _Data) ->
 %         PlaybackIDs#{ Prompt => ApplicationUUID },
 %     NewData =
 %         Data#{playback_ids := NewPlaybackIDs }.
+% }}-
+
+comfort_noise(Milliseconds) ->
+    logger:debug("play comfort noise"),
+    ComfortNoise =
+           "silence_stream://"
+        ++ integer_to_list(Milliseconds)
+        ++ ",1400",
+    sendmsg_locked(execute, ["playback", ComfortNoise]).
+
+comfort_noise() ->
+    comfort_noise(750).
+
+% TODO make a module for utterances? {{-
+sign_up() ->
+    "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
+
+invalid_selection() ->
+    "Invalid selection. Please try again from the following categories.".
+% }}-
+
+% TODO Try out `mod_vlc` to play aac and m4a files. {{-
+% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
+% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
+% }}-
+play(greeting, #{ auth_status := AuthStatus}) -> % {{-
+    logger:debug("play greeting"),
+    Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
+    PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
+    Unregistered =
+        case AuthStatus of
+            registered ->
+                "";
+            unregistered ->
+                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0, pound, followed by your code."
+                ++ sign_up()
+                ++ "To leave a message with your contact details, dial 0 2."
+        end,
+    GoToTutorial = "To listen to the tutorial, dial 01.",
+    GoToBlindnessServices = "To learn about other blindness services, dial 03.",
+    LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.",
+    speak(
+      stitch(
+        [ Anchor
+        , Unregistered
+        , PoundOrStar
+        , GoToTutorial
+        , GoToBlindnessServices
+        , LeaveMessage
+        ])
+    );
+% }}-
+
+play(main_menu, #{ auth_status := AuthStatus }) -> % {{-
+    Anchor = "Main menu.",
+    Zero = "For quick help, press 0.",
+    Star = "To go back to he previous menu, press star.",
+    Pound =
+        case AuthStatus of
+            registered ->
+                "For your favorites, ";
+            unregistered ->
+                "To log in, "
+        end
+        ++ "press pound.",
+    Eight = "To go back to the main categories, press 8.",
+    Five = "For settings, press 5.",
+    One = "To start the tutorial, press 1.",
+    Two = "To leave a message, press 2.",
+    Three = "To learn about other blindness resources, press 3.",
+
+    speak(
+      stitch(
+        [ Anchor
+        , Zero
+        , One
+        , Star
+        , Pound
+        , Eight
+        , Five
+        , Two
+        , Three
+        ])
+    );
+% }}-
+
+play(?CATEGORIES, _Data) -> % {{-
+    Anchor = "Main category.",
+    Zero = "For the main menu, press 0.",
+    % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
+    % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
+    speak(
+      stitch(
+        [ Anchor
+        , Zero
+        % TODO read the categories
+        ])
+     );
+% }}-
+
+play({hangup, demo}, _Data) -> % {{-
+    speak(
+      stitch(
+        [ "End of demo session."
+        , sign_up()
+        , "Thank you for trying out the service!"
+        ])
+    );
+% }}-
+
+play({hangup, inactivity}, _Data) ->
+    speak("Goodbye.").
 
 speak(Text) ->
     % return the application UUID string.
@@ -1385,6 +1472,10 @@ speak_warning(WarningPrompt) ->
     comfort_noise(),
     speak(WarningPrompt).
 
+stitch([Utterance]) ->
+    Utterance;
+stitch([Utterance|Rest]) ->
+    Utterance ++ " " ++ stitch(Rest).
 %% }}-
 
 push_history(#{ history := History } = Data, State) ->
@@ -1436,7 +1527,12 @@ category(N, M, O, P) ->
     {category, [N, M, O, P]}.
 
 % never push history (no point because just replaying menu prompt)
-repeat_menu(Menu, Data, #{ with_warning := WarningPrompt}) ->
+repeat_menu(
+  #{ menu := Menu
+   , data := Data
+   , with_warning := WarningPrompt
+   }
+ ) ->
     % Not necessary when playback ends naturally,
     % but calling it multiple times doesn't hurt.
     stop_playback(),
@@ -1446,11 +1542,22 @@ repeat_menu(Menu, Data, #{ with_warning := WarningPrompt}) ->
     {keep_state, Data}.
 
 repeat_menu(Menu, Data) ->
-    repeat_menu(Menu, Data, #{ with_warning => none }).
+    repeat_menu(
+      #{ menu => Menu
+       , data => Data
+       , with_warning => none
+       }).
 
-next_menu(NextMenu, CurrentState, Data)
+next_menu(
+  #{ menu := NextMenu
+   , data := Data
+   , current_state := CurrentState
+   }
+)
 when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
 ->
+    % TODO create debug logs for playback items. {{-
+    % For example, "greeting started", "greeting stopped", "greeting finished", etc.
     % NewData =
     %     case Prompt of
     %         stop ->
@@ -1463,9 +1570,10 @@ when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
     %                 % `=>` update if present, or create new
     %                 % `:=` only update when present, otherwise crash
     %                 PlaybackIDs#{ Prompt => ApplicationUUID },
-
+    %
     %             Data#{playback_ids := NewPlaybackIDs }
     %     end,
+    % }}-
 
     stop_playback(),
     comfort_noise(),
