@@ -16,7 +16,7 @@
 
 % Replaced this with a `main_category()` function at one point but had to revert because needed to use this in guards when handling DTMFs, and that will not work.
 -define(CATEGORIES, {category, []}).
-
+-define(CONTENT_ROOT, "/home/toraritte/clones/phone-service/content-root/").
 
 % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
 -define(DEMO_TIMEOUT, 300000). % 5 min
@@ -591,7 +591,7 @@ handle_event(
                });
 
         % }}-
-        % 0          {{- => main_menu 
+        % 0          {{- => main_menu
         #{                state := greeting = State
          ,       received_digit := "0"
          ,    collecting_digits := false
@@ -607,7 +607,7 @@ handle_event(
         %   See COLLECT DIGITS case clause at the end.
         % }}-
 
-        % === MAIN_MENU 
+        % === MAIN_MENU
         % * (star)  {{- <- Go back (previous menu)
         #{                state := main_menu = State
          ,       received_digit := "*"
@@ -685,7 +685,7 @@ handle_event(
                });
 
         % }}-
-        % 4 UNASSIGNED  => (ignored; see very last case clause)
+        % 4             => UNASSIGNED (see last case clause)
         % 5         {{- => settings
         #{                state := main_menu = State
          ,       received_digit := "5"
@@ -698,8 +698,8 @@ handle_event(
                });
 
         % }}-
-        % 6 UNASSIGNED  => (ignored; see very last case clause)
-        % 7 UNASSIGNED  => (ignored; see very last case clause)
+        % 6             => UNASSIGNED (see last case clause)
+        % 7             => UNASSIGNED (see last case clause)
         % 8         {{- => ?CATEGORIES
         #{                state := main_menu = State
          ,       received_digit := "8"
@@ -712,7 +712,7 @@ handle_event(
                });
 
         % }}-
-        % 9 UNASSIGNED  => (ignored; see very last case clause)
+        % 9             => UNASSIGNED (see last case clause)
 
         % === ?CATEGORIES (i.e., `{category, []}`)
         % * (star)  {{- => Go back (previous menu) OR ignore
@@ -726,7 +726,7 @@ handle_event(
                });
 
         % }}-
-        % # UNASSIGNED  => (ignored; see very last case clause)
+        % #             => UNASSIGNED (see last case clause)
         % 0         {{- => main_menu
         #{                state := ?CATEGORIES = State
          ,       received_digit := "0"
@@ -762,7 +762,7 @@ handle_event(
                });
 
         % }}-
-        % # UNASSIGNED  => (ignored; see very last case clause)
+        % #             => UNASSIGNED (see last case clause)
         % 0         {{- => main_menu
         #{                state := State
          ,       received_digit := "0"
@@ -786,7 +786,6 @@ handle_event(
         % [1-9] when playing an article % TODO NEXT
 
         % === COLLECT DIGITS
-
         % [1-9] in any state  {{- => Start collecting digits
         #{ state := State
          , received_digit := Digit
@@ -795,7 +794,7 @@ handle_event(
         % }}-
         %, collecting_digits := true
          }
-        % These states never collect digits and so [1-9] are instant actions without any IDTs. Only listin them here because they make this clause nice and explicit.
+        % These states never collect digits and so [1-9] are instant actions without any IDTs. Listing them here is unecessary, as these digits within these states are called in previous clauses, but doing so makes it nice and explicit.
         when State =/= article,
              State =/= main_menu,
 
@@ -817,8 +816,8 @@ handle_event(
             % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
             % Could've put in previous clause, but more explicit this way
             collect_digits(Data, "0");
-            % }}-
 
+        % }}-
         % * (star) and # (pound) in any state when collecting digits, and not in `greeting` {{-
         % Ignore (i.e., add empty string, will be flattened during eval anyway), but renew `interdigit_timer`
         % When a user presses them accidentally when signing in,
@@ -855,7 +854,7 @@ handle_event(
         % }}-
         ->
             collect_digits(Data, "");
-            % }}-
+        % }}-
 
         UnhandledDigit ->
             logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit]}),
@@ -953,8 +952,8 @@ handle_event(
          % , playback_ids => PlaybackIDs
          }
         ->
+            comfort_noise(2000),
             repeat_menu(State, Data)
-            % play_menu(State, Data)
     end;
 
         % % `greeting` stopped (for whatever reason; no loop anyway) {{-
@@ -1439,9 +1438,15 @@ play(main_menu, #{ auth_status := AuthStatus }) -> % {{-
     );
 % }}-
 
-play(?CATEGORIES, _Data) -> % {{-
-    Anchor = "Main category.",
+play({category, Vertex}, _Data) -> % {{-
+    VertexStringList =
+        lists:map(fun (E) -> integer_to_list(E) end, Vertex),
+    CategoryDir =
+        filename:join([?CONTENT_ROOT] ++ VertexStringList),
+
+    Anchor = get_anchor(CategoryDir),
     Zero = "For the main menu, press 0.",
+    SubCategories =
     % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
     % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
     speak(
@@ -1465,6 +1470,21 @@ play({hangup, demo}, _Data) -> % {{-
 
 play({hangup, inactivity}, _Data) ->
     speak("Goodbye.").
+
+read_category_meta(CategoryDir) ->
+    CategoryMetaFile =
+        filename:join(CategoryDir, "meta.erl"),
+    {ok, Meta} =
+        file:script(CategoryMetaFile),
+    Meta.
+
+get_anchor(CategoryDir) ->
+    case read_category_meta(CategoryDir) of
+        #{ publication_name := Publication } ->
+            Publication;
+        Anchor ->
+            Anchor
+    end.
 
 speak(Text) ->
     % return the application UUID string.
@@ -1676,6 +1696,103 @@ re_start_inactivity_timer(State) ->
 
     put(inactivity_warning, IWref),
     put(inactivity_hangup,  ITref).
+
+publication_guide() ->
+    [ { {category, 1, "Store sales advertising"}
+      , [ { {category, 1, "Grocery stores"}
+          , [ {publication, 1, "Safeway"}
+            , {publication, 2, "Raley's"}
+            , {publication, 3, "La Superior"}
+            , {publication, 4, "Food source"}
+            , {publication, 5, "Savemart"}
+            , {publication, 6, "Foods Co"}
+            , {publication, 7, "Trader Joe's"}
+            , {publication, 8, "Sprouts"}
+            , {publication, 9, "Lucky Supermarkets"}
+            ]
+          }
+        , { {category, 2, "Drug stores"}
+          , [ {publication, 1, "CVS"}
+            , {publication, 2, "Rite Aid"}
+            , {publication, 3, "Walgreen's"}
+            ]
+          }
+        , { {category, 3, "Discount stores"}
+          , [ {publication, 1, "Target"}
+            , {publication, 2, "Walmart"}
+            ]
+          }
+        ]
+      }
+    , { {category, 2, "Sacramento newspapers and magazines"}
+      , [ {publication, 1, "Sacramento Bee"}
+        , {publication, 2, "Sacramento News & Review"}
+        , {publication, 3, "Sacramento Press"}
+        , {publication, 4, "Sacramento Business Journal"}
+        , {publication, 5, "Comstocks"}
+        , {publication, 6, "SacTown"}
+        , {publication, 7, "Sacramento Magazine"}
+        ]
+      }
+    , { {category, 3, "Greater Sacramento area newspapers and magazines"}
+      , [ {publication, 1, "Carmichael Times"}
+        , {publication, 2, "Arden Carmichael News"}
+        , {publication, 3, "California Kids"}
+        , {publication, 4, "East Sacramento News"}
+        , {publication, 5, "The Land Park News"}
+        , {publication, 6, "The Pocket News"}
+        ]
+      }
+    ].
+
+realize(ContentRoot) ->
+    case file:make_dir(ContentRoot) of
+        ok ->
+            realize(publication_guide(), ContentRoot);
+        {error, _} = Error ->
+            Error
+    end.
+
+make_dir_and_meta_file({_, N, _} = Category, Path) ->
+    Dir =
+        filename:join(
+          Path,
+          integer_to_list(N)
+        ),
+    file:make_dir(Dir),
+
+    MetaFilePath =
+        filename:join(Dir, "meta.erl"),
+    file:write_file(
+      MetaFilePath,
+      s(Category) ++ "."
+    ),
+
+    Dir.
+
+realize(
+  [ { {category, _, _} = Category
+    , [_|_] = SubCategories
+    }
+    | Rest
+  ],
+  Path
+)
+->
+    NewPath =
+        make_dir_and_meta_file(Category, Path),
+
+    realize(SubCategories, NewPath),
+    realize(Rest, Path);
+
+realize([], _Path) ->
+    done;
+
+realize([{publication, _, _} = Publication | Rest], Path) ->
+    make_dir_and_meta_file(Publication, Path),
+    realize(Rest, Path).
+
+% realize([{publication, _, _} = Category|Rest]) ->
 
 s(Term) ->
     R = io_lib:format("~p",[Term]),
