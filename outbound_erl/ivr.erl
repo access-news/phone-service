@@ -10,6 +10,8 @@
     , callback_mode/0
     , handle_event/4
     , terminate/3
+    , realize/0
+    , realize/1
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
@@ -714,9 +716,9 @@ handle_event(
         % }}-
         % 9             => UNASSIGNED (see last case clause)
 
-        % === ?CATEGORIES (i.e., `{category, []}`)
+        % === CATEGORIES (i.e., `{category, [..]}`)
         % * (star)  {{- => Go back (previous menu) OR ignore
-        #{                state := ?CATEGORIES = State
+        #{                state := {category, _} = State
          ,       received_digit := "*"
          ,    collecting_digits := false
          } ->
@@ -728,7 +730,7 @@ handle_event(
         % }}-
         % #             => UNASSIGNED (see last case clause)
         % 0         {{- => main_menu
-        #{                state := ?CATEGORIES = State
+        #{                state := {category, _} = State
          ,       received_digit := "0"
          ,    collecting_digits := false
          } ->
@@ -741,45 +743,6 @@ handle_event(
         % }}-
         % [1-9]     {{- => sub-categories (via COLLECT DIGITS)
         %   See COLLECT DIGITS case clause at the end.
-        % }}-
-
-        % === SUB-CATEGORIES (i.e., `{category, [..]}`) {{-
-
-        % Almost identical to the `?CATEGORIES` section but the
-        % latter may have more functionality in the future, so
-        % saving efforts to duplicate sections.
-
-        % * (star)  {{- => Go back (previous menu) OR ignore
-        #{                state := State
-         ,       received_digit := "*"
-         ,    collecting_digits := false
-         }
-        when element(1, State) =:= category
-        ->
-            prev_menu(
-              #{ current_state => State
-               , data => Data
-               });
-
-        % }}-
-        % #             => UNASSIGNED (see last case clause)
-        % 0         {{- => main_menu
-        #{                state := State
-         ,       received_digit := "0"
-         ,    collecting_digits := false
-         }
-        when element(1, State) =:= category
-        ->
-            next_menu(
-              #{ menu => main_menu
-               , data => Data
-               , current_state => State
-               });
-
-        % }}-
-        % [1-9]     {{- => sub-categories (via COLLECT DIGITS)
-        %   See COLLECT DIGITS case clause at the end.
-        % }}-
         % }}-
 
         % === PLAY ARTICLE
@@ -1439,21 +1402,26 @@ play(main_menu, #{ auth_status := AuthStatus }) -> % {{-
 % }}-
 
 play({category, Vertex}, _Data) -> % {{-
-    VertexStringList =
-        lists:map(fun (E) -> integer_to_list(E) end, Vertex),
-    CategoryDir =
-        filename:join([?CONTENT_ROOT] ++ VertexStringList),
+    CategoryDir = get_category_dir(Vertex),
 
-    Anchor = get_anchor(CategoryDir),
-    Zero = "For the main menu, press 0.",
+    {category, _, Anchor} =
+        get_meta(CategoryDir),
+    Zero =
+        "For the main menu, press 0.",
+    Star =
+        "To go back to he previous menu, press star.",
     SubCategories =
+        stitch(
+          get_subcategories(CategoryDir)
+        ),
     % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
     % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
     speak(
       stitch(
         [ Anchor
         , Zero
-        % TODO read the categories
+        , Star
+        , SubCategories
         ])
      );
 % }}-
@@ -1471,20 +1439,53 @@ play({hangup, demo}, _Data) -> % {{-
 play({hangup, inactivity}, _Data) ->
     speak("Goodbye.").
 
-read_category_meta(CategoryDir) ->
-    CategoryMetaFile =
-        filename:join(CategoryDir, "meta.erl"),
+metafile_name() ->
+    "meta.erl".
+
+get_meta(CategoryDir) ->
+    MetaPath =
+        filename:join(
+          CategoryDir,
+          metafile_name()
+        ),
     {ok, Meta} =
-        file:script(CategoryMetaFile),
+        file:script(MetaPath),
     Meta.
 
-get_anchor(CategoryDir) ->
-    case read_category_meta(CategoryDir) of
-        #{ publication_name := Publication } ->
-            Publication;
-        Anchor ->
-            Anchor
-    end.
+get_subcategories(CategoryDir) ->
+    { ok
+    , SubCategoryDirectories
+    } =
+        file:list_dir(CategoryDir),
+    MetaList =
+        lists:map(
+          fun(SubDir) ->
+              MetaPath =
+                  filename:join([?CONTENT_ROOT, SubDir, metafile_name()]),
+              {ok, {_, N, SubCategory} } =
+                  file:script(MetaPath),
+
+              "Press "
+              ++ integer_to_list(N)
+              ++ " for "
+              ++ SubCategory
+              ++ "."
+          end,
+          SubCategoryDirectories -- [metafile_name()]
+        ),
+    ordsets:from_list(MetaList).
+
+get_category_dir(Vertex) ->
+    VertexStringList =
+        case Vertex of
+            [] ->
+                "";
+            [_|_] ->
+                IntToString = 
+                    fun (E) -> integer_to_list(E) end,
+                lists:map(IntToString, Vertex)
+        end,
+    filename:join([?CONTENT_ROOT] ++ VertexStringList).
 
 speak(Text) ->
     % return the application UUID string.
@@ -1724,34 +1725,94 @@ publication_guide() ->
           }
         ]
       }
+
     , { {category, 2, "Sacramento newspapers and magazines"}
-      , [ {publication, 1, "Sacramento Bee"}
-        , {publication, 2, "Sacramento News & Review"}
-        , {publication, 3, "Sacramento Press"}
-        , {publication, 4, "Sacramento Business Journal"}
-        , {publication, 5, "Comstocks"}
-        , {publication, 6, "SacTown"}
-        , {publication, 7, "Sacramento Magazine"}
+      , [ { {category, 1, "Sacramento newspapers"}
+          , [ {publication, 1, "Sacramento Bee"}
+            , {publication, 2, "Sacramento News & Review"}
+            , {publication, 3, "Sacramento Press"}
+            , {publication, 4, "Sacramento Business Journal"}
+            , {publication, 5, "East Sacramento News by Valley Community Newspapers"}
+            , {publication, 6, "The Land Park News by Valley Community Newspapers"}
+            , {publication, 7, "The Pocket News by Valley Community Newspapers"}
+            ]
+          }
+        , { {category, 2, "Sacramento magazines"}
+          , [ {publication, 1, "Comstocks"}
+            , {publication, 2, "SacTown"}
+            , {publication, 3, "Sacramento Magazine"}
+            ]
+          }
         ]
       }
-    , { {category, 3, "Greater Sacramento area newspapers and magazines"}
+
+    , { {category, 3, "Greater Sacramento area newspapers"}
       , [ {publication, 1, "Carmichael Times"}
         , {publication, 2, "Arden Carmichael News"}
         , {publication, 3, "California Kids"}
-        , {publication, 4, "East Sacramento News"}
-        , {publication, 5, "The Land Park News"}
-        , {publication, 6, "The Pocket News"}
+        , {publication, 4, "Davis Enterprise"}
+        , {publication, 5, "Roseville Press Tribune"}
+        , {publication, 6, "Woodland Daily Democrat"}
+        , {publication, 7, "Carmichael Times"}
+        , {publication, 8, "Auburn Journal"}
+        , {publication, 9, "Grass Valley-Nevada City Union"}
+        , {publication, 10, "Arden Carmichael News by Valley Community Newspapers"}
+        , {publication, 11, "El Dorado County Mountain Democrat"}
+        ]
+      }
+
+    , { {category, 4, "Central California newspapers"}
+      , [ {publication, 1, "Modesto Bee"}
+        , {publication, 2, "Stockton Record"}
+        ]
+      }
+
+    , { {category, 5, "San Francisco and Bay Area newspapers"}
+      , [ {publication, 1, "Vallejo Times Herald"}
+        , {publication, 2, "Santa Rosa Press Democrat"}
+        , {publication, 3, "SF Gate"}
+        , {publication, 4, "San Francisco Bay Guardian"}
+        , {publication, 5, "East Bay Times"}
+        , {publication, 6, "SF Weekly"}
+        , {publication, 7, "KQED Bay Area Bites"}
+        ]
+      }
+
+    , { {category, 6, "Northern California newspapers"}
+      , [ {publication, 1, "Fort Bragg Advocate News"}
+        , {publication, 2, "The Mendocino Beacon"}
+        , {publication, 3, "Humboldt Senior Resource Center's Senior News"}
+        , {publication, 4, "North Coast Journal"}
+        , {publication, 5, "Mad River Union"}
+        , {publication, 6, "Eureka Times Standard"}
+        , {publication, 7, "Ferndale Enterprise"}
         ]
       }
     ].
 
+realize() ->
+    realize(?CONTENT_ROOT).
+
 realize(ContentRoot) ->
     case file:make_dir(ContentRoot) of
         ok ->
+            write_meta_file(
+              {category, 0, "Main category"},
+              ContentRoot
+            ),
             realize(publication_guide(), ContentRoot);
         {error, _} = Error ->
             Error
     end.
+
+write_meta_file({_, _, _} = Category, Dir) ->
+    MetaFilePath =
+        filename:join(Dir, metafile_name()),
+    file:write_file(
+      MetaFilePath,
+      s(Category) ++ "."
+    ),
+    Dir.
 
 make_dir_and_meta_file({_, N, _} = Category, Path) ->
     Dir =
@@ -1760,15 +1821,7 @@ make_dir_and_meta_file({_, N, _} = Category, Path) ->
           integer_to_list(N)
         ),
     file:make_dir(Dir),
-
-    MetaFilePath =
-        filename:join(Dir, "meta.erl"),
-    file:write_file(
-      MetaFilePath,
-      s(Category) ++ "."
-    ),
-
-    Dir.
+    write_meta_file(Category, Dir).
 
 realize(
   [ { {category, _, _} = Category
