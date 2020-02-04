@@ -1090,7 +1090,7 @@ handle_event(
     NewData =
         Data#{ category_selectors := [] },
 
-    case eval_collected_digits(CategorySelectors) of
+    case eval_collected_digits(CategorySelectors, State) of
 
         % `greeting`  -> `Category`  state change  is a  valid
         % one, so when there is an invalid entry in `greeting`
@@ -1121,8 +1121,29 @@ handle_event(
     end.
 %% }}-
 
-eval_collected_digits(_) ->
-    noop.
+eval_collected_digits([_|_] = CategorySelectors, State) ->
+    Vertex =
+        case State of
+
+            State
+            when State =:= greeting;
+                 State =:= ?CATEGORIES
+            ->
+                [];
+
+            CategorySelectors ->
+                CategorySelectors
+        end,
+
+    CategoryDir =
+        get_category_dir(Vertex),
+
+    case filelib:is_dir(CategoryDir) of
+        false ->
+            invalid;
+        true ->
+            {category, CategoryDir}
+    end.
 
 %%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions %%
@@ -1401,9 +1422,10 @@ play(main_menu, #{ auth_status := AuthStatus }) -> % {{-
     );
 % }}-
 
-play({category, Vertex}, _Data) -> % {{-
-    CategoryDir = get_category_dir(Vertex),
-
+play(?CATEGORIES, Data) ->
+    play({category, ?CONTENT_ROOT}, Data);
+% play({category, Vertex}, _Data) ->
+play({category, CategoryDir}, _Data) -> % {{-
     {category, _, Anchor} =
         get_meta(CategoryDir),
     Zero =
@@ -1461,7 +1483,7 @@ get_subcategories(CategoryDir) ->
         lists:map(
           fun(SubDir) ->
               MetaPath =
-                  filename:join([?CONTENT_ROOT, SubDir, metafile_name()]),
+                  filename:join([CategoryDir, SubDir, metafile_name()]),
               {ok, {_, N, SubCategory} } =
                   file:script(MetaPath),
 
@@ -1475,16 +1497,14 @@ get_subcategories(CategoryDir) ->
         ),
     ordsets:from_list(MetaList).
 
+get_category_dir([]) ->
+    ?CONTENT_ROOT;
 get_category_dir(Vertex) ->
     VertexStringList =
-        case Vertex of
-            [] ->
-                "";
-            [_|_] ->
-                IntToString = 
-                    fun (E) -> integer_to_list(E) end,
-                lists:map(IntToString, Vertex)
-        end,
+        lists:map(
+          fun (E) -> integer_to_list(E) end,
+          Vertex
+        ),
     filename:join([?CONTENT_ROOT] ++ VertexStringList).
 
 speak(Text) ->
@@ -1527,8 +1547,10 @@ collect_digits(
   #{category_selectors := CategorySelectors} = Data,
   Digit
 ) ->
+    IntDigit =
+        list_to_integer(Digit),
     NewData =
-        Data#{category_selectors := CategorySelectors ++ [Digit]},
+        Data#{category_selectors := CategorySelectors ++ [IntDigit]},
     % The notion is that the `InterDigitTimer` is restarted whenever {{-
     % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
     % }}-
