@@ -17,8 +17,8 @@
 -define(FS_NODE, 'freeswitch@tr2').
 
 % Replaced this with a `main_category()` function at one point but had to revert because needed to use this in guards when handling DTMFs, and that will not work.
--define(CATEGORIES, {category, []}).
 -define(CONTENT_ROOT, "/home/toraritte/clones/phone-service/content-root/").
+-define(CATEGORIES, {category, ?CONTENT_ROOT}).
 
 % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
 -define(DEMO_TIMEOUT, 300000). % 5 min
@@ -80,7 +80,7 @@ init(_Args) -> % {{-
 
     State = incoming_call,
     Data =
-        #{ category_selectors => [] % ["7", "2", "", "3", ...]
+        #{ category_selectors => ""
          ,        auth_status => unregistered % | registered
          ,        history     => []
          % There should be only one playback running at any time, and, a corollary, each state should only have one active playback associated in this map. T
@@ -239,7 +239,7 @@ handle_event(
     %% `gen_statem` state and data,  this log does not need
     %% to be  repeated in  `handle_event/4` below,  only to
     %% double-check matched values, calculations etc.
-    logger:debug(#{ self() => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, state => State, mod_erl_event_call_status => ModErlEventCallStatus }]}),
+    % logger:debug(#{ self() => ["MOD_ERL_EVENT_MASSAGE", #{ data => Data, state => State, mod_erl_event_call_status => ModErlEventCallStatus }]}),
 
     MassagedModErlEvent =
         { UUID
@@ -269,7 +269,7 @@ handle_event(
   State,                % State
   Data                  % Data
 ) ->
-    logger:debug(#{ self() => ["CALL_HANGUP", #{ data => Data, state => State }]}),
+    % logger:debug(#{ self() => ["CALL_HANGUP", #{ data => Data, state => State }]}),
     %% Gave `normal` as reason, otherwise `gen_statem` will {{-
     %% crash  (which isn't  really a  problem, because  the
     %% started `gen_statem`  processes are not  linked, and
@@ -286,7 +286,7 @@ handle_event(
   State,
   _Data                               % Data
 ) ->
-    logger:debug(#{ self() => ["SENDMSG_CONFIRMATION", #{ message => Msg, state => State}]}),
+    % logger:debug(#{ self() => ["SENDMSG_CONFIRMATION", #{ message => Msg, state => State}]}),
     keep_state_and_data;
 %% }}-
 
@@ -331,7 +331,7 @@ handle_event(
   State, % State
   _Data  % Data
 ) ->
-    logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
+    % logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 %% }}-
 
@@ -347,7 +347,7 @@ handle_event(
   {hangup, _},                % State
   Data                  % Data
 ) ->
-    logger:debug(#{ self() => ["in HANGUP state", #{ data => Data, state => hangup, event_content => EC }]}),
+    % logger:debug(#{ self() => ["in HANGUP state", #{ data => Data, state => hangup, event_content => EC }]}),
 
     % sending it synchronously to allow the playback to end
     sendmsg_locked(hangup, ["16"]),
@@ -384,7 +384,7 @@ handle_event(
   incoming_call                      = State,
   #{ auth_status := unregistered }   = Data
 ) ->
-    logger:debug(#{ self() => ["INCOMING_CALL", #{ data => Data, state => State }]}),
+    % logger:debug(#{ self() => ["INCOMING_CALL", #{ data => Data, state => State }]}),
 
     %% Implicit UUID {{-
     %% ====================================================
@@ -469,7 +469,7 @@ handle_event(
    , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
    } = Data                               % /         set there must also be true.
 ) ->
-    logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
+    % logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
     re_start_inactivity_timer(State),
     next_menu(
@@ -493,7 +493,8 @@ handle_event(
    ,            history := History
    } = Data
 ) ->
-    logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
+    % logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
+    logger:debug( #{ a => "HANDLE_DTMF", state => State, digit => Digit, collected_digits => CategorySelectors }),
 
     % Reset inactivity timers whenever a new DTMF signal comes in
     % TODO Amend when voice commands get implemented
@@ -820,7 +821,7 @@ handle_event(
         % }}-
 
         UnhandledDigit ->
-            logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit]}),
+            % logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit]}),
             keep_state_and_data
 
         %% TODO When greeting stops (`PLAYBACK_STOP` is received) jump to `?CATEGORIES`.
@@ -882,7 +883,7 @@ handle_event(
    ,       playback_ids := PlaybackIDs
    } = Data
 ) ->
-    logger:debug(#{ from => "HANDLE_CHANNEL_EXECUTE_COMPLETE", app_id => ApplicationUUID, play_ids => PlaybackIDs}),
+    % logger:debug(#{ from => "HANDLE_CHANNEL_EXECUTE_COMPLETE", app_id => ApplicationUUID, play_ids => PlaybackIDs}),
     case
         #{        state => State
          % , playback_ids => PlaybackIDs
@@ -890,7 +891,7 @@ handle_event(
     of
         % The only playback that can be stopped in `greeting` is when the `greeting` playback stops by itself, and so we would like to naturally transition to `?CATEGORIES`
         #{ state := greeting } ->
-            logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN greeting (natural stop)"),
+            % logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN greeting (natural stop)"),
             next_menu(
               #{ menu => ?CATEGORIES
                , data => Data
@@ -1025,10 +1026,10 @@ handle_event(
   State,
   _Data                               % Data
 ) ->
-    logger:debug(""),
+    % logger:debug(""),
     % logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, fs_event_data => FSEvent,  state => State}]}),
-    logger:debug(#{ self() => ["UNKNOWN_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State}]}),
-    logger:debug(""),
+    % logger:debug(#{ self() => ["UNKNOWN_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State}]}),
+    % logger:debug(""),
     keep_state_and_data;
 
 handle_event(
@@ -1037,7 +1038,7 @@ handle_event(
   State,
   _Data                               % Data
 ) ->
-    logger:emergency(#{ self() => ["UNKNOWN_INTERNAL", #{ unknown_msg => Msg, state => State}]}),
+    % logger:emergency(#{ self() => ["UNKNOWN_INTERNAL", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 
 % handle_event(
@@ -1061,7 +1062,7 @@ handle_event(
   State,
   #{ auth_status := AuthStatus } = Data
 ) ->
-    logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
+    % logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
 
     case AuthStatus of
 
@@ -1098,6 +1099,8 @@ handle_event(
         % the return value  (because `repeat_menu/1` ends with
         % `keep_state`), and drop to `?CATEGORIES
         invalid when State =:= greeting ->
+    logger:debug(#{ a => "INTERDIGIT_TIMEOUT (invalid in greeting)", collected_digits => CategorySelectors, state => State}),
+
             repeat_menu(
               #{ menu => ?CATEGORIES
                , data => NewData
@@ -1106,6 +1109,7 @@ handle_event(
             {next_state, ?CATEGORIES, NewData};
 
         invalid ->
+    logger:debug(#{ a => "INTERDIGIT_TIMEOUT (simply invalid)", collected_digits => CategorySelectors, state => State}),
             repeat_menu(
               #{ menu => State
                , data => NewData
@@ -1113,6 +1117,7 @@ handle_event(
                });
 
         Category ->
+    logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => CategorySelectors, state => State, category => Category}),
             next_menu(
               #{ menu => Category
                , data => NewData
@@ -1122,27 +1127,26 @@ handle_event(
 %% }}-
 
 eval_collected_digits([_|_] = CategorySelectors, State) ->
-    Vertex =
+    CurrentCategoryDir =
         case State of
+            greeting ->
+                ?CONTENT_ROOT;
 
-            State
-            when State =:= greeting;
-                 State =:= ?CATEGORIES
-            ->
-                [];
-
-            CategorySelectors ->
-                CategorySelectors
+            {category, CategoryDir} ->
+                CategoryDir
         end,
 
-    CategoryDir =
-        get_category_dir(Vertex),
+    SelectedCategoryDir =
+        filename:join(
+          CurrentCategoryDir,
+          CategorySelectors
+        ),
 
-    case filelib:is_dir(CategoryDir) of
+    case filelib:is_dir(SelectedCategoryDir) of
         false ->
             invalid;
         true ->
-            {category, CategoryDir}
+            {category, SelectedCategoryDir}
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%
@@ -1274,7 +1278,7 @@ fsend(Msg) ->
     {lofa, ?FS_NODE} ! Msg.
 
 stop_playback() ->
-    logger:debug("stop playback"),
+    % logger:debug("stop playback"),
     % TODO Should this  be `bgapi`? Will the  synchronous `api`
     %      call wreak havoc when many users are calling?
     fsend({api, uuid_break, get(uuid) ++ " all"}).
@@ -1339,7 +1343,7 @@ stop_playback() ->
 % }}-
 
 comfort_noise(Milliseconds) ->
-    logger:debug("play comfort noise"),
+    % logger:debug("play comfort noise"),
     ComfortNoise =
            "silence_stream://"
         ++ integer_to_list(Milliseconds)
@@ -1362,7 +1366,7 @@ invalid_selection() ->
 % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
 % }}-
 play(greeting, #{ auth_status := AuthStatus}) -> % {{-
-    logger:debug("play greeting"),
+    % logger:debug("play greeting"),
     Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
     PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
     Unregistered =
@@ -1422,8 +1426,6 @@ play(main_menu, #{ auth_status := AuthStatus }) -> % {{-
     );
 % }}-
 
-play(?CATEGORIES, Data) ->
-    play({category, ?CONTENT_ROOT}, Data);
 % play({category, Vertex}, _Data) ->
 play({category, CategoryDir}, _Data) -> % {{-
     {category, _, Anchor} =
@@ -1497,15 +1499,15 @@ get_subcategories(CategoryDir) ->
         ),
     ordsets:from_list(MetaList).
 
-get_category_dir([]) ->
-    ?CONTENT_ROOT;
-get_category_dir(Vertex) ->
-    VertexStringList =
-        lists:map(
-          fun (E) -> integer_to_list(E) end,
-          Vertex
-        ),
-    filename:join([?CONTENT_ROOT] ++ VertexStringList).
+% get_category_dir([]) ->
+%     ?CONTENT_ROOT;
+% get_category_dir(Vertex) ->
+%     VertexStringList =
+%         lists:map(
+%           fun (E) -> integer_to_list(E) end,
+%           Vertex
+%         ),
+%     filename:join([?CONTENT_ROOT] ++ VertexStringList).
 
 speak(Text) ->
     % return the application UUID string.
@@ -1545,12 +1547,10 @@ pop_history(#{ history := [PrevState | RestHistory] } = Data) ->
 
 collect_digits(
   #{category_selectors := CategorySelectors} = Data,
-  Digit
+  Digit % string
 ) ->
-    IntDigit =
-        list_to_integer(Digit),
     NewData =
-        Data#{category_selectors := CategorySelectors ++ [IntDigit]},
+        Data#{category_selectors := CategorySelectors ++ Digit},
     % The notion is that the `InterDigitTimer` is restarted whenever {{-
     % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
     % }}-
