@@ -340,7 +340,7 @@ handle_event(
   State, % State
   _Data  % Data
 ) ->
-    % logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
+    logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 %% }}-
 
@@ -393,7 +393,7 @@ handle_event(
   , #{ "Channel-ANI" := CallerNumber % | EventContent = MassagedModErlEvent
      }                               % |
   },                                 % /
-  incoming_call                      = _State,
+  incoming_call                      = State,
   #{ auth_status := unregistered }   = Data
 ) ->
     % logger:debug(#{ self() => ["INCOMING_CALL", #{ data => Data, state => State }]}),
@@ -897,7 +897,7 @@ handle_event(
 ) ->
     PlaybackID =
         extract_playback_id(ApplicationUUID),
-    logger:debug(#{ from => "HANDLE_CHANNEL_EXECUTE_COMPLETE", app_id => ApplicationUUID, playback_id => PlaybackID}),
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", bapp_id => ApplicationUUID, playback_id => PlaybackID, state => State}),
     % logger:debug(#{event => E}),
     case
         #{    current_state => State
@@ -909,6 +909,7 @@ handle_event(
          , stopped_playback := greeting
          }
         ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackID} }),
             next_menu(
               #{ menu => ?CATEGORIES
                , data => Data
@@ -919,6 +920,7 @@ handle_event(
          , stopped_playback := warning
          }
         ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackID} }),
             comfort_noise(2000),
             repeat_menu(
                 #{ menu => State
@@ -926,6 +928,7 @@ handle_event(
                  });
 
         _ when State =:= PlaybackID ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackID} }),
             comfort_noise(2000),
             repeat_menu(
                 #{ menu => State
@@ -933,6 +936,7 @@ handle_event(
                  });
 
         _ when State =/= PlaybackID ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackID} }),
             keep_state_and_data
     end;
 
@@ -1046,7 +1050,7 @@ handle_event(
 ->
     % logger:debug(#{event => E}),
     % logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, fs_event_data => FSEvent,  state => State}]}),
-    % logger:debug(#{ self() => ["UNKNOWN_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State}]}),
+    logger:debug(#{ self() => ["UNKNOWN_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State}]}),
     % logger:debug(""),
     keep_state_and_data;
 
@@ -1056,7 +1060,7 @@ handle_event(
   State,
   _Data                               % Data
 ) ->
-    % logger:emergency(#{ self() => ["UNKNOWN_INTERNAL", #{ unknown_msg => Msg, state => State}]}),
+    logger:emergency(#{ self() => ["UNKNOWN_INTERNAL", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 
 % handle_event(
@@ -1117,17 +1121,17 @@ handle_event(
         % the return value  (because `repeat_menu/1` ends with
         % `keep_state`), and drop to `?CATEGORIES
         invalid when State =:= greeting ->
-            % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (invalid in greeting)", collected_digits => ReceivedDigits, state => State}),
+            logger:debug(#{ a => "INTERDIGIT_TIMEOUT (invalid in greeting)", collected_digits => ReceivedDigits, state => State}),
             warning( invalid_selection() ),
             {next_state, ?CATEGORIES, NewData};
 
         invalid ->
-            % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (simply invalid)", collected_digits => ReceivedDigits, state => State}),
+            logger:debug(#{ a => "INTERDIGIT_TIMEOUT (simply invalid)", collected_digits => ReceivedDigits, state => State}),
             warning( invalid_selection() ),
             {keep_state, NewData};
 
         Category ->
-            % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
+            logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
             next_menu(
               #{ menu => Category
                , data => NewData
@@ -1232,7 +1236,7 @@ look_up(PhoneNumber) ->
 event_uuid_header(UUID) ->
     {"Event-UUID", UUID}.
 
-sendmsg_headers(execute, [App, Args], UUID) ->
+sendmsg_headers(execute, [App, Args], UUID) when is_list(Args) ->
     %% TODO "loops"  header   and  alternate  format   for  long
     %%      messages (is it needed here?)  not added as they are
     %%      not needed yet.
@@ -1244,8 +1248,7 @@ sendmsg_headers(execute, [App, Args], UUID) ->
 sendmsg_headers(hangup, [HangupCode], _UUID) ->
     %% For hangup codes, see
     %% https://freeswitch.org/confluence/display/FREESWITCH/Hangup+Cause+Code+Table
-    [{"hangup-cause", HangupCode}
-    ];
+    [{"hangup-cause", HangupCode}];
 
 %% This will  blow up,  one way or  the other,  but not
 %% planning to get there anyway.
@@ -1267,23 +1270,25 @@ do_sendmsg(
    , event_lock      := IsLocked
    }
 )
-when is_list(SendmsgArgs),
-     is_list(PlaybackID)
+when is_list(SendmsgArgs)
 ->
     LockHeaderList =
         case IsLocked of
             false -> [];
             true  -> [{"event-lock", "true"}]
         end,
+    PoorMansUUID =
+        erlang:make_ref(),
     ApplicationUUID =
-           PlaybackID
+           stringify(PlaybackID)
         ++ "|"
-        ++ erlang:make_ref(),
+        ++ stringify(PoorMansUUID),
     FinalHeaders =
         [{"call-command", atom_to_list(SendmsgCommand)}]
         ++ sendmsg_headers(SendmsgCommand, SendmsgArgs, ApplicationUUID)
         ++ LockHeaderList,
     fsend({sendmsg, get(uuid), FinalHeaders}),
+    % logger:debug(#{ a => ["DO_SENDMSG", #{ app_id => ApplicationUUID, final_headers => FinalHeaders }]}),
     ApplicationUUID;
 
 do_sendmsg(
@@ -1292,15 +1297,17 @@ do_sendmsg(
    , event_lock      := IsLocked
    } = Args
 ) ->
+    % logger:debug(#{ a => ["DO_SENDMSG", #{args => Args}]}),
     do_sendmsg(
       Args#{ playback_id => not_applicable }
     ).
 
 sendmsg(
   #{ sendmsg_command := _
-     , arguments       := SendmsgArgs
+   , arguments       := SendmsgArgs
    } = Args
 ) ->
+    logger:debug(#{ a => ["SENDMSG", #{args => Args}]}),
     do_sendmsg(Args#{ event_lock => false }).
 
 sendmsg_locked(
@@ -1637,6 +1644,7 @@ next_menu(
 )
 when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
 ->
+    logger:debug("NEXT_MENU"),
     stop_playback(),
     comfort_noise(),
     play(NextMenu, Data),
@@ -1675,6 +1683,7 @@ prev_menu(
    , data := #{ nav_history := History } = Data
    }
 ) ->
+    logger:debug("PREV_MENU"),
     case {CurrentState, History} of
         {?CATEGORIES, []} -> % {{-
         % Nowhere to go back to; give warning and repeat
