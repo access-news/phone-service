@@ -83,7 +83,9 @@ init(_Args) -> % {{-
         #{ recvd_digits => ""
          ,  auth_status => unregistered % | registered
          , menu_history => [] % used as a stack
-         ,    playbacks => #{ currently_playing => "" }
+         % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
+         % Could have used a proplist instead as a stack but (1) lookup is less convenient (more on that below), (2) less explicit (see below).
+         ,    playbacks => []
          % ,   prev_state => init
          % There should be only one playback running at any time, and, a corollary, each state should only have one active playback associated in this map. T
          % , playback_stopped => false
@@ -316,9 +318,9 @@ handle_event(
 
     % TODO Add notes on how this works.
     % TODO how is this applicable when in {article, _}?
-    DataWithUpdatedPlaybacks =
+    NewDataP =
         warning(Inactive, Data),
-    {keep_state, DataWithUpdatedPlaybacks};
+    {keep_state, NewDataP};
 
 handle_event(
   info,
@@ -904,14 +906,18 @@ handle_event(
     logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", bapp_id => ApplicationUUID, state => State}),
 
     % This dancing around is because functions in `maps` never fail, and this `handle_event/4` clause should crash if an `ApplicationUUID` is not in `Playbacks` as it would mean that a playback has been started without saving its ID in the `gen_statem` data, which should not happen. All menus use only `speak` (for now), so anything that gets in here is a playback that has been stopped (one way or another).
-    #{ ApplicationUUID :=
-        #{ playback_name := PlaybackName
-         ,    is_stopped := IsStopped
-         }
-    } = Playbacks,
-
+    % #{ ApplicationUUID :=
+    %     #{ playback_name := PlaybackName
+    %      ,    is_stopped := IsStopped
+    %      }
+    % } = Playbacks,
+    { ApplicationUUID
+    , PlaybackName
+    , IsStopped
+    } =
+        proplists:lookup(ApplicationUUID, Playbacks),
     NewPlaybacks =
-        maps:remove(ApplicationUUID, Playbacks),
+        proplists:delete(ApplicationUUID, Playbacks),
     NewData =
         Data#{ playbacks := NewPlaybacks },
 
@@ -982,7 +988,7 @@ handle_event(
         #{ is_stopped := true }
         when State =/= PlaybackName ->
     logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
-            keep_state_and_data;
+            {keep_state, NewData};
 
         % the only possibility not checked yet (unless I'm an idiot), and this shouldn't be possible. It would mean that a playback has stopped naturally, and `gen_statem` wandered off into another state.
         % As the above should never happen, this is also good to test whether I did something wrong, and it actually does happen by making the process crash.
@@ -1377,11 +1383,32 @@ fsend(Msg) ->
     %% https://stackoverflow.com/questions/58981920/
     {lofa, ?FS_NODE} ! Msg.
 
-stop_playback(#{ playbacks := Playbacks } = Data ) ->
+stop_playback(#{ playbacks := [] } = Data) ->
+    Data;
+
+% Stop the currently playing prompt
+% (but just in case, end everything, even though only one should be playing only)
+stop_playback(
+  #{ playbacks :=
+     [ { ApplicationUUID % |
+       , PlaybackName    % | currently playing
+       , false           % |
+       }
+       | Rest
+     ]
+   } = Data
+) ->
     % logger:debug("stop playback"),
     % TODO Should this  be `bgapi`? Will the  synchronous `api`
     %      call wreak havoc when many users are calling?
-    fsend({api, uuid_break, get(uuid) ++ " all"}).
+    fsend({api, uuid_break, get(uuid) ++ " all"}),
+    Data#{ playbacks := [{ApplicationUUID, PlaybackName, true}|Rest] };
+
+% Nothing is playing and the most recent playback has been stopped before.
+% For example, ?CATEGORIES is playing, "*" is sent when nothing is in history, `warning/?` stops playback, warning starts playing, ends naturally, so HANDLE_CHANNEL_EXECUTE_COMPLETE get clears {warning, false}, and calls that scenario in its `case`, which is `repeat/?`, that also has a `stop_playback/1`, and the most recent playback is the stopped ?CATEGORIES. Subsequent HANDLE_CHANNEL_EXECUTE_COMPLETE clauses will clear out these entries. (or should...)
+% TODO make sure that the Data#playbacks stack gets cleared properly
+stop_playback(#{ playbacks := [{_, _, true}|_] } = Data) ->
+    Data.
 
 % Access News controls {{-
 % Press 8 for the help menu.
@@ -1657,11 +1684,16 @@ speak(
            , playback_name   => PlaybackName
            }),
     Playback =
-        #{ playback_name => PlaybackName
-         ,    is_stopped => false
-         },
+        { ApplicationUUID
+        , PlaybackName % Only for convenience; already part of `ApplicationUUID`.
+        , false % Has the playback been stopped?
+        },
+        % #{ playback_name => PlaybackName
+        %  ,    is_stopped => false
+        %  },
     NewPlaybacks =
-        Playbacks#{ ApplicationUUID => Playback },
+        [ Playback | Playbacks ],
+        % Playbacks#{ ApplicationUUID => Playback },
 
     Data#{ playbacks := NewPlaybacks }.
 
@@ -1710,11 +1742,11 @@ collect_digits(
 
 warning(WarningPrompt, Data) ->
     logger:debug("SPEAK_WARNING: " ++ WarningPrompt),
-    stop_playback(),
+    NewData = stop_playback(Data),
     comfort_noise(),
     speak(
       #{ playback_name => warning
-       , data => Data
+       , data => NewData
        , text => WarningPrompt
        }).
 
@@ -1727,10 +1759,10 @@ repeat_menu(
     logger:debug("REPEAT_MENU"),
     % Not necessary when playback ends naturally,
     % but calling it multiple times doesn't hurt.
-    stop_playback(),
+    NewDataP = stop_playback(Data),
     comfort_noise(),
-    DataWithUpdatedPlaybacks = play(Menu, Data),
-    {keep_state, DataWithUpdatedPlaybacks}.
+    NewDataPP = play(Menu, NewDataP),
+    {keep_state, NewDataPP}.
 
 next_menu(
   #{ menu := NextMenu
@@ -1743,7 +1775,7 @@ when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
     logger:debug("NEXT_MENU"),
 
     % Update menu history (if permitted)
-    DataWithHistoryUpdate =
+    NewDataH =
         case {CurrentState, NextMenu} of
 
             % State changes when history is not updated  with prev
@@ -1770,13 +1802,13 @@ when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
             _ -> push_history(Data, CurrentState)
         end,
 
-    stop_playback(),
+    NewDataHP = stop_playback(NewDataH),
     comfort_noise(),
 
-    DataWithUpdatedPlaybacksAndHistory =
-        play(NextMenu, DataWithHistoryUpdate),
+    NewDataHPP =
+        play(NextMenu, NewDataHP),
 
-    {next_state, NextMenu, DataWithUpdatedPlaybacksAndHistory}.
+    {next_state, NextMenu, NewDataHPP}.
 
 prev_menu(
   #{ current_state := CurrentState
@@ -1788,10 +1820,10 @@ prev_menu(
         {?CATEGORIES, []} -> % {{-
         % Nowhere to go back to; give warning and repeat
             EmptyHistory = "Nothing in history.",
-            DataWithUpdatedPlaybacks =
+            NewDataP =
                 warning(EmptyHistory, Data),
 
-            {keep_state, DataWithUpdatedPlaybacks};
+            {keep_state, NewDataP};
 
         % }}-
         {main_menu, []} -> % {{-
@@ -1806,14 +1838,14 @@ prev_menu(
                });
         % }}-
         _ ->
-            stop_playback(),
+            NewDataP = stop_playback(Data),
             comfort_noise(),
-            {PrevState, DataWithHistoryUpdate} =
-                pop_history(Data),
-            DataWithUpdatedPlaybacksAndHistory =
-                play(PrevState, Data),
+            {PrevState, NewDataPH} =
+                pop_history(NewDataP),
+            NewDataPHP =
+                play(PrevState, NewDataPH),
 
-            {next_state, PrevState, DataWithUpdatedPlaybacksAndHistory}
+            {next_state, PrevState, NewDataPHP}
     end.
 
 % start,   when call is answered
