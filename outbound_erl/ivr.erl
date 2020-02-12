@@ -82,7 +82,8 @@ init(_Args) -> % {{-
     Data =
         #{ recvd_digits => ""
          ,  auth_status => unregistered % | registered
-         ,  nav_history => []
+         , menu_history => [] % used as a stack
+         ,    playbacks => #{ currently_playing => "" }
          % ,   prev_state => init
          % There should be only one playback running at any time, and, a corollary, each state should only have one active playback associated in this map. T
          % , playback_stopped => false
@@ -315,8 +316,9 @@ handle_event(
 
     % TODO Add notes on how this works.
     % TODO how is this applicable when in {article, _}?
-    warning(Inactive),
-    keep_state_and_data;
+    DataWithUpdatedPlaybacks =
+        warning(Inactive, Data),
+    {keep_state, DataWithUpdatedPlaybacks};
 
 handle_event(
   info,
@@ -480,7 +482,7 @@ handle_event(
   },                                      % /
   incoming_call = State,                       % State
   #{ auth_status  := _AuthStatus           % \         Made  explicit  all  values  that  are  known,
-   , nav_history  := []                   % | Data    because the only state change to this state is
+   , menu_history := []                   % | Data    because the only state change to this state is
    % , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
    } = Data                               % /         set there must also be true.
 ) ->
@@ -505,7 +507,7 @@ handle_event(
    % if `ReceivedDigits =/= []`, we are collecting digits
   #{ recvd_digits := ReceivedDigits
    ,  auth_status := AuthStatus
-   ,  nav_history := History
+   ,  menu_history := History
    } = Data
 ) ->
     % logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
@@ -893,51 +895,101 @@ handle_event(
   } = E,                           % /
   State,
   % #{ prev_state := PrevState } = Data
-  Data
+  #{ playbacks := Playbacks
+   } = Data
 ) ->
-    PlaybackID =
-        extract_playback_id(ApplicationUUID),
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", bapp_id => ApplicationUUID, playback_id => PlaybackID, state => State}),
+    % PlaybackName =
+    %     extract_playback_name(ApplicationUUID),
+
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", bapp_id => ApplicationUUID, state => State}),
+
+    % This dancing around is because functions in `maps` never fail, and this `handle_event/4` clause should crash if an `ApplicationUUID` is not in `Playbacks` as it would mean that a playback has been started without saving its ID in the `gen_statem` data, which should not happen. All menus use only `speak` (for now), so anything that gets in here is a playback that has been stopped (one way or another).
+    #{ ApplicationUUID :=
+        #{ playback_name := PlaybackName
+         ,    is_stopped := IsStopped
+         }
+    } = Playbacks,
+
+    NewPlaybacks =
+        maps:remove(ApplicationUUID, Playbacks),
+    NewData =
+        Data#{ playbacks := NewPlaybacks },
+
     % logger:debug(#{event => E}),
+
+    % Document the six possible cases with truth table and their notes
     case
         #{    current_state => State
-         , stopped_playback => PlaybackID
+         , stopped_playback => PlaybackName
+         ,       is_stopped => IsStopped
          }
     of
         % The only playback that can be stopped in `greeting` is when the `greeting` playback finished playing, and instead of looping like in other menus, `greeting` should only play once, and should transition to `?CATEGORIES`
+        % `is_stopped` is set to expect false, because it should not be possible to receive a `CHANNEL_EXECUTE_COMPLETE` of greeting in greeting that is true. Any input results in moving to another state while stopping greeting, therefore the resulting CHANNEL_EXECUTE_COMPLETE will arrive in some other state. And if greeting finished playing, it means we do not loop, but go to ?CATEGORIES.
         #{    current_state := greeting
          , stopped_playback := greeting
+         ,       is_stopped := false
          }
         ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackID} }),
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
             next_menu(
               #{ menu => ?CATEGORIES
-               , data => Data
+               , data => NewData
                , current_state => greeting
                });
 
-        #{    current_state := State
+        % Playback stopped naturally, repeat menu.
+        #{    current_state := _State
          , stopped_playback := warning
+         ,       is_stopped := false
          }
         ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackID} }),
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, warning, false} }),
             comfort_noise(2000),
             repeat_menu(
                 #{ menu => State
-                 , data => Data
+                 , data => NewData
                  });
 
-        _ when State =:= PlaybackID ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackID} }),
+        % Warning playback interrupted by user input; either to go to another menu (so a playback is already playing), or another warning (so ignore a stopped warning, because the other warning is running, and when it stops naturally, it will repeat the current menu (see above))
+        #{    current_state := _State
+         , stopped_playback := warning
+         ,       is_stopped := true
+         }
+        ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, warning, true} }),
+            {keep_state, NewData};
+
+        % playback has been stopped but state remains the same (e.g., to play `invalid_selection/0`), so ignore. Once the warning finishes, it will repeat the same state menu
+        #{ is_stopped := true }
+        when State =:= PlaybackName
+        ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName, true} }),
+            {keep_state, NewData};
+
+        % playback stopped naturally in the same state where it was started, so repeat it.
+        #{ is_stopped := false }
+        when State =:= PlaybackName
+        ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName, false} }),
             comfort_noise(2000),
             repeat_menu(
                 #{ menu => State
-                 , data => Data
+                 , data => NewData
                  });
 
-        _ when State =/= PlaybackID ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackID} }),
-            keep_state_and_data
+        % CHANNEL_EXECUTE_COMPLETE "residue" after a state change
+        #{ is_stopped := true }
+        when State =/= PlaybackName ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
+            keep_state_and_data;
+
+        % the only possibility not checked yet (unless I'm an idiot), and this shouldn't be possible. It would mean that a playback has stopped naturally, and `gen_statem` wandered off into another state.
+        % As the above should never happen, this is also good to test whether I did something wrong, and it actually does happen by making the process crash.
+        #{ is_stopped := false }
+        when State =/= PlaybackName ->
+    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
+            crash
     end;
 
         % % `greeting` stopped (for whatever reason; no loop anyway) {{-
@@ -1122,13 +1174,15 @@ handle_event(
         % `keep_state`), and drop to `?CATEGORIES
         invalid when State =:= greeting ->
             logger:debug(#{ a => "INTERDIGIT_TIMEOUT (invalid in greeting)", collected_digits => ReceivedDigits, state => State}),
-            warning( invalid_selection() ),
-            {next_state, ?CATEGORIES, NewData};
+            NewDataWithUpdatedPlaybacks =
+                warning( invalid_selection(), NewData ),
+            {next_state, ?CATEGORIES, NewDataWithUpdatedPlaybacks};
 
         invalid ->
             logger:debug(#{ a => "INTERDIGIT_TIMEOUT (simply invalid)", collected_digits => ReceivedDigits, state => State}),
-            warning( invalid_selection() ),
-            {keep_state, NewData};
+            NewDataWithUpdatedPlaybacks =
+                warning( invalid_selection(), NewData ),
+            {keep_state, NewDataWithUpdatedPlaybacks};
 
         Category ->
             logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
@@ -1262,11 +1316,11 @@ sendmsg_headers(_SendmsgCommand, _Args, _UUID) ->
     % ),
     [].
 
-% `PlaybackID` is to identify the given playback. Menus, such as greeting, main_menu, etc., are also states, so most of the time this will be the state of the `gen_statem` process. But sometimes it just needs a label that it is a warning etc.
+% `PlaybackName` is to identify the given playback. Menus, such as greeting, main_menu, etc., are also states, so most of the time this will be the state of the `gen_statem` process. But sometimes it just needs a label that it is a warning etc.
 do_sendmsg(
   #{ sendmsg_command := SendmsgCommand
    , arguments       := SendmsgArgs
-   , playback_id     := PlaybackID
+   , playback_name   := PlaybackName
    , event_lock      := IsLocked
    }
 )
@@ -1280,7 +1334,7 @@ when is_list(SendmsgArgs)
     PoorMansUUID =
         erlang:make_ref(),
     ApplicationUUID =
-           stringify(PlaybackID)
+           stringify(PlaybackName)
         ++ "|"
         ++ stringify(PoorMansUUID),
     FinalHeaders =
@@ -1299,7 +1353,7 @@ do_sendmsg(
 ) ->
     % logger:debug(#{ a => ["DO_SENDMSG", #{args => Args}]}),
     do_sendmsg(
-      Args#{ playback_id => not_applicable }
+      Args#{ playback_name => not_applicable }
     ).
 
 sendmsg(
@@ -1323,7 +1377,7 @@ fsend(Msg) ->
     %% https://stackoverflow.com/questions/58981920/
     {lofa, ?FS_NODE} ! Msg.
 
-stop_playback() ->
+stop_playback(#{ playbacks := Playbacks } = Data ) ->
     % logger:debug("stop playback"),
     % TODO Should this  be `bgapi`? Will the  synchronous `api`
     %      call wreak havoc when many users are calling?
@@ -1397,7 +1451,7 @@ comfort_noise(Milliseconds) ->
     sendmsg_locked(
         #{ sendmsg_command => execute
          , arguments       => ["playback", ComfortNoise]
-         , playback_id     => comfort_noise
+         , playback_name   => comfort_noise
          }).
 
 comfort_noise() ->
@@ -1415,7 +1469,11 @@ invalid_selection() ->
 % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
 % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
 % }}-
-play(greeting = State, #{ auth_status := AuthStatus}) -> % {{-
+play(
+  greeting = State,
+  #{ auth_status := AuthStatus
+   } = Data
+) -> % {{-
     % logger:debug("play greeting"),
     Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
     PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
@@ -1433,19 +1491,26 @@ play(greeting = State, #{ auth_status := AuthStatus}) -> % {{-
     LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.",
 
     speak(
-      State,
-      stitch(
-        [ Anchor
-        , Unregistered
-        , PoundOrStar
-        , GoToTutorial
-        , GoToBlindnessServices
-        , LeaveMessage
-        ])
+      #{ playback_name => State
+       , data => Data
+       , text =>
+           stitch(
+             [ Anchor
+             , Unregistered
+             , PoundOrStar
+             , GoToTutorial
+             , GoToBlindnessServices
+             , LeaveMessage
+             ])
+       }
     );
 % }}-
 
-play(main_menu = State, #{ auth_status := AuthStatus }) -> % {{-
+play(
+  main_menu = State,
+  #{ auth_status := AuthStatus
+   } = Data
+) -> % {{-
     Anchor = "Main menu.",
     Zero = "For quick help, press 0.",
     Star = "To go back to he previous menu, press star.",
@@ -1464,23 +1529,26 @@ play(main_menu = State, #{ auth_status := AuthStatus }) -> % {{-
     Three = "To learn about other blindness resources, press 3.",
 
     speak(
-      State,
-      stitch(
-        [ Anchor
-        , Zero
-        , One
-        , Star
-        , Pound
-        , Eight
-        , Five
-        , Two
-        , Three
-        ])
+      #{ playback_name => State
+       , data => Data
+       , text =>
+           stitch(
+             [ Anchor
+             , Zero
+             , One
+             , Star
+             , Pound
+             , Eight
+             , Five
+             , Two
+             , Three
+             ])
+       }
     );
 % }}-
 
 % play({category, Vertex}, _Data) ->
-play({category, CategoryDir} = State, _Data) -> % {{-
+play({category, CategoryDir} = State, Data) -> % {{-
     {category, _, Anchor} =
         get_meta(CategoryDir),
     Zero =
@@ -1495,29 +1563,39 @@ play({category, CategoryDir} = State, _Data) -> % {{-
     % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
 
     speak(
-      State,
-      stitch(
-        [ Anchor
-        , Zero
-        , Star
-        , SubCategories
-        ])
+      #{ playback_name => State
+       , data => Data
+       , text =>
+           stitch(
+             [ Anchor
+             , Zero
+             , Star
+             , SubCategories
+             ])
+       }
      );
 % }}-
 
-play({hangup, demo} = State, _Data) -> % {{-
+play({hangup, demo} = State, Data) -> % {{-
     speak(
-      State,
-      stitch(
-        [ "End of demo session."
-        , sign_up()
-        , "Thank you for trying out the service!"
-        ])
+      #{ playback_name => State
+       , data => Data
+       , text =>
+           stitch(
+             [ "End of demo session."
+             , sign_up()
+             , "Thank you for trying out the service!"
+             ])
+       }
     );
 % }}-
 
-play({hangup, inactivity} = State, _Data) ->
-    speak(State, "Goodbye.").
+play({hangup, inactivity} = State, Data) ->
+    speak(
+      #{ playback_name => State
+       , data => Data
+       , text => "Goodbye."
+       }).
 
 metafile_name() ->
     "meta.erl".
@@ -1556,22 +1634,36 @@ get_subcategories(CategoryDir) ->
     ordsets:from_list(MetaList).
 
 % http://erlang.org/pipermail/erlang-questions/2005-April/015279.html
-extract_playback_id(ApplicationUUID) ->
-    PlaybackIDString =
-        string:sub_word(ApplicationUUID, 1, $|),
-    {ok, Tokens, _Line} =
-        erl_scan:string( PlaybackIDString ++ "." ),
-    {ok, PlaybackID} =
-        erl_parse:parse_term(Tokens),
-    PlaybackID.
+% extract_playback_name(ApplicationUUID) ->
+%     PlaybackIDString =
+%         string:sub_word(ApplicationUUID, 1, $|),
+%     {ok, Tokens, _Line} =
+%         erl_scan:string( PlaybackIDString ++ "." ),
+%     {ok, PlaybackName} =
+%         erl_parse:parse_term(Tokens),
+%     PlaybackName.
 
-speak(PlaybackID, Text) ->
+speak(
+  #{ playback_name := PlaybackName
+   , data := #{ playbacks := Playbacks } = Data
+   , text := Text
+   }
+) ->
     % return the application UUID string.
-    sendmsg_locked(
-        #{ sendmsg_command => execute
-         , arguments       => ["speak", "flite|kal|" ++ Text]
-         , playback_id     => PlaybackID
-         }).
+    ApplicationUUID =
+        sendmsg_locked(
+          #{ sendmsg_command => execute
+           , arguments       => ["speak", "flite|kal|" ++ Text]
+           , playback_name   => PlaybackName
+           }),
+    Playback =
+        #{ playback_name => PlaybackName
+         ,    is_stopped => false
+         },
+    NewPlaybacks =
+        Playbacks#{ ApplicationUUID => Playback },
+
+    Data#{ playbacks := NewPlaybacks }.
 
 stitch([Utterance]) ->
     Utterance;
@@ -1579,8 +1671,8 @@ stitch([Utterance|Rest]) ->
     Utterance ++ " " ++ stitch(Rest).
 %% }}-
 
-push_history(#{ nav_history := History } = Data, State) ->
-    Data#{ nav_history := [State | History] }.
+push_history(#{ menu_history := History } = Data, State) ->
+    Data#{ menu_history := [State | History] }.
 
 % Why not check if history is empty? {{-
 % ====================================================
@@ -1588,9 +1680,9 @@ push_history(#{ nav_history := History } = Data, State) ->
 % UPDATE
 % What is said above still holds, but the root is now [].
 % }}-
-pop_history(#{ nav_history := [PrevState | RestHistory] } = Data) ->
+pop_history(#{ menu_history := [PrevState | RestHistory] } = Data) ->
     { PrevState
-    , Data#{ nav_history := RestHistory }
+    , Data#{ menu_history := RestHistory }
     }.
 
 % Playback keeps going while accepting DTMFs, and each subsequent entry has a pre-set IDT
@@ -1616,11 +1708,15 @@ collect_digits(
     % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
     {keep_state, NewData, [ InterDigitTimer ]}.
 
-warning(WarningPrompt) ->
+warning(WarningPrompt, Data) ->
     logger:debug("SPEAK_WARNING: " ++ WarningPrompt),
     stop_playback(),
     comfort_noise(),
-    speak(warning, WarningPrompt).
+    speak(
+      #{ playback_name => warning
+       , data => Data
+       , text => WarningPrompt
+       }).
 
 % never push history (no point because just replaying menu prompt)
 repeat_menu(
@@ -1633,8 +1729,8 @@ repeat_menu(
     % but calling it multiple times doesn't hurt.
     stop_playback(),
     comfort_noise(),
-    play(Menu, Data),
-    keep_state_and_data.
+    DataWithUpdatedPlaybacks = play(Menu, Data),
+    {keep_state, DataWithUpdatedPlaybacks}.
 
 next_menu(
   #{ menu := NextMenu
@@ -1645,11 +1741,9 @@ next_menu(
 when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
 ->
     logger:debug("NEXT_MENU"),
-    stop_playback(),
-    comfort_noise(),
-    play(NextMenu, Data),
 
-    NewData =
+    % Update menu history (if permitted)
+    DataWithHistoryUpdate =
         case {CurrentState, NextMenu} of
 
             % State changes when history is not updated  with prev
@@ -1676,11 +1770,17 @@ when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
             _ -> push_history(Data, CurrentState)
         end,
 
-    {next_state, NextMenu, NewData}.
+    stop_playback(),
+    comfort_noise(),
+
+    DataWithUpdatedPlaybacksAndHistory =
+        play(NextMenu, DataWithHistoryUpdate),
+
+    {next_state, NextMenu, DataWithUpdatedPlaybacksAndHistory}.
 
 prev_menu(
   #{ current_state := CurrentState
-   , data := #{ nav_history := History } = Data
+   , data := #{ menu_history := History } = Data
    }
 ) ->
     logger:debug("PREV_MENU"),
@@ -1688,8 +1788,10 @@ prev_menu(
         {?CATEGORIES, []} -> % {{-
         % Nowhere to go back to; give warning and repeat
             EmptyHistory = "Nothing in history.",
-            warning(EmptyHistory),
-            keep_state_and_data;
+            DataWithUpdatedPlaybacks =
+                warning(EmptyHistory, Data),
+
+            {keep_state, DataWithUpdatedPlaybacks};
 
         % }}-
         {main_menu, []} -> % {{-
@@ -1706,9 +1808,12 @@ prev_menu(
         _ ->
             stop_playback(),
             comfort_noise(),
-            {PrevState, NewData} = pop_history(Data),
-            play(PrevState, Data),
-            {next_state, PrevState, NewData}
+            {PrevState, DataWithHistoryUpdate} =
+                pop_history(Data),
+            DataWithUpdatedPlaybacksAndHistory =
+                play(PrevState, Data),
+
+            {next_state, PrevState, DataWithUpdatedPlaybacksAndHistory}
     end.
 
 % start,   when call is answered
