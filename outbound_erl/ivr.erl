@@ -12,6 +12,7 @@
     , terminate/3
     , realize/0
     , realize/1
+    , add_recordings/2
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
@@ -531,15 +532,6 @@ handle_event(
     % DTMF tones are divided into two categories: category selectors, and single digit instant actions. Category selectors have interdigit timeout (that may be configurable), whereas single digits instant actions immediately respond by changing state, performing a command, etc.
     % Another difference is that category selectors only change state once the `interdigit_timer` expires, hence they will keep the state as is in this clause, but single digit instant actions do whatever necessary to move on (stop playback, change state, etc.).
     % }}-
-
-    % DigitIsOneToNine =
-    %     case string:find("123456789", Digit) of
-    %         nomatch ->
-    %             false;
-    %         _ ->
-    %             true
-    %     end,
-
     % {{- {{-
     % When `idt_running` is true, it means we are collecting digits for category selection. So when IDT is not running and 0 comes in, then go to main menu, but when IDT is running, then add it to `ReceivedDigits`, renew IDT, and keep collecting. Another example is when IDT is not running, and * (star) and # (pound) arrives, go back or go to next category respectively, but when IDT is running, then ignore these inputs and renew IDT, and keep collecting.
 
@@ -707,7 +699,15 @@ handle_event(
                });
 
         % }}-
-        % 4             => UNASSIGNED (see last case clause)
+        % 4         {{- => UNASSIGNED (keep state and data)
+        % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
+        #{                state := main_menu = State
+         ,       received_digit := "4"
+         ,    collecting_digits := false
+         } ->
+            keep_state_and_data;
+
+        % }}-
         % 5         {{- => settings
         #{                state := main_menu = State
          ,       received_digit := "5"
@@ -720,8 +720,25 @@ handle_event(
                });
 
         % }}-
-        % 6             => UNASSIGNED (see last case clause)
-        % 7             => UNASSIGNED (see last case clause)
+        % 6         {{- => UNASSIGNED (keep state and data)
+        % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
+        #{                state := main_menu = State
+         ,       received_digit := "6"
+         ,    collecting_digits := false
+         } ->
+            keep_state_and_data;
+
+        % }}-
+        % TODO "previous category"
+        % 7         {{- => UNASSIGNED (keep state and data)
+        % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
+        #{                state := main_menu = State
+         ,       received_digit := "7"
+         ,    collecting_digits := false
+         } ->
+            keep_state_and_data;
+
+        % }}-
         % 8         {{- => ?CATEGORIES
         #{                state := main_menu = State
          ,       received_digit := "8"
@@ -734,7 +751,16 @@ handle_event(
                });
 
         % }}-
-        % 9             => UNASSIGNED (see last case clause)
+        % TODO "next category"
+        % 9         {{- => UNASSIGNED (keep state and data)
+        % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
+        #{                state := main_menu = State
+         ,       received_digit := "9"
+         ,    collecting_digits := false
+         } ->
+            keep_state_and_data;
+
+        % }}-
 
         % === CATEGORIES (i.e., `{category, [..]}`)
         % * (star)  {{- => Go back (previous menu) OR ignore
@@ -765,11 +791,34 @@ handle_event(
         %   See COLLECT DIGITS case clause at the end.
         % }}-
 
+        % === PUBLICATIONS
+        % [1-9] when playing an article
+        #{                state := {publication, _, _} = State
+         ,       received_digit := "0"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => main_menu
+               , data => Data
+               , current_state => State
+               });
+
         % === PLAY ARTICLE
-        % [1-9] when playing an article % TODO NEXT
+        % [1-9] when playing an article
+        #{                state := {article, _} = State
+         ,       received_digit := "0"
+         ,    collecting_digits := false
+         } ->
+            next_menu(
+              #{ menu => main_menu
+               , data => Data
+               , current_state => State
+               });
 
         % === COLLECT DIGITS
-        % [1-9] in any state  {{- => Start collecting digits
+        % [1-9] in any state AKA start collecting digits
+        % (except for `main_menu`, `{publication, _, _}`, and `article`) {{-
+        % NOTE Most of the guards are unnecessary (as previous clauses have already handled them), and are only here to make this clause explicit. TODO HOWEVER, they may be removed, because all possibilities are explicitly spelled out for each state (so hitting the unassigned 4 in main_menu shouldn't end up here to start collecting digits), and couldn't put the compound states (article & publication) in the guards as they are tuples, guards cannot be nested.
         #{ state := State
          , received_digit := Digit
         % Not checking whether we are collecting digits, because {{-
@@ -778,13 +827,12 @@ handle_event(
         %, collecting_digits := true
          }
         % These states never collect digits and so [1-9] are instant actions without any IDTs. Listing them here is unecessary, as these digits within these states are called in previous clauses, but doing so makes it nice and explicit.
-        when State =/= article,
-             State =/= main_menu,
+        % when State =/= main_menu,
 
-             % Only take digits in the [1-9] range
-             Digit =/= "0",
-             Digit =/= "*",
-             Digit =/= "#"
+        %      % Only take digits in the [1-9] range
+        %      Digit =/= "0",
+        %      Digit =/= "*",
+        %      Digit =/= "#"
         ->
             collect_digits(Data, Digit);
 
@@ -801,7 +849,7 @@ handle_event(
             collect_digits(Data, "0");
 
         % }}-
-        % * (star) and # (pound) in any state when collecting digits, and not in `greeting` {{-
+        % * (star) and # (pound) in any state when collecting digits (except `greeting`) {{-
         % Ignore (i.e., add empty string, will be flattened during eval anyway), but renew `interdigit_timer`
         % When a user presses them accidentally when signing in,
         % or when selecting the category, it will get filtered
@@ -839,11 +887,11 @@ handle_event(
             collect_digits(Data, "");
         % }}-
 
+        % TODO Nothing should ever end up here, so remove once the basics are done
+        % EXCEPT when adding a new state, and forgot to add a clause here to deal with DTMF input (e.g., to ignore them completely, such as with "collect_digits")
         UnhandledDigit ->
-            % logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit]}),
+            logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit]}),
             keep_state_and_data
-
-        %% TODO When greeting stops (`PLAYBACK_STOP` is received) jump to `?CATEGORIES`.
     end;
 
     %% (Why `keep_state`)FALSE and no inserted events? {{- {{-
@@ -951,7 +999,7 @@ handle_event(
          }
         ->
     logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, warning, false} }),
-            comfort_noise(2000),
+            % comfort_noise(2000),
             repeat_menu(
                 #{ menu => State
                  , data => NewData
@@ -978,7 +1026,7 @@ handle_event(
         when State =:= PlaybackName
         ->
     logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName, false} }),
-            comfort_noise(2000),
+            % comfort_noise(2000),
             repeat_menu(
                 #{ menu => State
                  , data => NewData
@@ -995,7 +1043,9 @@ handle_event(
         #{ is_stopped := false }
         when State =/= PlaybackName ->
     logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
-            crash
+            % BUT this clause may be a possibility when adding `collect_digits` state - user hits [1-9] to start collection in eligible states, the playback is running, user has two seconds the enter the next digit, AND the edge case happens: the playback stops naturally, and we are in another state
+            % WHAT TO DO? probably just ignore (i.e., {keep_state, NewData}) because the interdigit_timer will time out in a second, triggering evaluation of collected digits, so depending on the outcome there will be a warning, go back to the previous menu, or go forth to the selected one etc.
+            crash_because_you_are_an_idiot
     end;
 
         % % `greeting` stopped (for whatever reason; no loop anyway) {{-
@@ -1200,7 +1250,27 @@ handle_event(
     end.
 %% }}-
 
-eval_collected_digits([_|_] = ReceivedDigits, State) ->
+% TODO Eval on 2 digits immediately to speed up things
+collect_digits( % {{-
+  #{recvd_digits := ReceivedDigits} = Data,
+  Digit % string
+) ->
+    NewData =
+        Data#{recvd_digits := ReceivedDigits ++ Digit},
+    % The notion is that the `InterDigitTimer` is restarted whenever {{-
+    % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
+    % }}-
+    % TODO Does timer cancellation produce an event?
+    InterDigitTimer =                 % Generic timeout
+        { {timeout, interdigit_timer} % { {timeout, Name}
+        , ?INTERDIGIT_TIMEOUT         % , Time
+        , eval_collected_digits       % , EventContent }
+        },
+    % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
+    {keep_state, NewData, [ InterDigitTimer ]}.
+% }}-
+
+eval_collected_digits([_|_] = ReceivedDigits, State) -> % {{-
     CurrentCategoryDir =
         case State of
             greeting ->
@@ -1208,20 +1278,23 @@ eval_collected_digits([_|_] = ReceivedDigits, State) ->
 
             {category, CategoryDir} ->
                 CategoryDir
+
+            % Not checking for {publication, _, _} because digit collection is disallowed there
         end,
 
-    SelectedCategoryDir =
+    SelectionDir =
         filename:join(
           CurrentCategoryDir,
           ReceivedDigits
         ),
 
-    case filelib:is_dir(SelectedCategoryDir) of
+    case filelib:is_dir(SelectionDir) of
         false ->
             invalid;
         true ->
-            {category, SelectedCategoryDir}
+            {category, SelectionDir}
     end.
+% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions %%
@@ -1388,7 +1461,7 @@ stop_playback(#{ playbacks := [] } = Data) ->
 
 % Stop the currently playing prompt
 % (but just in case, end everything, even though only one should be playing only)
-stop_playback(
+stop_playback( % {{-
   #{ playbacks :=
      [ { ApplicationUUID % |
        , PlaybackName    % | currently playing
@@ -1403,6 +1476,7 @@ stop_playback(
     %      call wreak havoc when many users are calling?
     fsend({api, uuid_break, get(uuid) ++ " all"}),
     Data#{ playbacks := [{ApplicationUUID, PlaybackName, true}|Rest] };
+% }}-
 
 % Nothing is playing and the most recent playback has been stopped before.
 % For example, ?CATEGORIES is playing, "*" is sent when nothing is in history, `warning/?` stops playback, warning starts playing, ends naturally, so HANDLE_CHANNEL_EXECUTE_COMPLETE get clears {warning, false}, and calls that scenario in its `case`, which is `repeat/?`, that also has a `stop_playback/1`, and the most recent playback is the stopped ?CATEGORIES. Subsequent HANDLE_CHANNEL_EXECUTE_COMPLETE clauses will clear out these entries. (or should...)
@@ -1469,7 +1543,7 @@ stop_playback(#{ playbacks := [{_, _, true}|_] } = Data) ->
 %         Data#{playback_ids := NewPlaybackIDs }.
 % }}-
 
-comfort_noise(Milliseconds) ->
+comfort_noise(Milliseconds) -> % {{-
     % logger:debug("play comfort noise"),
     ComfortNoise =
            "silence_stream://"
@@ -1480,6 +1554,7 @@ comfort_noise(Milliseconds) ->
          , arguments       => ["playback", ComfortNoise]
          , playback_name   => comfort_noise
          }).
+% }}-
 
 comfort_noise() ->
     comfort_noise(750).
@@ -1584,7 +1659,7 @@ play({category, CategoryDir} = State, Data) -> % {{-
         "To go back to he previous menu, press star.",
     SubCategories =
         stitch(
-          get_subcategories(CategoryDir)
+          list_category_entries(CategoryDir)
         ),
     % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
     % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
@@ -1617,17 +1692,18 @@ play({hangup, demo} = State, Data) -> % {{-
     );
 % }}-
 
-play({hangup, inactivity} = State, Data) ->
+play({hangup, inactivity} = State, Data) -> % {{-
     speak(
       #{ playback_name => State
        , data => Data
        , text => "Goodbye."
        }).
+% }}-
 
 metafile_name() ->
     "meta.erl".
 
-get_meta(CategoryDir) ->
+get_meta(CategoryDir) -> % {{-
     MetaPath =
         filename:join(
           CategoryDir,
@@ -1636,8 +1712,9 @@ get_meta(CategoryDir) ->
     {ok, Meta} =
         file:script(MetaPath),
     Meta.
+% }}-
 
-get_subcategories(CategoryDir) ->
+list_category_entries(CategoryDir) -> % {{-
     { ok
     , SubCategoryDirectories
     } =
@@ -1659,6 +1736,7 @@ get_subcategories(CategoryDir) ->
           SubCategoryDirectories -- [metafile_name()]
         ),
     ordsets:from_list(MetaList).
+% }}-
 
 % http://erlang.org/pipermail/erlang-questions/2005-April/015279.html
 % extract_playback_name(ApplicationUUID) ->
@@ -1670,7 +1748,7 @@ get_subcategories(CategoryDir) ->
 %         erl_parse:parse_term(Tokens),
 %     PlaybackName.
 
-speak(
+speak( % {{-
   #{ playback_name := PlaybackName
    , data := #{ playbacks := Playbacks } = Data
    , text := Text
@@ -1696,6 +1774,7 @@ speak(
         % Playbacks#{ ApplicationUUID => Playback },
 
     Data#{ playbacks := NewPlaybacks }.
+% }}-
 
 stitch([Utterance]) ->
     Utterance;
@@ -1703,6 +1782,7 @@ stitch([Utterance|Rest]) ->
     Utterance ++ " " ++ stitch(Rest).
 %% }}-
 
+%% Push/pop history {{-
 push_history(#{ menu_history := History } = Data, State) ->
     Data#{ menu_history := [State | History] }.
 
@@ -1716,31 +1796,14 @@ pop_history(#{ menu_history := [PrevState | RestHistory] } = Data) ->
     { PrevState
     , Data#{ menu_history := RestHistory }
     }.
+% }}-
 
 % Playback keeps going while accepting DTMFs, and each subsequent entry has a pre-set IDT
 % 1-9 trigger collection (all states except some, see HANDLE_DTMF_FOR_ALL_STATES)
 % *, 0, # are single digit instant actions
 % (TODO make users able to set it)
 
-collect_digits(
-  #{recvd_digits := ReceivedDigits} = Data,
-  Digit % string
-) ->
-    NewData =
-        Data#{recvd_digits := ReceivedDigits ++ Digit},
-    % The notion is that the `InterDigitTimer` is restarted whenever {{-
-    % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
-    % }}-
-    % TODO Does timer cancellation produce an event?
-    InterDigitTimer =                 % Generic timeout
-        { {timeout, interdigit_timer} % { {timeout, Name}
-        , ?INTERDIGIT_TIMEOUT         % , Time
-        , eval_collected_digits       % , EventContent }
-        },
-    % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
-    {keep_state, NewData, [ InterDigitTimer ]}.
-
-warning(WarningPrompt, Data) ->
+warning(WarningPrompt, Data) -> % {{-
     logger:debug("SPEAK_WARNING: " ++ WarningPrompt),
     NewData = stop_playback(Data),
     comfort_noise(),
@@ -1749,9 +1812,10 @@ warning(WarningPrompt, Data) ->
        , data => NewData
        , text => WarningPrompt
        }).
+% }}-
 
 % never push history (no point because just replaying menu prompt)
-repeat_menu(
+repeat_menu( % {{-
   #{ menu := Menu
    , data := Data
    }
@@ -1763,8 +1827,9 @@ repeat_menu(
     comfort_noise(),
     NewDataPP = play(Menu, NewDataP),
     {keep_state, NewDataPP}.
+% }}-
 
-next_menu(
+next_menu( % {{-
   #{ menu := NextMenu
    , data := Data
    , current_state := CurrentState
@@ -1778,6 +1843,7 @@ when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
     NewDataH =
         case {CurrentState, NextMenu} of
 
+            % TODO re-write so that always pushing history; more straightforward, plus extra debug info. mark states that shouldn't be revisited by user via *
             % State changes when history is not updated  with prev
             % state (corner cases)
             % ====================================================
@@ -1805,12 +1871,14 @@ when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
     NewDataHP = stop_playback(NewDataH),
     comfort_noise(),
 
+    % TODO put play/2 in CEC
     NewDataHPP =
         play(NextMenu, NewDataHP),
 
     {next_state, NextMenu, NewDataHPP}.
+% }}-
 
-prev_menu(
+prev_menu( % {{-
   #{ current_state := CurrentState
    , data := #{ menu_history := History } = Data
    }
@@ -1842,16 +1910,18 @@ prev_menu(
             comfort_noise(),
             {PrevState, NewDataPH} =
                 pop_history(NewDataP),
+            % TODO put play/2 in CEC (solves CD warning prev)
             NewDataPHP =
                 play(PrevState, NewDataPH),
 
             {next_state, PrevState, NewDataPHP}
     end.
+% }}-
 
 % start,   when call is answered
 % restart, when a DTMF signal comes in
 % NOTE: impossible to time out while collecting digits, because a DTMF signal restarts the timers, and the interdigit timeout is a couple seconds
-re_start_inactivity_timer(State) ->
+re_start_inactivity_timer(State) -> % {{-
 
     timer:cancel( get(inactivity_warning) ),
     timer:cancel( get(inactivity_hangup ) ),
@@ -1876,8 +1946,9 @@ re_start_inactivity_timer(State) ->
 
     put(inactivity_warning, IWref),
     put(inactivity_hangup,  ITref).
+% }}-
 
-publication_guide() ->
+publication_guide() -> % {{-
     [ { {category, 1, "Store sales advertising"}
       , [ { {category, 1, "Grocery stores"}
           , [ {publication, 1, "Safeway"}
@@ -1968,11 +2039,32 @@ publication_guide() ->
         ]
       }
     ].
+% }}-
+
+write_meta_file({_, _, _} = Category, Dir) -> % {{-
+    MetaFilePath =
+        filename:join(Dir, metafile_name()),
+    file:write_file(
+      MetaFilePath,
+      stringify(Category) ++ "."
+    ),
+    Dir.
+% }}-
+
+make_dir_and_meta_file({_, N, _} = Category, Path) -> % {{-
+    Dir =
+        filename:join(
+          Path,
+          integer_to_list(N)
+        ),
+    file:make_dir(Dir),
+    write_meta_file(Category, Dir).
+% }}-
 
 realize() ->
     realize(?CONTENT_ROOT).
 
-realize(ContentRoot) ->
+realize(ContentRoot) -> % {{-
     case file:make_dir(ContentRoot) of
         ok ->
             write_meta_file(
@@ -1983,26 +2075,9 @@ realize(ContentRoot) ->
         {error, _} = Error ->
             Error
     end.
+% }}-
 
-write_meta_file({_, _, _} = Category, Dir) ->
-    MetaFilePath =
-        filename:join(Dir, metafile_name()),
-    file:write_file(
-      MetaFilePath,
-      stringify(Category) ++ "."
-    ),
-    Dir.
-
-make_dir_and_meta_file({_, N, _} = Category, Path) ->
-    Dir =
-        filename:join(
-          Path,
-          integer_to_list(N)
-        ),
-    file:make_dir(Dir),
-    write_meta_file(Category, Dir).
-
-realize(
+realize( % {{-
   [ { {category, _, _} = Category
     , [_|_] = SubCategories
     }
@@ -2016,6 +2091,7 @@ realize(
 
     realize(SubCategories, NewPath),
     realize(Rest, Path);
+% }}-
 
 realize([], _Path) ->
     done;
@@ -2024,7 +2100,29 @@ realize([{publication, _, _} = Publication | Rest], Path) ->
     make_dir_and_meta_file(Publication, Path),
     realize(Rest, Path).
 
-% realize([{publication, _, _} = Category|Rest]) ->
+add_recordings(FromDir, ToDir) -> % {{-
+    {ok, FileList} =
+        file:list_dir(FromDir),
+    MoveAndRenameFile =
+        fun (File) ->
+            FromPath =
+                filename:join(FromDir, File),
+            NewBaseFileName =
+                integer_to_list(os:system_time()),
+            OldFileExt =
+                filename:extension(File),
+            ToPath =
+                filename:join(
+                  ToDir,
+                  NewBaseFileName ++ OldFileExt
+                ),
+            file:copy(FromPath, ToPath)
+        end,
+    lists:foreach(
+      MoveAndRenameFile,
+      FileList
+    ).
+% }}-
 
 stringify(Term) ->
     R = io_lib:format("~p",[Term]),
