@@ -110,17 +110,19 @@ init(_Args) -> % {{-
 % }}-
 
 callback_mode() ->
-    % [handle_event_function, state_enter].
-    handle_event_function.
+    [handle_event_function, state_enter].
+    % handle_event_function.
 
 terminate(Reason, State, Data) ->
     logger:debug(#{ self() => ["TERMINATE (normal-ish)", #{ data => Data, reason => Reason, state => State }]}).
      % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
      % filog:remove_process_handler(?MODULE).
 
-% handle_event(enter, OldState, State, Data) ->
-%     NewData = Data#{ prev_state := OldState },
-%     {keep_state, Data};
+handle_event(enter, OldState, State, Data) ->
+    % NewData = Data#{ prev_state := OldState },
+    NewData =
+        push_history(Data, OldState),
+    {keep_state, NewData};
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% `info` clauses (for FreeSWITCH events) %%
@@ -1793,7 +1795,17 @@ stitch([Utterance|Rest]) ->
 %% }}-
 
 %% Push/pop history {{-
+push_history(Data, State)
+when State =:= incoming_call;
+     State =:= greeting;
+     State =:= main_menu;
+     State =:= collect_digits;
+     State =:= warning
+->
+    push_history(Data, {skip, State});
+
 push_history(#{ menu_history := History } = Data, State) ->
+    logger:debug(#{ self() => ["PUSH_HISTORY", {history, History}, {state, State}]}),
     Data#{ menu_history := [State | History] }.
 
 % Why not check if history is empty? {{-
@@ -1802,7 +1814,16 @@ push_history(#{ menu_history := History } = Data, State) ->
 % UPDATE
 % What is said above still holds, but the root is now [].
 % }}-
+pop_history(#{ menu_history := [] } = Data) ->
+    { ?CATEGORIES
+    , Data
+    };
+
+pop_history(#{ menu_history := [{skip, _} | RestHistory] } = Data) ->
+    pop_history(Data#{ menu_history := RestHistory });
+
 pop_history(#{ menu_history := [PrevState | RestHistory] } = Data) ->
+    logger:debug(#{ self() => ["POP_HISTORY", {history, [PrevState|RestHistory]}]}),
     { PrevState
     , Data#{ menu_history := RestHistory }
     }.
@@ -1839,93 +1860,97 @@ repeat_menu( % {{-
     {keep_state, NewDataPP}.
 % }}-
 
-next_menu( % {{-
-  #{ menu := NextMenu
-   , data := Data
-   , current_state := CurrentState
-   }
-)
-when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
-->
+next_menu(NextMenu, Data) ->  % {{-
+  % #{ menu := NextMenu
+  %  , data := Data
+  %  , current_state := CurrentState
+  %  }
+% )
+% when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
+% ->
     logger:debug("NEXT_MENU"),
 
     % Update menu history (if permitted)
-    NewDataH =
-        case {CurrentState, NextMenu} of
+    % NewDataH =
+    %     push_history(Data, CurrentState),
+        % case {CurrentState, NextMenu} of {{-
 
-            % TODO re-write so that always pushing history; more straightforward, plus extra debug info. mark states that shouldn't be revisited by user via *
-            % State changes when history is not updated  with prev
-            % state (corner cases)
-            % ====================================================
-            % NOTE: This is adding behaviour to `next_menu/1`, which {{-
-            % I do not like, but these are the only cases when history is not pushed (so far). Another advantage is that all corner cases are listed in one place.
-            % }}-
-            % NOTE: `main_menu` -> `?CATEGORIES` {{-
-            % Go to `?CATEGORIES` from `main_menu` (only forward option from `main_menu`), but do not add `main_menu` to history
-            % NOTE Currently it is possible to accumulate `?CATEGORIES` in history by going to `main_menu` and forward to `?CATEGORIES`, as it will add `?CATEGORIES` each time but leaving it as is
-            % }}-
-            {main_menu, ?CATEGORIES}  -> Data;
-            % {{-
-            %   + `greeting` -> `?CATEGORIES` (i.e., when pressing * or #  in `greeting` or playback stops)
-                % No `next_menu/1` here to keep the history empty so that `greeting` cannot be revisited, making `?CATEGORIES` the root. Whatever navigations happen there
-                % Why not keep state? Reminder: 0# (not very relevant in this particular case, but keeping state changes consistent makes it easier to think about each `handle_event/4` clause. Read note at the very end of HANDLE_DTMF_FOR_ALL_STATES `handle_event/4` clause)
-            % }}-
-            {greeting, ?CATEGORIES}   -> Data;
-            {greeting, main_menu}     -> Data;
-            {incoming_call, greeting} -> Data;
+        %     % TODO re-write so that always pushing history; more straightforward, plus extra debug info. mark states that shouldn't be revisited by user via *
+        %     % State changes when history is not updated  with prev
+        %     % state (corner cases)
+        %     % ====================================================
+        %     % NOTE: This is adding behaviour to `next_menu/1`, which {{-
+        %     % I do not like, but these are the only cases when history is not pushed (so far). Another advantage is that all corner cases are listed in one place.
+        %     % }}-
+        %     % NOTE: `main_menu` -> `?CATEGORIES` {{-
+        %     % Go to `?CATEGORIES` from `main_menu` (only forward option from `main_menu`), but do not add `main_menu` to history
+        %     % NOTE Currently it is possible to accumulate `?CATEGORIES` in history by going to `main_menu` and forward to `?CATEGORIES`, as it will add `?CATEGORIES` each time but leaving it as is
+        %     % }}-
+        %     {main_menu, ?CATEGORIES}  -> Data;
+        %     % {{-
+        %     %   + `greeting` -> `?CATEGORIES` (i.e., when pressing * or #  in `greeting` or playback stops)
+        %         % No `next_menu/1` here to keep the history empty so that `greeting` cannot be revisited, making `?CATEGORIES` the root. Whatever navigations happen there
+        %         % Why not keep state? Reminder: 0# (not very relevant in this particular case, but keeping state changes consistent makes it easier to think about each `handle_event/4` clause. Read note at the very end of HANDLE_DTMF_FOR_ALL_STATES `handle_event/4` clause)
+        %     % }}-
+        %     {greeting, ?CATEGORIES}   -> Data;
+        %     {greeting, main_menu}     -> Data;
+        %     {incoming_call, greeting} -> Data;
 
-            % On any other state change
-            _ -> push_history(Data, CurrentState)
-        end,
+        %     % On any other state change
+        %     _ -> push_history(Data, CurrentState)
+        % end,
+    % }}-
 
-    NewDataHP = stop_playback(NewDataH),
+    NewDataP = stop_playback(Data),
     comfort_noise(),
 
     % TODO put play/2 in CEC
-    NewDataHPP =
-        play(NextMenu, NewDataHP),
+    NewDataPP =
+        play(NextMenu, NewDataP),
 
-    {next_state, NextMenu, NewDataHPP}.
+    {next_state, NextMenu, NewDataPP}.
 % }}-
 
-prev_menu( % {{-
-  #{ current_state := CurrentState
-   , data := #{ menu_history := History } = Data
-   }
-) ->
+prev_menu(#{ menu_history := History } = Data) -> % {{-
+  % #{ current_state := CurrentState
+  %  , data := #{ menu_history := History } = Data
+  %  }
+% ) ->
     logger:debug("PREV_MENU"),
-    case {CurrentState, History} of
-        {?CATEGORIES, []} -> % {{-
-        % Nowhere to go back to; give warning and repeat
-            EmptyHistory = "Nothing in history.",
-            NewDataP =
-                warning(EmptyHistory, Data),
+    % case {CurrentState, History} of {{-
+    %     {?CATEGORIES, []} -> % {{-
+    %     % Nowhere to go back to; give warning and repeat
+    %         EmptyHistory = "Nothing in history.",
+    %         NewDataP =
+    %             warning(EmptyHistory, Data),
 
-            {keep_state, NewDataP};
+    %         {keep_state, NewDataP};
 
-        % }}-
-        {main_menu, []} -> % {{-
-        % The only  way this is  (or should be)  possible when
-        % coming to `main_menu` from `greeting` (`greeting` is
-        % not pushed  to history  during that  transition; see
-        % `next_menu/1`).
-            next_menu(
-              #{ menu => ?CATEGORIES
-               , data => Data
-               , current_state => main_menu
-               });
-        % }}-
-        _ ->
-            NewDataP = stop_playback(Data),
-            comfort_noise(),
-            {PrevState, NewDataPH} =
-                pop_history(NewDataP),
-            % TODO put play/2 in CEC (solves CD warning prev)
-            NewDataPHP =
-                play(PrevState, NewDataPH),
+    %     % }}-
+    %     {main_menu, []} -> % {{-
+    %     % The only  way this is  (or should be)  possible when
+    %     % coming to `main_menu` from `greeting` (`greeting` is
+    %     % not pushed  to history  during that  transition; see
+    %     % `next_menu/1`).
+    %         next_menu(
+    %           #{ menu => ?CATEGORIES
+    %            , data => Data
+    %            , current_state => main_menu
+    %            });
+    %     % }}-
+    %     _ ->
+    % }}-
 
-            {next_state, PrevState, NewDataPHP}
-    end.
+    NewDataP = stop_playback(Data),
+    comfort_noise(),
+    {PrevState, NewDataPH} =
+        pop_history(NewDataP),
+    % TODO put play/2 in CEC (solves CD warning prev)
+    NewDataPHP =
+        play(PrevState, NewDataPH),
+
+    {next_state, PrevState, NewDataPHP}.
+    % end.
 % }}-
 
 % start,   when call is answered
