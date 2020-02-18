@@ -2128,6 +2128,9 @@ stringify(Term) ->
     R = io_lib:format("~p",[Term]),
     lists:flatten(R).
 
+%    }}-
+% }}-
+
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
 % vim: set nowrap:
