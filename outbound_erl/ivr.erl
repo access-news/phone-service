@@ -13,6 +13,7 @@
     , realize/0
     , realize/1
     , add_recordings/2
+    , publication_guide/0
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
@@ -508,7 +509,8 @@ handle_event(
   },                           % /
   State,
    % if `ReceivedDigits =/= []`, we are collecting digits
-  #{ recvd_digits := ReceivedDigits
+  #{
+      recvd_digits := ReceivedDigits
    ,  auth_status := AuthStatus
    ,  menu_history := History
    } = Data
@@ -569,11 +571,20 @@ handle_event(
 
     % }}- }}-
 
+    % Only needed for COLLECT DIGITS case clause's guards
+    RootState =
+        case is_tuple(State) of
+            false ->
+                State;
+            true ->
+                element(1, State)
+        end,
+
     case
         #{                state => State
          ,       received_digit => Digit
          % `ReceivedDigits` emptied after eval on `interdigit_timer` timeout
-         ,    collecting_digits => ReceivedDigits =/= []
+         % ,    collecting_digits => ReceivedDigits =/= []
          }
     of
         % TODO # has no function (except greeting, main_menu, article)
@@ -584,7 +595,7 @@ handle_event(
         % * (star)   {{- => ?CATEGORIES
         #{                state := greeting = State
          ,       received_digit := "*"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => ?CATEGORIES
@@ -596,7 +607,7 @@ handle_event(
         % # (pound)  {{- => ?CATEGORIES
         #{                state := greeting = State
          ,       received_digit := "#"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => ?CATEGORIES
@@ -608,7 +619,7 @@ handle_event(
         % 0          {{- => main_menu
         #{                state := greeting = State
          ,       received_digit := "0"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => main_menu
@@ -625,7 +636,7 @@ handle_event(
         % * (star)  {{- <- Go back (previous menu)
         #{                state := main_menu = State
          ,       received_digit := "*"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             prev_menu(
               #{ current_state => State
@@ -636,7 +647,7 @@ handle_event(
         % # (pound) {{- => Log in / Favorites (depending on AuthStatus)
         #{                state := main_menu = State
          ,       received_digit := "#"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             NextMenu =
                 case AuthStatus of
@@ -654,7 +665,7 @@ handle_event(
         % 0         {{- => quick_help
         #{                state := main_menu = State
          ,       received_digit := "0"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => quick_help
@@ -666,7 +677,7 @@ handle_event(
         % 1         {{- => tutorial
         #{                state := main_menu = State
          ,       received_digit := "1"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => tutorial
@@ -678,7 +689,7 @@ handle_event(
         % 2         {{- => leave_message
         #{                state := main_menu = State
          ,       received_digit := "2"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => leave_menu
@@ -690,7 +701,7 @@ handle_event(
         % 3         {{- => blindness_services
         #{                state := main_menu = State
          ,       received_digit := "3"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => blindness_services
@@ -703,7 +714,7 @@ handle_event(
         % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
         #{                state := main_menu = State
          ,       received_digit := "4"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             keep_state_and_data;
 
@@ -711,7 +722,7 @@ handle_event(
         % 5         {{- => settings
         #{                state := main_menu = State
          ,       received_digit := "5"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => settings
@@ -724,7 +735,7 @@ handle_event(
         % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
         #{                state := main_menu = State
          ,       received_digit := "6"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             keep_state_and_data;
 
@@ -734,7 +745,7 @@ handle_event(
         % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
         #{                state := main_menu = State
          ,       received_digit := "7"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             keep_state_and_data;
 
@@ -742,7 +753,7 @@ handle_event(
         % 8         {{- => ?CATEGORIES
         #{                state := main_menu = State
          ,       received_digit := "8"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => ?CATEGORIES
@@ -756,7 +767,7 @@ handle_event(
         % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
         #{                state := main_menu = State
          ,       received_digit := "9"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             keep_state_and_data;
 
@@ -766,7 +777,7 @@ handle_event(
         % * (star)  {{- => Go back (previous menu) OR ignore
         #{                state := {category, _} = State
          ,       received_digit := "*"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             prev_menu(
               #{ current_state => State
@@ -778,7 +789,7 @@ handle_event(
         % 0         {{- => main_menu
         #{                state := {category, _} = State
          ,       received_digit := "0"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => main_menu
@@ -795,7 +806,7 @@ handle_event(
         % [1-9] when playing an article
         #{                state := {publication, _, _} = State
          ,       received_digit := "0"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => main_menu
@@ -807,7 +818,7 @@ handle_event(
         % [1-9] when playing an article
         #{                state := {article, _} = State
          ,       received_digit := "0"
-         ,    collecting_digits := false
+         % ,    collecting_digits := false
          } ->
             next_menu(
               #{ menu => main_menu
@@ -819,29 +830,30 @@ handle_event(
         % [1-9] in any state AKA start collecting digits
         % (except for `main_menu`, `{publication, _, _}`, and `article`) {{-
         % NOTE Most of the guards are unnecessary (as previous clauses have already handled them), and are only here to make this clause explicit. TODO HOWEVER, they may be removed, because all possibilities are explicitly spelled out for each state (so hitting the unassigned 4 in main_menu shouldn't end up here to start collecting digits), and couldn't put the compound states (article & publication) in the guards as they are tuples, guards cannot be nested.
-        #{ state := State
-         , received_digit := Digit
         % Not checking whether we are collecting digits, because {{-
         % this clause should be executed either way when digits 1 to 9 are pressed any time; if false, it means we are starting a new collection, and if true, we should keep collecting until the `interdigit_timer` times out (when the collected digits get evaluated).
         % }}-
-        %, collecting_digits := true
+        #{
+                    state := _State
+         , received_digit := Digit
          }
         % These states never collect digits and so [1-9] are instant actions without any IDTs. Listing them here is unecessary, as these digits within these states are called in previous clauses, but doing so makes it nice and explicit.
-        % when State =/= main_menu,
+        when
+            RootState =/= main_menu,
+            RootState =/= publication,
+            RootState =/= article,
 
         %      % Only take digits in the [1-9] range
-        %      Digit =/= "0",
-        %      Digit =/= "*",
-        %      Digit =/= "#"
+             Digit =/= "0",
+             Digit =/= "*",
+             Digit =/= "#"
         ->
             collect_digits(Data, Digit);
 
         % }}-
         % 0 in any state when collecting digits {{-
-        #{                state := _State
+        #{                state := collect_digits
          ,       received_digit := "0"
-         ,    collecting_digits := true
-         % , digit_is_one_to_nine := false % not necessary, but explicit
          }
         ->
             % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
@@ -854,10 +866,8 @@ handle_event(
         % When a user presses them accidentally when signing in,
         % or when selecting the category, it will get filtered
         % out.
-        #{                state := _State
+        #{                state := collect_digits
          ,       received_digit := Digit
-         ,    collecting_digits := true
-         % , digit_is_one_to_nine := false % not necessary, but explicit
          }
         when Digit =:= "*";
              Digit =:= "#"
@@ -890,7 +900,7 @@ handle_event(
         % TODO Nothing should ever end up here, so remove once the basics are done
         % EXCEPT when adding a new state, and forgot to add a clause here to deal with DTMF input (e.g., to ignore them completely, such as with "collect_digits")
         UnhandledDigit ->
-            logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit]}),
+            logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit, {state, State}]}),
             keep_state_and_data
     end;
 
@@ -1267,7 +1277,7 @@ collect_digits( % {{-
         , eval_collected_digits       % , EventContent }
         },
     % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
-    {keep_state, NewData, [ InterDigitTimer ]}.
+    {next_state, collect_digits, NewData, [ InterDigitTimer ]}.
 % }}-
 
 eval_collected_digits([_|_] = ReceivedDigits, State) -> % {{-
@@ -1947,6 +1957,15 @@ re_start_inactivity_timer(State) -> % {{-
     put(inactivity_warning, IWref),
     put(inactivity_hangup,  ITref).
 % }}-
+
+% TODO put in another module {{-
+% Section I is to abstract away the details to access Access News media content and navigation (e.g., show next/previous category/article, list category/publication).
+% Section II is there because the Access News web service is not yet ready, and so the content will be served locally at first. Section I hides these and any future implementation details.
+
+% I. Content-access abstraction {{-
+
+% }}-
+% II. Access News web service model {{-
 
 publication_guide() -> % {{-
     [ { {category, 1, "Store sales advertising"}
