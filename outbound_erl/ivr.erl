@@ -119,10 +119,35 @@ terminate(Reason, State, Data) ->
      % filog:remove_process_handler(?MODULE).
 
 handle_event(enter, OldState, State, Data) ->
-    % NewData = Data#{ prev_state := OldState },
-    NewData =
-        push_history(Data, OldState),
-    {keep_state, NewData};
+    HistoryFun =
+        fun(D) ->
+        % If we repeat the state (because playback stopped naturally, and we want to loop) then it is superfluous to add the state again to history.
+            case OldState =:= State of
+                true ->
+                    Data;
+                false ->
+                    push_history(Data, OldState)
+            end
+        end,
+    PlayFun =
+        fun(D) ->
+            play(State, D)
+        end,
+    % ComfortFun =
+    %     fun(D) ->
+    %         comfort_noise(),
+    %         D
+    %     end,
+    GetNewData =
+        composeFlipped(
+          [ HistoryFun
+          , fun stop_playback/1
+          % , ComfortFun
+          , PlayFun
+          ]
+        ),
+
+    {keep_state, GetNewData(Data)};
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% `info` clauses (for FreeSWITCH events) %%
@@ -1471,6 +1496,12 @@ fsend(Msg) ->
 stop_playback(#{ playbacks := [] } = Data) ->
     Data;
 
+% Nothing is playing and the most recent playback has been stopped before.
+% For example, ?CATEGORIES is playing, "*" is sent when nothing is in history, `warning/?` stops playback, warning starts playing, ends naturally, so HANDLE_CHANNEL_EXECUTE_COMPLETE get clears {warning, false}, and calls that scenario in its `case`, which is `repeat/?`, that also has a `stop_playback/1`, and the most recent playback is the stopped ?CATEGORIES. Subsequent HANDLE_CHANNEL_EXECUTE_COMPLETE clauses will clear out these entries. (or should...)
+% TODO make sure that the Data#playbacks stack gets cleared properly
+stop_playback(#{ playbacks := [{_, _, true}|_] } = Data) ->
+    Data;
+
 % Stop the currently playing prompt
 % (but just in case, end everything, even though only one should be playing only)
 stop_playback( % {{-
@@ -1487,14 +1518,8 @@ stop_playback( % {{-
     % TODO Should this  be `bgapi`? Will the  synchronous `api`
     %      call wreak havoc when many users are calling?
     fsend({api, uuid_break, get(uuid) ++ " all"}),
-    Data#{ playbacks := [{ApplicationUUID, PlaybackName, true}|Rest] };
+    Data#{ playbacks := [{ApplicationUUID, PlaybackName, true}|Rest] }.
 % }}-
-
-% Nothing is playing and the most recent playback has been stopped before.
-% For example, ?CATEGORIES is playing, "*" is sent when nothing is in history, `warning/?` stops playback, warning starts playing, ends naturally, so HANDLE_CHANNEL_EXECUTE_COMPLETE get clears {warning, false}, and calls that scenario in its `case`, which is `repeat/?`, that also has a `stop_playback/1`, and the most recent playback is the stopped ?CATEGORIES. Subsequent HANDLE_CHANNEL_EXECUTE_COMPLETE clauses will clear out these entries. (or should...)
-% TODO make sure that the Data#playbacks stack gets cleared properly
-stop_playback(#{ playbacks := [{_, _, true}|_] } = Data) ->
-    Data.
 
 % Access News controls {{-
 % Press 8 for the help menu.
@@ -1798,9 +1823,13 @@ stitch([Utterance|Rest]) ->
 push_history(Data, State)
 when State =:= incoming_call;
      State =:= greeting;
-     State =:= main_menu;
+     % State =:= main_menu;
+     % State =:= quick_help;
      State =:= collect_digits;
-     State =:= warning
+     % TODO These are compound states!
+     element(1, State) =:= warning
+     % State =:= publication;
+     % State =:= article
 ->
     push_history(Data, {skip, State});
 
@@ -1819,6 +1848,18 @@ pop_history(#{ menu_history := [] } = Data) ->
     , Data
     };
 
+% TODO adjust when final form of `article` state is known
+pop_history(
+  #{ menu_history :=
+     [ {article, _}
+     , _Publication
+     , Category
+     | RestHistory
+     ]
+   } = Data
+) ->
+    pop_history(Data#{ menu_history := [Category|RestHistory] });
+
 pop_history(#{ menu_history := [{skip, _} | RestHistory] } = Data) ->
     pop_history(Data#{ menu_history := RestHistory });
 
@@ -1834,6 +1875,8 @@ pop_history(#{ menu_history := [PrevState | RestHistory] } = Data) ->
 % *, 0, # are single digit instant actions
 % (TODO make users able to set it)
 
+% TODO warning will become a new state, so eliminate this clause
+%      and create a `play` clause for it
 warning(WarningPrompt, Data) -> % {{-
     logger:debug("SPEAK_WARNING: " ++ WarningPrompt),
     NewData = stop_playback(Data),
@@ -1854,12 +1897,13 @@ repeat_menu( % {{-
     logger:debug("REPEAT_MENU"),
     % Not necessary when playback ends naturally,
     % but calling it multiple times doesn't hurt.
-    NewDataP = stop_playback(Data),
-    comfort_noise(),
-    NewDataPP = play(Menu, NewDataP),
+    % NewDataP = stop_playback(Data),
+    % comfort_noise(),
+    % NewDataPP = play(Menu, NewDataP),
     {keep_state, NewDataPP}.
 % }}-
 
+%       = NextState
 next_menu(NextMenu, Data) ->  % {{-
   % #{ menu := NextMenu
   %  , data := Data
@@ -1901,12 +1945,12 @@ next_menu(NextMenu, Data) ->  % {{-
         % end,
     % }}-
 
-    NewDataP = stop_playback(Data),
-    comfort_noise(),
+    % NewDataP = stop_playback(Data),
+    % comfort_noise(),
 
     % TODO put play/2 in CEC
-    NewDataPP =
-        play(NextMenu, NewDataP),
+    % NewDataPP =
+    %     play(NextMenu, NewDataP),
 
     {next_state, NextMenu, NewDataPP}.
 % }}-
@@ -1941,13 +1985,13 @@ prev_menu(#{ menu_history := History } = Data) -> % {{-
     %     _ ->
     % }}-
 
-    NewDataP = stop_playback(Data),
-    comfort_noise(),
+    % NewDataP = stop_playback(Data),
+    % comfort_noise(),
     {PrevState, NewDataPH} =
         pop_history(NewDataP),
     % TODO put play/2 in CEC (solves CD warning prev)
-    NewDataPHP =
-        play(PrevState, NewDataPH),
+    % NewDataPHP =
+    %     play(PrevState, NewDataPH),
 
     {next_state, PrevState, NewDataPHP}.
     % end.
@@ -1992,6 +2036,9 @@ re_start_inactivity_timer(State) -> % {{-
 % }}-
 % II. Access News web service model {{-
 
+% NOTE for the resulting graph when determining neighbours:
+% to avoid excessive amount of connections (and facing the problems updating them would cause), it will be done by finding the parent category, and adding/subtracting one from their "ID".
+% The publication guide below is just a representation of future data of the yet-to-be-implemented core web service, and its data may not contain such IDs, but that could be done on this end by ordering and adding that via a script.
 publication_guide() -> % {{-
     [ { {category, 1, "Store sales advertising"}
       , [ { {category, 1, "Grocery stores"}
@@ -2172,9 +2219,227 @@ stringify(Term) ->
     R = io_lib:format("~p",[Term]),
     lists:flatten(R).
 
+% Recursive left-to-right composition instead of a traditional one (i.e., more like a pipe); instead of (b -> c) -> (a -> b) -> (a -> c), it is (a -> b) -> (b -> c) -> ... -> (x -> y) -> (y -> z)
+% See PureScript's Control.Semigroupoid.composeFlipped (>>>) or Haskell's Control.Arrow.>>>
+composeFlipped([G|[]]) ->
+    G;
+composeFlipped([F,G|Rest]) ->
+    Composition =
+        fun(X) ->
+            G(F(X))
+        end,
+    composeFlipped([Composition|Rest]).
+
 %    }}-
 % }}-
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
 % vim: set nowrap:
+
+-module(mtest).
+
+-compile(export_all).
+
+-define(CONTENT_ROOT, "/home/toraritte/clones/phone-service/content-root/").
+% -define(CATEGORIES, {category, ?CONTENT_ROOT}).
+-define(CATEGORIES, {category, root}).
+
+composeFlipped([G|[]]) ->
+    G;
+composeFlipped([F,G|Rest]) ->
+    Composition =
+        fun(X) ->
+            G(F(X))
+        end,
+    composeFlipped([Composition|Rest]).
+
+curry(AnonymousFun) ->
+    {arity, Arity} =
+        erlang:fun_info(AnonymousFun, arity),
+
+    do_curry(AnonymousFun, Arity, [[], [], []]).
+
+do_curry(Fun, 0, [Fronts, Middle, Ends] = X) ->
+    % Fronts ++ Middle ++ ")" ++ Ends;
+    [F, M, E] =
+        lists:map(fun(L) -> string:join(L, "") end, X),
+    Fstring =
+        F ++ "Run(" ++ string:trim(M, trailing, ",") ++ ")" ++ E,
+
+    {ok, Tokens, _} =
+        erl_scan:string(Fstring ++ "."),
+    {ok, Parsed} =
+        erl_parse:parse_exprs(Tokens),
+
+    FunBinding =
+        erl_eval:add_binding(
+          'Run',
+          Fun,
+          erl_eval:new_bindings()
+        ),
+    {value ,CurriedFun, _} =
+        erl_eval:exprs(Parsed, FunBinding),
+
+    CurriedFun;
+
+do_curry(Fun, Arity, [Fronts, Middle, Ends]) ->
+    VarName = [64 + Arity],
+    NewFronts = ["fun(" ++ VarName ++ ") -> " | Fronts] ,
+    NewMiddle = [VarName ++ ","|Middle],
+    NewEnds = [" end"|Ends],
+    do_curry(Fun, Arity-1, [NewFronts, NewMiddle, NewEnds]).
+
+
+% lti(L) -> (fun erlang:list_to_integer/1)(L).
+
+% miez() ->
+%     compose(
+%       [ fun lti/1
+%       , fun(B) -> B + 5 end
+%       , fun(C) -> erlang:integer_to_list(C) end
+%       ]
+%     ).
+
+% call_state_graph() ->
+
+metafile_name() ->
+    "meta.erl".
+
+get_meta(CategoryDir) -> % {{-
+    MetaPath =
+        filename:join(
+          CategoryDir,
+          metafile_name()
+        ),
+    {ok, Meta} =
+        file:script(MetaPath),
+    Meta.
+
+% list_dir_sorted_with_full_path(Graph, Dir) ->
+%     composeFlipped(
+%       [ fun file:list_dir/1
+%       , fun(T) -> element(2,T) end
+%     % , (curry(fun erlang:element/2))(2)
+%       , fun ordsets:from_list/1
+%       , (curry(fun lists:map/2))
+%           ( fun(SubDir) ->
+%                 FullPath = filename:join(Dir, SubDir),
+%                 Meta = get_meta(FullPath),
+%                 digraph:add_vertex(Graph, Meta),
+%                 {
+%             end
+%           )
+      % , fun(L) ->
+      %       lists:map(
+      %         fun(E) ->
+      %           Meta
+      %           filename:join(Dir, E)
+      %         end,
+      %         L
+      %       )
+      %   end
+      % ]
+    % ).
+
+% make_content_graph(ContentRoot) ->
+%     Graph =
+%         digraph:new([cyclic, protected]),
+%     RootVertex =
+%         digraph:add_vertex(Graph, ?CATEGORIES, ["Main category."]),
+
+%     do_make(Graph, RootVertex, ContentRoot),
+%     Graph.
+
+% do_make(
+%   digraph:new([cyclic, protected]),
+%   { ?CONTENT_ROOT
+%   , digraph:add_vertex(Graph, ?CATEGORIES, ["Main category."])
+%   }
+% )
+
+% add_next_edges([_]) ->
+%     done;
+% add_next_edges([A,B|Rest]) ->
+%     digraph:add_edge(
+
+do_make(Graph, {ParentDir, ParentVertex}) ->
+    ParentDirList =
+        case file:list_dir(ParentDir) of
+            {ok, List} ->
+                lists:map(
+                  fun(SubDir) ->
+                      FullPath = filename:join(ParentDir, SubDir),
+                      Meta = get_meta(FullPath),
+                      % Add content vertex
+                      digraph:add_vertex(Graph, Meta),
+                      % ParentVertex ---ContentTuple--> ContentVertex
+                      % E.g.,
+                      % {category, root} ---{category, 1, "Ads"}--> {category, 1, "Ads"}
+                      digraph:add_edge(Graph, Meta, ParentVertex, Meta, []),
+                      {FullPath, Meta}
+                  end,
+                  ParentDir
+                ),
+                [do_make(Graph, PathVertexTuple) || PathVertexTuple <- PathVertexPairs];
+            {error, enotdir} ->
+                done
+        end.
+
+    PathVertexPairs =
+        ( composeFlipped(
+            [
+             fun file:list_dir/1
+            , fun(T) -> element(2,T) end
+            % , (curry(fun erlang:element/2))(2)
+            % , fun ordsets:from_list/1
+            , (curry(fun lists:map/2))
+                ( fun(SubDir) ->
+                      FullPath = filename:join(ParentDir, SubDir),
+                      Meta = get_meta(FullPath),
+                      % Add content vertex
+                      digraph:add_vertex(Graph, Meta),
+                      % ParentVertex ---ContentTuple--> ContentVertex
+                      % E.g.,
+                      % {category, root} ---{category, 1, "Ads"}--> {category, 1, "Ads"}
+                      digraph:add_edge(Graph, Meta, ParentVertex, Meta, []),
+                      {FullPath, Meta}
+                  end
+                )
+            ])
+        )(ParentDir),
+    [do_make(Graph, PathVertexTuple) || PathVertexTuple <- PathVertexPairs].
+
+
+
+
+% do_make(Graph, ParentVertex, [_]) ->
+%     done;
+
+% do_make(Graph, ParentVertex, [ChildDir1, ChildDir2 | Rest]) ->
+%     V1 = digraph:add_vertex(G,
+
+% do_make(Graph, ParentVertex, ParentDir) ->
+%     DirList =
+%         list_dir_sorted(ParentDir),
+
+
+
+% make_content_graph(PubList) ->
+%     Graph = digraph:new([cyclic, protected]),
+%     RootVertex = digraph:add_vertex(Graph, ?CATEGORIES),
+%     do_make(PubList, Graph, RootVertex).
+
+% do_make(
+%   [ { {category, _ContentChoiceID, _Name} = Category
+%     , SubContentList
+%     }
+%     | Rest
+%   ],
+%   Graph,
+%   ParentVertex
+% ) ->
+%     V = digraph:add_vertex(G, Category),
+%     digraph:add_edge(G, Category, ParentVertex, V, [])
+
+% do_make([Publication | Rest], G, ParentVertex)
