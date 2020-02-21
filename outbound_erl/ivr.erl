@@ -2236,7 +2236,6 @@ composeFlipped([F,G|Rest]) ->
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
 % vim: set nowrap:
-
 -module(mtest).
 
 -compile(export_all).
@@ -2358,33 +2357,50 @@ get_meta(CategoryDir) -> % {{-
 %   }
 % )
 
-% add_next_edges([_]) ->
-%     done;
-% add_next_edges([A,B|Rest]) ->
-%     digraph:add_edge(
-
-do_make(Graph, {ParentDir, ParentVertex}) ->
+do_make(Graph, {ParentDir, ParentVertex}, IsDone) ->
     ParentDirList =
-        case file:list_dir(ParentDir) of
-            {ok, List} ->
-                lists:map(
-                  fun(SubDir) ->
-                      FullPath = filename:join(ParentDir, SubDir),
-                      Meta = get_meta(FullPath),
-                      % Add content vertex
-                      digraph:add_vertex(Graph, Meta),
-                      % ParentVertex ---ContentTuple--> ContentVertex
-                      % E.g.,
-                      % {category, root} ---{category, 1, "Ads"}--> {category, 1, "Ads"}
-                      digraph:add_edge(Graph, Meta, ParentVertex, Meta, []),
-                      {FullPath, Meta}
-                  end,
-                  ParentDir
-                ),
-                [do_make(Graph, PathVertexTuple) || PathVertexTuple <- PathVertexPairs];
-            {error, enotdir} ->
-                done
-        end.
+        file:list_dir(ParentDir),
+
+    lists:map(
+        fun(SubDir) ->
+            FullPath = filename:join(ParentDir, SubDir),
+            Meta =
+                case filelib:is_dir(FullPath) of
+                    true ->
+                        get_meta(FullPath);
+                    false ->
+                        {article, FullPath}
+                end,
+            % Add content vertex
+            digraph:add_vertex(Graph, Meta),
+            % ParentVertex ---ContentTuple--> ContentVertex
+            % E.g.,
+            % {category, root} ---{category, 1, "Ads"}--> {category, 1, "Ads"}
+            digraph:add_edge(Graph, Meta, ParentVertex, Meta, []),
+            {FullPath, Meta}
+        end,
+        ParentDir
+    ),
+    Graph.
+                % [do_make(Graph, PathVertexTuple) || PathVertexTuple <- PathVertexPairs];
+            % {error, enotdir} ->
+                % done
+        % end.
+
+do_make_list([ {_FullPath, {article, _FullPath}} ]) ->
+    done;
+
+do_make_list([ {_Dir, {Content, _ContentChoiceID, _Name}} ])
+  when Content =:= category;
+       Content =:= publication
+->
+
+do_make_list(
+  [ {PathA, MetaA} = ItemA
+  , {PathB, MetaB} = ItemB
+  | ContentRest
+  ]
+) ->
 
     PathVertexPairs =
         ( composeFlipped(
