@@ -119,7 +119,8 @@ terminate(Reason, State, Data) ->
      % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
      % filog:remove_process_handler(?MODULE).
 
-handle_event(enter, OldState, State, Data) ->
+% ENTER
+handle_event(enter, OldState, State, Data) -> % {{-
     HistoryFun =
         fun(D) ->
         % If we repeat the state (because playback stopped naturally, and we want to loop) then it is superfluous to add the state again to history.
@@ -149,6 +150,7 @@ handle_event(enter, OldState, State, Data) ->
         ),
 
     {keep_state, GetNewData(Data)};
+% }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% `info` clauses (for FreeSWITCH events) %%
@@ -2309,6 +2311,9 @@ add_meta_to_path(ContentType, Dir, Path) ->
     {true, {Meta, FullPath}}.
 % }}-
 
+make_content_graph() ->
+    make_content_graph(?CONTENT_ROOT).
+
 make_content_graph(ContentRoot) -> % {{-
     Graph =
         digraph:new([cyclic, protected]),
@@ -2317,6 +2322,13 @@ make_content_graph(ContentRoot) -> % {{-
     digraph:add_vertex(Graph, RootMeta),
     do_make(Graph, ContentRoot),
     Graph.
+
+refresh_content_graph(Graph) ->
+    refresh_content_graph(Graph, ?CONTENT_ROOT).
+
+refresh_content_graph(Graph, ContentRoot) ->
+    digraph:delete(Graph),
+    make_content_graph(ContentRoot).
 
 do_make(Graph, Dir) ->
     case file:list_dir(Dir) of
@@ -2336,7 +2348,7 @@ do_make(Graph, Dir) ->
             do_dirlist(Graph, Meta, [first|MetaPathTuples])
     end.
 
-do_dirlist(_Graph, _ParentMeta, [_]) ->
+do_dirlist(_Graph, _ParentMeta, []) ->
     done;
 
 do_dirlist(Graph, ParentMeta, [{_, "meta.erl"}|Rest]) ->
@@ -2353,6 +2365,7 @@ do_dirlist( % {{-
   | Rest
   ]
 ) ->
+    logger:notice(#{ first => MetaPath }),
     add_vertex_and_parent_edge(Graph, ParentMeta, Meta, first),
     do_make(Graph, FullPath),
     do_dirlist(Graph, ParentMeta, [MetaPath|Rest]);
@@ -2379,7 +2392,6 @@ do_dirlist( % {{-
         end,
     do_make(Graph, FullPathB),
     do_dirlist(Graph, ParentMeta, NewDirList).
-% }}-
 % }}-
 %    }}-
 % }}-
