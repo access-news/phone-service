@@ -20,7 +20,7 @@
 
 % Replaced this with a `main_category()` function at one point but had to revert because needed to use this in guards when handling DTMFs, and that will not work.
 -define(CONTENT_ROOT, "/home/toraritte/clones/phone-service/content-root/").
--define(CATEGORIES, {category, ?CONTENT_ROOT}).
+-define(CATEGORIES, {category, 0, ?CONTENT_ROOT}).
 
 % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
 -define(DEMO_TIMEOUT, 300000). % 5 min
@@ -2230,29 +2230,6 @@ composeFlipped([F,G|Rest]) ->
         end,
     composeFlipped([Composition|Rest]).
 
-%    }}-
-% }}-
-
-% vim: set fdm=marker:
-% vim: set foldmarker={{-,}}-:
-% vim: set nowrap:
--module(mtest).
-
--compile(export_all).
-
--define(CONTENT_ROOT, "/home/toraritte/clones/phone-service/content-root/").
-% -define(CATEGORIES, {category, ?CONTENT_ROOT}).
--define(CATEGORIES, {category, root}).
-
-composeFlipped([G|[]]) ->
-    G;
-composeFlipped([F,G|Rest]) ->
-    Composition =
-        fun(X) ->
-            G(F(X))
-        end,
-    composeFlipped([Composition|Rest]).
-
 curry(AnonymousFun) ->
     {arity, Arity} =
         erlang:fun_info(AnonymousFun, arity),
@@ -2289,173 +2266,127 @@ do_curry(Fun, Arity, [Fronts, Middle, Ends]) ->
     NewEnds = [" end"|Ends],
     do_curry(Fun, Arity-1, [NewFronts, NewMiddle, NewEnds]).
 
+add_parent_edge(Graph, ParentMeta, Meta, Label) ->
+    digraph:add_edge(
+      Graph,         % digraph
+      {child, Meta}, % edge
+      ParentMeta,    % from vertex
+      Meta,          % to vertex
+      Label          % label
+    ).
 
-% lti(L) -> (fun erlang:list_to_integer/1)(L).
+add_next_edge(Graph, From, To) ->
+    digraph:add_edge(Graph, {next, To}, From, To, []).
 
-% miez() ->
-%     compose(
-%       [ fun lti/1
-%       , fun(B) -> B + 5 end
-%       , fun(C) -> erlang:integer_to_list(C) end
-%       ]
-%     ).
+add_prev_edge(Graph, From, To) ->
+    digraph:add_edge(Graph, {prev, To}, From, To, []).
 
-% call_state_graph() ->
+add_vertex_and_parent_edge(Graph, ParentMeta, ChildMeta) ->
+    add_vertex_and_parent_edge(Graph, ParentMeta, ChildMeta, []).
+
+add_vertex_and_parent_edge(Graph, ParentMeta, ChildMeta, EdgeLabel) ->
+    digraph:add_vertex(Graph, ChildMeta),
+    add_parent_edge(Graph, ParentMeta, ChildMeta, {EdgeLabel, ChildMeta}).
+
+add_meta_to_path(_ContentType, _Dir, "meta.erl") ->
+    logger:notice("meta"),
+    false;
+add_meta_to_path(ContentType, Dir, Path) ->
+    logger:notice(#{path => Path, ct => ContentType}),
+    FullPath = filename:join(Dir, Path),
+    Meta =
+        case ContentType of
+               category -> get_meta(FullPath);
+            publication -> {article, FullPath}
+        end,
+    {true, {Meta, FullPath}}.
 
 metafile_name() ->
     "meta.erl".
 
-get_meta(CategoryDir) -> % {{-
+get_meta(Dir) -> % {{-
     MetaPath =
         filename:join(
-          CategoryDir,
+          Dir,
           metafile_name()
         ),
     {ok, Meta} =
         file:script(MetaPath),
     Meta.
 
-% list_dir_sorted_with_full_path(Graph, Dir) ->
-%     composeFlipped(
-%       [ fun file:list_dir/1
-%       , fun(T) -> element(2,T) end
-%     % , (curry(fun erlang:element/2))(2)
-%       , fun ordsets:from_list/1
-%       , (curry(fun lists:map/2))
-%           ( fun(SubDir) ->
-%                 FullPath = filename:join(Dir, SubDir),
-%                 Meta = get_meta(FullPath),
-%                 digraph:add_vertex(Graph, Meta),
-%                 {
-%             end
-%           )
-      % , fun(L) ->
-      %       lists:map(
-      %         fun(E) ->
-      %           Meta
-      %           filename:join(Dir, E)
-      %         end,
-      %         L
-      %       )
-      %   end
-      % ]
-    % ).
-
-% make_content_graph(ContentRoot) ->
-%     Graph =
-%         digraph:new([cyclic, protected]),
-%     RootVertex =
-%         digraph:add_vertex(Graph, ?CATEGORIES, ["Main category."]),
-
-%     do_make(Graph, RootVertex, ContentRoot),
-%     Graph.
-
-% do_make(
-%   digraph:new([cyclic, protected]),
-%   { ?CONTENT_ROOT
-%   , digraph:add_vertex(Graph, ?CATEGORIES, ["Main category."])
-%   }
-% )
-
-do_make(Graph, {ParentDir, ParentVertex}, IsDone) ->
-    ParentDirList =
-        file:list_dir(ParentDir),
-
-    lists:map(
-        fun(SubDir) ->
-            FullPath = filename:join(ParentDir, SubDir),
-            Meta =
-                case filelib:is_dir(FullPath) of
-                    true ->
-                        get_meta(FullPath);
-                    false ->
-                        {article, FullPath}
-                end,
-            % Add content vertex
-            digraph:add_vertex(Graph, Meta),
-            % ParentVertex ---ContentTuple--> ContentVertex
-            % E.g.,
-            % {category, root} ---{category, 1, "Ads"}--> {category, 1, "Ads"}
-            digraph:add_edge(Graph, Meta, ParentVertex, Meta, []),
-            {FullPath, Meta}
-        end,
-        ParentDir
-    ),
+make_content_graph(ContentRoot) ->
+    Graph =
+        digraph:new([cyclic, protected]),
+    % {category, 0, "Main category"}
+    RootMeta = get_meta(ContentRoot),
+    digraph:add_vertex(Graph, RootMeta),
+    do_make(Graph, ContentRoot),
     Graph.
-                % [do_make(Graph, PathVertexTuple) || PathVertexTuple <- PathVertexPairs];
-            % {error, enotdir} ->
-                % done
-        % end.
 
-do_make_list([ {_FullPath, {article, _FullPath}} ]) ->
+do_make(Graph, Dir) ->
+    case file:list_dir(Dir) of
+        {error, _} ->
+            done;
+        {ok, List} ->
+            OrderedDirList =
+                ordsets:from_list(List),
+            % If ContentType =:= publication then DirList will consist entirely of files (meta.erl + audio files)
+            {ContentType, _, _} = Meta =
+                get_meta(Dir),
+            MetaPathTuples =
+                lists:filtermap(
+                  ((curry(fun add_meta_to_path/3))(ContentType))(Dir),
+                  OrderedDirList
+                ),
+            do_dirlist(Graph, Meta, [first|MetaPathTuples])
+    end.
+
+do_dirlist(
+  _Graph,
+  _ParentMeta,
+  [_]
+) ->
     done;
 
-do_make_list([ {_Dir, {Content, _ContentChoiceID, _Name}} ])
-  when Content =:= category;
-       Content =:= publication
-->
+do_dirlist(Graph, ParentMeta, [{_, "meta.erl"}|Rest]) ->
+    do_dirlist(Graph, ParentMeta, Rest);
 
-do_make_list(
-  [ {PathA, MetaA} = ItemA
-  , {PathB, MetaB} = ItemB
-  | ContentRest
+do_dirlist(_Graph, _ParentMeta, [first]) ->
+    empty_dir;
+
+do_dirlist(
+  Graph,
+  ParentMeta,
+  [ first
+  , {Meta, FullPath} = MetaPath
+  | Rest
   ]
 ) ->
+    add_vertex_and_parent_edge(Graph, ParentMeta, Meta, first),
+    do_make(Graph, FullPath),
+    do_dirlist(Graph, ParentMeta, [MetaPath|Rest]);
 
-    PathVertexPairs =
-        ( composeFlipped(
-            [
-             fun file:list_dir/1
-            , fun(T) -> element(2,T) end
-            % , (curry(fun erlang:element/2))(2)
-            % , fun ordsets:from_list/1
-            , (curry(fun lists:map/2))
-                ( fun(SubDir) ->
-                      FullPath = filename:join(ParentDir, SubDir),
-                      Meta = get_meta(FullPath),
-                      % Add content vertex
-                      digraph:add_vertex(Graph, Meta),
-                      % ParentVertex ---ContentTuple--> ContentVertex
-                      % E.g.,
-                      % {category, root} ---{category, 1, "Ads"}--> {category, 1, "Ads"}
-                      digraph:add_edge(Graph, Meta, ParentVertex, Meta, []),
-                      {FullPath, Meta}
-                  end
-                )
-            ])
-        )(ParentDir),
-    [do_make(Graph, PathVertexTuple) || PathVertexTuple <- PathVertexPairs].
+do_dirlist(
+  Graph,
+  ParentMeta,
+  [ {MetaA, _}
+  , {MetaB, FullPathB} = MetaPath
+  | Rest
+  ]
+) ->
+    add_vertex_and_parent_edge(Graph, ParentMeta, MetaB),
+    add_prev_edge(Graph, MetaB, MetaA),
+    add_next_edge(Graph, MetaA, MetaB),
+    case Rest =:= [] of
+        true ->
+            done;
+        false ->
+            do_make(Graph, FullPathB),
+            do_dirlist(Graph, ParentMeta, [MetaPath|Rest])
+    end.
+%    }}-
+% }}-
 
-
-
-
-% do_make(Graph, ParentVertex, [_]) ->
-%     done;
-
-% do_make(Graph, ParentVertex, [ChildDir1, ChildDir2 | Rest]) ->
-%     V1 = digraph:add_vertex(G,
-
-% do_make(Graph, ParentVertex, ParentDir) ->
-%     DirList =
-%         list_dir_sorted(ParentDir),
-
-
-
-% make_content_graph(PubList) ->
-%     Graph = digraph:new([cyclic, protected]),
-%     RootVertex = digraph:add_vertex(Graph, ?CATEGORIES),
-%     do_make(PubList, Graph, RootVertex).
-
-% do_make(
-%   [ { {category, _ContentChoiceID, _Name} = Category
-%     , SubContentList
-%     }
-%     | Rest
-%   ],
-%   Graph,
-%   ParentVertex
-% ) ->
-%     V = digraph:add_vertex(G, Category),
-%     digraph:add_edge(G, Category, ParentVertex, V, [])
-
-% do_make([Publication | Rest], G, ParentVertex)
+% vim: set fdm=marker:
+% vim: set foldmarker={{-,}}-:
+% vim: set nowrap:
