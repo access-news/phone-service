@@ -20,7 +20,8 @@
 
 % Replaced this with a `main_category()` function at one point but had to revert because needed to use this in guards when handling DTMFs, and that will not work.
 -define(CONTENT_ROOT, "/home/toraritte/clones/phone-service/content-root/").
--define(CATEGORIES, {category, 0, ?CONTENT_ROOT}).
+% -define(CATEGORIES, {category, 0, ?CONTENT_ROOT}).
+-define(CATEGORIES, {category, 0, "Main category"}).
 
 % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
 -define(DEMO_TIMEOUT, 300000). % 5 min
@@ -1737,44 +1738,6 @@ play({hangup, inactivity} = State, Data) -> % {{-
        }).
 % }}-
 
-metafile_name() ->
-    "meta.erl".
-
-get_meta(CategoryDir) -> % {{-
-    MetaPath =
-        filename:join(
-          CategoryDir,
-          metafile_name()
-        ),
-    {ok, Meta} =
-        file:script(MetaPath),
-    Meta.
-% }}-
-
-list_category_entries(CategoryDir) -> % {{-
-    { ok
-    , SubCategoryDirectories
-    } =
-        file:list_dir(CategoryDir),
-    MetaList =
-        lists:map(
-          fun(SubDir) ->
-              MetaPath =
-                  filename:join([CategoryDir, SubDir, metafile_name()]),
-              {ok, {_, N, SubCategory} } =
-                  file:script(MetaPath),
-
-              "Press "
-              ++ integer_to_list(N)
-              ++ " for "
-              ++ SubCategory
-              ++ "."
-          end,
-          SubCategoryDirectories -- [metafile_name()]
-        ),
-    ordsets:from_list(MetaList).
-% }}-
-
 % http://erlang.org/pipermail/erlang-questions/2005-April/015279.html
 % extract_playback_name(ApplicationUUID) ->
 %     PlaybackIDString =
@@ -2142,6 +2105,45 @@ write_meta_file({_, _, _} = Category, Dir) -> % {{-
     Dir.
 % }}-
 
+metafile_name() ->
+    "meta.erl".
+
+get_meta(CategoryDir) -> % {{-
+    MetaPath =
+        filename:join(
+          CategoryDir,
+          metafile_name()
+        ),
+    {ok, Meta} =
+        file:script(MetaPath),
+    Meta.
+% }}-
+
+list_category_entries(CategoryDir) -> % {{-
+    { ok
+    , SubCategoryDirectories
+    } =
+        file:list_dir(CategoryDir),
+    MetaList =
+        lists:map(
+          fun(SubDir) ->
+              MetaPath =
+                  filename:join([CategoryDir, SubDir, metafile_name()]),
+              {ok, {_, N, SubCategory} } =
+                  file:script(MetaPath),
+
+              "Press "
+              ++ integer_to_list(N)
+              ++ " for "
+              ++ SubCategory
+              ++ "."
+          end,
+          SubCategoryDirectories -- [metafile_name()]
+        ),
+    ordsets:from_list(MetaList).
+% }}-
+
+
 make_dir_and_meta_file({_, N, _} = Category, Path) -> % {{-
     Dir =
         filename:join(
@@ -2159,7 +2161,7 @@ realize(ContentRoot) -> % {{-
     case file:make_dir(ContentRoot) of
         ok ->
             write_meta_file(
-              {category, 0, "Main category"},
+              ?CATEGORIES,
               ContentRoot
             ),
             realize(publication_guide(), ContentRoot);
@@ -2221,7 +2223,7 @@ stringify(Term) ->
 
 % Recursive left-to-right composition instead of a traditional one (i.e., more like a pipe); instead of (b -> c) -> (a -> b) -> (a -> c), it is (a -> b) -> (b -> c) -> ... -> (x -> y) -> (y -> z)
 % See PureScript's Control.Semigroupoid.composeFlipped (>>>) or Haskell's Control.Arrow.>>>
-composeFlipped([G|[]]) ->
+composeFlipped([G|[]]) -> % {{-
     G;
 composeFlipped([F,G|Rest]) ->
     Composition =
@@ -2229,8 +2231,9 @@ composeFlipped([F,G|Rest]) ->
             G(F(X))
         end,
     composeFlipped([Composition|Rest]).
+% }}-
 
-curry(AnonymousFun) ->
+curry(AnonymousFun) -> % {{-
     {arity, Arity} =
         erlang:fun_info(AnonymousFun, arity),
 
@@ -2265,8 +2268,9 @@ do_curry(Fun, Arity, [Fronts, Middle, Ends]) ->
     NewMiddle = [VarName ++ ","|Middle],
     NewEnds = [" end"|Ends],
     do_curry(Fun, Arity-1, [NewFronts, NewMiddle, NewEnds]).
+% }}-
 
-add_parent_edge(Graph, ParentMeta, Meta, Label) ->
+add_parent_edge(Graph, ParentMeta, Meta, Label) -> % {{-
     digraph:add_edge(
       Graph,         % digraph
       {child, Meta}, % edge
@@ -2274,6 +2278,7 @@ add_parent_edge(Graph, ParentMeta, Meta, Label) ->
       Meta,          % to vertex
       Label          % label
     ).
+% }}-
 
 add_next_edge(Graph, From, To) ->
     digraph:add_edge(Graph, {next, To}, From, To, []).
@@ -2281,16 +2286,18 @@ add_next_edge(Graph, From, To) ->
 add_prev_edge(Graph, From, To) ->
     digraph:add_edge(Graph, {prev, To}, From, To, []).
 
-add_vertex_and_parent_edge(Graph, ParentMeta, ChildMeta) ->
+add_vertex_and_parent_edge(Graph, ParentMeta, ChildMeta) -> % {{-
     add_vertex_and_parent_edge(Graph, ParentMeta, ChildMeta, []).
 
 add_vertex_and_parent_edge(Graph, ParentMeta, ChildMeta, EdgeLabel) ->
     digraph:add_vertex(Graph, ChildMeta),
     add_parent_edge(Graph, ParentMeta, ChildMeta, {EdgeLabel, ChildMeta}).
+% }}-
 
-add_meta_to_path(_ContentType, _Dir, "meta.erl") ->
+add_meta_to_path(_ContentType, _Dir, "meta.erl") -> % {{-
     logger:notice("meta"),
     false;
+
 add_meta_to_path(ContentType, Dir, Path) ->
     logger:notice(#{path => Path, ct => ContentType}),
     FullPath = filename:join(Dir, Path),
@@ -2300,21 +2307,9 @@ add_meta_to_path(ContentType, Dir, Path) ->
             publication -> {article, FullPath}
         end,
     {true, {Meta, FullPath}}.
+% }}-
 
-metafile_name() ->
-    "meta.erl".
-
-get_meta(Dir) -> % {{-
-    MetaPath =
-        filename:join(
-          Dir,
-          metafile_name()
-        ),
-    {ok, Meta} =
-        file:script(MetaPath),
-    Meta.
-
-make_content_graph(ContentRoot) ->
+make_content_graph(ContentRoot) -> % {{-
     Graph =
         digraph:new([cyclic, protected]),
     % {category, 0, "Main category"}
@@ -2341,11 +2336,7 @@ do_make(Graph, Dir) ->
             do_dirlist(Graph, Meta, [first|MetaPathTuples])
     end.
 
-do_dirlist(
-  _Graph,
-  _ParentMeta,
-  [_]
-) ->
+do_dirlist(_Graph, _ParentMeta, [_]) ->
     done;
 
 do_dirlist(Graph, ParentMeta, [{_, "meta.erl"}|Rest]) ->
@@ -2354,7 +2345,7 @@ do_dirlist(Graph, ParentMeta, [{_, "meta.erl"}|Rest]) ->
 do_dirlist(_Graph, _ParentMeta, [first]) ->
     empty_dir;
 
-do_dirlist(
+do_dirlist( % {{-
   Graph,
   ParentMeta,
   [ first
@@ -2365,25 +2356,31 @@ do_dirlist(
     add_vertex_and_parent_edge(Graph, ParentMeta, Meta, first),
     do_make(Graph, FullPath),
     do_dirlist(Graph, ParentMeta, [MetaPath|Rest]);
+% }}-
 
-do_dirlist(
+do_dirlist( % {{-
   Graph,
   ParentMeta,
-  [ {MetaA, _}
+  [ {MetaA, _} = M
   , {MetaB, FullPathB} = MetaPath
   | Rest
   ]
 ) ->
+    logger:notice(#{ metapath_a => M, metapath_b => MetaPath}),
     add_vertex_and_parent_edge(Graph, ParentMeta, MetaB),
     add_prev_edge(Graph, MetaB, MetaA),
     add_next_edge(Graph, MetaA, MetaB),
-    case Rest =:= [] of
-        true ->
-            done;
-        false ->
-            do_make(Graph, FullPathB),
-            do_dirlist(Graph, ParentMeta, [MetaPath|Rest])
-    end.
+    NewDirList =
+        case Rest =:= [] of
+            true ->
+                [];
+            false ->
+                [MetaPath|Rest]
+        end,
+    do_make(Graph, FullPathB),
+    do_dirlist(Graph, ParentMeta, NewDirList).
+% }}-
+% }}-
 %    }}-
 % }}-
 
