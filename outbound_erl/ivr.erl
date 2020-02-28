@@ -81,7 +81,8 @@ init(_Args) -> % {{-
     % TODO Why was this necessary?
     process_flag(trap_exit, true),
 
-    State = incoming_call,
+    ivr_graph(),
+
     Data =
         #{ recvd_digits => ""
          ,  auth_status => unregistered % | registered
@@ -107,7 +108,9 @@ init(_Args) -> % {{-
     % ====================================================
     % Because the only way out of `main_menu` is by going forward to `?CATEGORIES` or going back/up, which always pops the history. Inside `main_menu`, whenever an option is chosen, `main_menu` gets pushed to the history, but the only way out of submenus is to go back, which will pop it.
     % }}-
-    {ok, State, Data}.
+    %    State
+    % This is kind of a cheat, becuase FreeSWITH ESL outbound mode only start the Erlang process when there is an incoming call, but because of the digraph-driven nature of this state machine, it is better to disambiguate between the states of `init` and `incoming_call`
+    {ok, init, Data}.
 % }}-
 
 callback_mode() ->
@@ -429,7 +432,7 @@ handle_event(
   , #{ "Channel-ANI" := CallerNumber % | EventContent = MassagedModErlEvent
      }                               % |
   },                                 % /
-  incoming_call                      = State,
+  init = State,
   #{ auth_status := unregistered }   = Data
 ) ->
     % logger:debug(#{ self() => ["INCOMING_CALL", #{ data => Data, state => State }]}),
@@ -500,10 +503,16 @@ handle_event(
                 }
         end,
 
-    { keep_state
+    { next_state
+    , next()
     , Data#{ auth_status := NewAuthStatus }
     , TransitionActions
     };
+
+    % { keep_state
+    % , Data#{ auth_status := NewAuthStatus }
+    % , TransitionActions
+    % };
 %% }}-
 
 %% CALL_ANSWERED (STATE: greeting -> greeting) {{-
@@ -523,11 +532,16 @@ handle_event(
     % logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
     re_start_inactivity_timer(State),
-    next_menu(
-      #{ menu => greeting
-       , data => Data
-       , current_state => State
-       });
+
+    { next_state
+    , next()
+    , Data
+    };
+    % next_menu(
+    %   #{ menu => greeting
+    %    , data => Data
+    %    , current_state => State
+    %    });
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -2395,6 +2409,64 @@ do_dirlist( % {{-
 % }}-
 %    }}-
 % }}-
+% }}-
+
+add_edge(EdgeName, From, To) ->
+    digraph:add_edge
+      ( get(ivr_graph)
+      , { EdgeName, From }
+      , From
+      , To
+      , []
+      ).
+
+add_default_edge(From, To) ->
+    add_edge(default, From, To).
+
+add_vertex(Vertex) ->
+    digraph:add_vertex
+      ( get(ivr_graph)
+      , Vertex
+      ).
+
+add_vertices(VList) ->
+    [ add_vertex(V) || V <- VList ].
+
+vertex(Vertex) ->
+    digraph:vertex(get(ivr_graph), Vertex).
+
+ivr_graph() ->
+    Graph = digraph:new([cyclic, protected]),
+    put(ivr_graph, Graph),
+    % digraph:add_vertex(Graph, init, {default, incoming_call}),
+    add_vertex(current_position),
+    update_state(init),
+
+    add_vertices(
+      [ init
+      , incoming_call
+      ]
+    ),
+    add_default_edge(init, incoming_call).
+
+get_state() ->
+    {_Edge, _From, To, _Label} =
+        digraph:edge(get(ivr_graph), current_state),
+    To.
+
+update_state(NewState) ->
+    Graph = get(ivr_graph),
+    digraph:del_edge(Graph, current_state),
+    digraph:add_edge(Graph, current_state, current_state, NewState, []).
+
+next() ->
+    {_Edge, _From, To, _Label} =
+        digraph:edge
+          ( get(ivr_graph)
+          , { default, get_state() }
+          ),
+    update_state(To),
+    To.
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
