@@ -124,31 +124,30 @@ terminate(Reason, State, Data) ->
 
 % ENTER
 handle_event(enter, OldState, State, Data) -> % {{-
-    HistoryFun =
-        fun(D) ->
-        % If we repeat the state (because playback stopped naturally, and we want to loop) then it is superfluous to add the state again to history.
-            case OldState =:= State of
-                true ->
-                    Data;
-                false ->
-                    push_history(Data, OldState)
-            end
-        end,
-    PlayFun =
-        fun(D) ->
-            play(State, D)
-        end,
+
+    % HistoryFun =
+    %     fun(D) ->
+    %     % If we repeat the state (because playback stopped naturally, and we want to loop) then it is superfluous to add the state again to history.
+    %         case OldState =:= State of
+    %             true ->
+    %                 Data;
+    %             false ->
+    %                 push_history(Data, OldState)
+    %         end
+    %     end,
+
     % ComfortFun =
     %     fun(D) ->
     %         comfort_noise(),
     %         D
     %     end,
+
     GetNewData =
         composeFlipped(
-          [ HistoryFun
-          , fun stop_playback/1
+          % [ HistoryFun
+          [ fun stop_playback/1
           % , ComfortFun
-          , PlayFun
+          , fun(GenData) -> play(State, GenData) end
           ]
         ),
 
@@ -349,7 +348,7 @@ handle_event(
   Data
 ) ->
     Inactive =
-        "Please press 0 if you are still there.",
+        "Please any key if you are still there.",
 
     % TODO Add notes on how this works.
     % TODO how is this applicable when in {article, _}?
@@ -504,7 +503,7 @@ handle_event(
         end,
 
     { next_state
-    , next()
+    , incoming_call
     , Data#{ auth_status := NewAuthStatus }
     , TransitionActions
     };
@@ -530,18 +529,8 @@ handle_event(
    } = Data                               % /         set there must also be true.
 ) ->
     % logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
-
     re_start_inactivity_timer(State),
-
-    { next_state
-    , next()
-    , Data
-    };
-    % next_menu(
-    %   #{ menu => greeting
-    %    , data => Data
-    %    , current_state => State
-    %    });
+    {next_state , greeting , Data};
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -616,329 +605,451 @@ handle_event(
     % }}- }}-
 
     % Only needed for COLLECT DIGITS case clause's guards
-    RootState =
-        case is_tuple(State) of
-            false ->
-                State;
-            true ->
-                element(1, State)
-        end,
+    % RootState =
+    %     case is_tuple(State) of
+    %         false ->
+    %             State;
+    %         true ->
+    %             element(1, State)
+    %     end,
 
-    case
-        #{                state => State
-         ,       received_digit => Digit
-         % `ReceivedDigits` emptied after eval on `interdigit_timer` timeout
-         % ,    collecting_digits => ReceivedDigits =/= []
-         }
-    of
+    case {State, Digit} of
+        % #{                state => State
+        %  ,       received_digit => Digit
+        %  % `ReceivedDigits` emptied after eval on `interdigit_timer` timeout
+        %  % ,    collecting_digits => ReceivedDigits =/= []
+        %  }
+    % of
         % TODO # has no function (except greeting, main_menu, article)
         % Use it to browse categories (step into the next one, like in article?)
         % or forward in history instead of back?
 
-        % === GREETING
-        % * (star)   {{- => ?CATEGORIES
-        #{                state := greeting = State
-         ,       received_digit := "*"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => ?CATEGORIES
-               , data => Data
-               , current_state => State
-               });
+        % === COLLECT_DIGITS
+        % === old COLLECT DIGITS {{-
+        % % [1-9] in any state AKA start collecting digits
+        % % (except for `main_menu`, `{publication, _, _}`, and `article`) {{-
+        % % NOTE Most of the guards are unnecessary (as previous clauses have already handled them), and are only here to make this clause explicit. TODO HOWEVER, they may be removed, because all possibilities are explicitly spelled out for each state (so hitting the unassigned 4 in main_menu shouldn't end up here to start collecting digits), and couldn't put the compound states (article & publication) in the guards as they are tuples, guards cannot be nested.
+        % % Not checking whether we are collecting digits, because {{-
+        % % this clause should be executed either way when digits 1 to 9 are pressed any time; if false, it means we are starting a new collection, and if true, we should keep collecting until the `interdigit_timer` times out (when the collected digits get evaluated).
+        % % }}-
+        % #{
+        %             state := _State
+        %  , received_digit := Digit
+        %  }
+        % % These states never collect digits and so [1-9] are instant actions without any IDTs. Listing them here is unecessary, as these digits within these states are called in previous clauses, but doing so makes it nice and explicit.
+        % when
+        %     RootState =/= main_menu,
+        %     RootState =/= publication,
+        %     RootState =/= article,
+
+        % %      % Only take digits in the [1-9] range
+        %      Digit =/= "0",
+        %      Digit =/= "*",
+        %      Digit =/= "#"
+        % ->
+        %     collect_digits(Data, Digit);
+
+        % % }}-
+        % % 0 in any state when collecting digits {{-
+        % #{                state := collect_digits
+        %  ,       received_digit := "0"
+        %  }
+        % ->
+        %     % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
+        %     % Could've put in previous clause, but more explicit this way
+        %     collect_digits(Data, "0");
+
+        % % }}-
+        % % * (star) and # (pound) in any state when collecting digits (except `greeting`) {{-
+        % % Ignore (i.e., add empty string, will be flattened during eval anyway), but renew `interdigit_timer`
+        % % When a user presses them accidentally when signing in,
+        % % or when selecting the category, it will get filtered
+        % % out.
+        % #{                state := collect_digits
+        %  ,       received_digit := Digit
+        %  }
+        % when Digit =:= "*";
+        %      Digit =:= "#"
+        %      % Digit =:= "#",
+
+        %      % Innecessary; if collecting digits then `greeting` cannot be skipped anyway
+        %      % State =/= greeting
+        % % Guards and logic reminder {{-
+        % % (fun ({A, B})
+        % %      when B =:= x,            B =:= x;                   B =:= z;
+        % %           A =:= 0;            A =:= 0,                   A =:= 0,
+        % %           B =:= y             B =:= y                    B =:= y;
+        % %      ->                                                  A =/=7,
+        % %          yay;                                            B =:= x
+        % %      (_) ->
+        % %          nono
+        % %  end)    ({0, x}).  yay       ({0, x}).  yay            ({1, x}).  yay
+        % %          ({1, x}).  nono      ({1, x}).  yay            ({0, z}).  yay
+        % %          ({0, y}).  yay       ({0, y}).  yay            ({1, z}).  yay
+        % %          ({1, y}).  yay       ({1, y}).  nono           ({7, z}).  yay
+        % %                                                         ({0, y}).  yay
+        % %                                                         ({7, y}).  nono
+        % %                                                         ({7, x}).  nono
+        % %                                                         ({6, x}).  yay
+        % % }}-
+        % ->
+        %     collect_digits(Data, "");
+        % % }}-
+        % }}-
+        { collect_digits, Digit } ->
+            collect_digits(Data, Digit);
+
+        % === GREETING (-> content_root)
+        % *          {{- => content root
+        { greeting, "*" } ->
+            content_selection(content_root);
 
         % }}-
-        % # (pound)  {{- => ?CATEGORIES
-        #{                state := greeting = State
-         ,       received_digit := "#"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => ?CATEGORIES
-               , data => Data
-               , current_state => State
-               });
+        % #          {{- => content root
+        { greeting, "#" } ->
+            content_selection(content_root);
 
         % }}-
         % 0          {{- => main_menu
-        #{                state := greeting = State
-         ,       received_digit := "0"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => main_menu
-               , data => Data
-               , current_state => State
-               });
+        { greeting, "0" } ->
+            {next_state, main_menu, Data};
 
         % }}-
-        % [1-9]      {{- => sub-categories (via COLLECT DIGITS)
-        %   See COLLECT DIGITS case clause at the end.
+        % [1-9]      {{- => collect digits
+        { greeting, Digit } ->
+            collect_digits(Data, Digit);
         % }}-
 
-        % === MAIN_MENU
-        % * (star)  {{- <- Go back (previous menu)
-        #{                state := main_menu = State
-         ,       received_digit := "*"
-         % ,    collecting_digits := false
-         } ->
-            prev_menu(
-              #{ current_state => State
-               , data => Data
-               });
+        % === MAIN_MENU (loop)
+        % * (star)  {{- <- Go back (current content)
+        { main_menu, "*" } ->
+            content_selection(current);
 
         % }}-
-        % # (pound) {{- => Log in / Favorites (depending on AuthStatus)
-        #{                state := main_menu = State
-         ,       received_digit := "#"
-         % ,    collecting_digits := false
-         } ->
+        % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
+        { main_menu, "#" } ->
             NextMenu =
                 case AuthStatus of
                     registered   -> favourites;
                     unregistered -> sign_in
                 end,
 
-            next_menu(
-              #{ menu => NextMenu
-               , data => Data
-               , current_state => State
-               });
+            {next_state, NextMenu, Data};
 
         % }}-
-        % 0         {{- => quick_help
-        #{                state := main_menu = State
-         ,       received_digit := "0"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => quick_help
-               , data => Data
-               , current_state => State
-               });
+        % TODO list history
+        % 0         {{- => UNASSIGNED (keep state and data)
+        % Left it empty because users may just bang on 0 just to get to main_menu.
+        { main_menu, "0" } ->
+            keep_state_and_data;
 
         % }}-
         % 1         {{- => tutorial
-        #{                state := main_menu = State
-         ,       received_digit := "1"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => tutorial
-               , data => Data
-               , current_state => State
-               });
+        { main_menu, "1" } ->
+            {next_state, tutorial, Data};
 
         % }}-
         % 2         {{- => leave_message
-        #{                state := main_menu = State
-         ,       received_digit := "2"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => leave_menu
-               , data => Data
-               , current_state => State
-               });
+        { main_menu, "2" } ->
+            {next_state, leave_message, Data};
 
         % }}-
-        % 3         {{- => blindness_services
-        #{                state := main_menu = State
-         ,       received_digit := "3"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => blindness_services
-               , data => Data
-               , current_state => State
-               });
+        % 3         {{- => settings
+        { main_menu, "3" } ->
+            {next_state, settings, Data};
 
         % }}-
-        % 4         {{- => UNASSIGNED (keep state and data)
-        % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
-        #{                state := main_menu = State
-         ,       received_digit := "4"
-         % ,    collecting_digits := false
-         } ->
+        % 4         {{- => blindness_services
+        { main_menu, "4" } ->
+            {next_state, blindness_services, Data};
+
+        % }}-
+        % TODO: play contents at random
+        % 5         {{- => UNASSIGNED (keep state and data)
+        { main_menu, "5" } ->
+            % {next_state, random, Data};
             keep_state_and_data;
-
-        % }}-
-        % 5         {{- => settings
-        #{                state := main_menu = State
-         ,       received_digit := "5"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => settings
-               , data => Data
-               , current_state => State
-               });
 
         % }}-
         % 6         {{- => UNASSIGNED (keep state and data)
-        % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
-        #{                state := main_menu = State
-         ,       received_digit := "6"
-         % ,    collecting_digits := false
-         } ->
+        { main_menu, "6" } ->
             keep_state_and_data;
 
         % }}-
-        % TODO "previous category"
         % 7         {{- => UNASSIGNED (keep state and data)
-        % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
-        #{                state := main_menu = State
-         ,       received_digit := "7"
-         % ,    collecting_digits := false
-         } ->
+        { main_menu, "7" } ->
             keep_state_and_data;
 
         % }}-
-        % 8         {{- => ?CATEGORIES
-        #{                state := main_menu = State
-         ,       received_digit := "8"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => ?CATEGORIES
-               , data => Data
-               , current_state => State
-               });
+        % 8         {{- => UNASSIGNED (keep state and data)
+        { main_menu, "8" } ->
+            keep_state_and_data;
 
         % }}-
-        % TODO "next category"
         % 9         {{- => UNASSIGNED (keep state and data)
-        % NOTE: Adding explicit clause so that the numbers do not trigger digit collection. Not necessary for this in main_menu as the COLLECT DIGITS clause has a guard, but never hurts to be explicit, and this will be crucial for `{publication, _, _}` and `{article,_,_}` states because there are no guards for that in COLLECT DIGITS (see NOTE there)
-        #{                state := main_menu = State
-         ,       received_digit := "9"
-         % ,    collecting_digits := false
-         } ->
+        { main_menu, "9" } ->
             keep_state_and_data;
 
         % }}-
 
-        % === CATEGORIES (i.e., `{category, [..]}`)
-        % * (star)  {{- => Go back (previous menu) OR ignore
-        #{                state := {category, _} = State
-         ,       received_digit := "*"
-         % ,    collecting_digits := false
-         } ->
-            prev_menu(
-              #{ current_state => State
-               , data => Data
-               });
+        % === CATEGORY (loop)
+        % *          {{- => back (i.e., up in content hierarchy)
+        { category, "*" } ->
+            content_selection(up);
 
         % }}-
-        % #             => UNASSIGNED (see last case clause)
-        % 0         {{- => main_menu
-        #{                state := {category, _} = State
-         ,       received_digit := "0"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => main_menu
-               , data => Data
-               , current_state => State
-               });
+        % #          {{- => next category (i.e., next sibling)
+        { category, "#" } ->
+            content_selection(next);
 
         % }}-
-        % [1-9]     {{- => sub-categories (via COLLECT DIGITS)
-        %   See COLLECT DIGITS case clause at the end.
+        % 0          {{- => category_menu
+        { category, "0" } ->
+            {next_state, category_menu, Data};
+
         % }}-
-
-        % === PUBLICATIONS
-        % [1-9] when playing an article
-        #{                state := {publication, _, _} = State
-         ,       received_digit := "0"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => main_menu
-               , data => Data
-               , current_state => State
-               });
-
-        % === PLAY ARTICLE
-        % [1-9] when playing an article
-        #{                state := {article, _} = State
-         ,       received_digit := "0"
-         % ,    collecting_digits := false
-         } ->
-            next_menu(
-              #{ menu => main_menu
-               , data => Data
-               , current_state => State
-               });
-
-        % === COLLECT DIGITS
-        % [1-9] in any state AKA start collecting digits
-        % (except for `main_menu`, `{publication, _, _}`, and `article`) {{-
-        % NOTE Most of the guards are unnecessary (as previous clauses have already handled them), and are only here to make this clause explicit. TODO HOWEVER, they may be removed, because all possibilities are explicitly spelled out for each state (so hitting the unassigned 4 in main_menu shouldn't end up here to start collecting digits), and couldn't put the compound states (article & publication) in the guards as they are tuples, guards cannot be nested.
-        % Not checking whether we are collecting digits, because {{-
-        % this clause should be executed either way when digits 1 to 9 are pressed any time; if false, it means we are starting a new collection, and if true, we should keep collecting until the `interdigit_timer` times out (when the collected digits get evaluated).
-        % }}-
-        #{
-                    state := _State
-         , received_digit := Digit
-         }
-        % These states never collect digits and so [1-9] are instant actions without any IDTs. Listing them here is unecessary, as these digits within these states are called in previous clauses, but doing so makes it nice and explicit.
-        when
-            RootState =/= main_menu,
-            RootState =/= publication,
-            RootState =/= article,
-
-        %      % Only take digits in the [1-9] range
-             Digit =/= "0",
-             Digit =/= "*",
-             Digit =/= "#"
-        ->
+        % [1-9]      {{- => collect digits
+        { category, Digit } ->
             collect_digits(Data, Digit);
+        % }}-
+
+        % === CATEGORY_MENU (loop)
+        % *         {{- => back (to current category)
+        { category_menu, "*" } ->
+            content_selection(current);
 
         % }}-
-        % 0 in any state when collecting digits {{-
-        #{                state := collect_digits
-         ,       received_digit := "0"
-         }
-        ->
-            % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
-            % Could've put in previous clause, but more explicit this way
-            collect_digits(Data, "0");
+        % #         {{- => previous category (i.e., previous sibling)
+        { category_menu, "#" } ->
+            content_selection(prev);
 
         % }}-
-        % * (star) and # (pound) in any state when collecting digits (except `greeting`) {{-
-        % Ignore (i.e., add empty string, will be flattened during eval anyway), but renew `interdigit_timer`
-        % When a user presses them accidentally when signing in,
-        % or when selecting the category, it will get filtered
-        % out.
-        #{                state := collect_digits
-         ,       received_digit := Digit
-         }
-        when Digit =:= "*";
-             Digit =:= "#"
-             % Digit =:= "#",
+        % 0         {{- => main_menu
+        { category_menu, "0" } ->
+            {next_state, main_menu, Data};
 
-             % Innecessary; if collecting digits then `greeting` cannot be skipped anyway
-             % State =/= greeting
-        % Guards and logic reminder {{-
-        % (fun ({A, B})
-        %      when B =:= x,            B =:= x;                   B =:= z;
-        %           A =:= 0;            A =:= 0,                   A =:= 0,
-        %           B =:= y             B =:= y                    B =:= y;
-        %      ->                                                  A =/=7,
-        %          yay;                                            B =:= x
-        %      (_) ->
-        %          nono
-        %  end)    ({0, x}).  yay       ({0, x}).  yay            ({1, x}).  yay
-        %          ({1, x}).  nono      ({1, x}).  yay            ({0, z}).  yay
-        %          ({0, y}).  yay       ({0, y}).  yay            ({1, z}).  yay
-        %          ({1, y}).  yay       ({1, y}).  nono           ({7, z}).  yay
-        %                                                         ({0, y}).  yay
-        %                                                         ({7, y}).  nono
-        %                                                         ({7, x}).  nono
-        %                                                         ({6, x}).  yay
         % }}-
-        ->
-            collect_digits(Data, "");
+        % 1         {{- => UNASSIGNED (keep state and data)
+        { category_menu, "1" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 2         {{- => UNASSIGNED (keep state and data)
+        { category_menu, "2" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 3         {{- => UNASSIGNED (keep state and data)
+        { category_menu, "3" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 4         {{- => UNASSIGNED (keep state and data)
+        { category_menu, "4" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 5         {{- => UNASSIGNED (keep state and data)
+        { category_menu, "5" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 6         {{- => UNASSIGNED (keep state and data)
+        { category_menu, "6" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 7         {{- => Enter FIRST child (category/publication)
+        { category_menu, "7" } ->
+            content_selection(first);
+
+        % }}-
+        % 8         {{- => Jump to content root
+        { category_menu, "8" } ->
+            content_selection(content_root);
+
+        % }}-
+        % 9         {{- => Enter LAST child (category/publication)
+        { category_menu, "9" } ->
+            content_selection(last);
+
+        % }}-
+
+        % === PUBLICATION (-> first article, i.e., first child)
+        % *          {{- => back (i.e., up in content hierarchy)
+        { publication, "*" } ->
+            content_selection(up);
+
+        % }}-
+        % #          {{- => next publication (i.e., next sibling)
+        { publication, "#" } ->
+            content_selection(next);
+
+        % }}-
+        % 0          {{- => publication_menu
+        { publication, "0" } ->
+            {next_state, publication_menu, Data};
+
+        % }}-
+        % [1-9]      {{- => ignore (keep_state_and_data)
+        { publication, Digit } ->
+            keep_state_and_data;
+        % }}-
+
+        % === PUBLICATION_MENU (loop)
+        % *         {{- => back (to current category)
+        { publication_menu, "*" } ->
+            content_selection(current);
+
+        % }}-
+        % #         {{- => previous category (i.e., previous sibling)
+        { publication_menu, "#" } ->
+            content_selection(prev);
+
+        % }}-
+        % 0         {{- => main_menu
+        { publication_menu, "0" } ->
+            {next_state, main_menu, Data};
+
+        % }}-
+        % 1         {{- => UNASSIGNED (keep state and data)
+        { publication_menu, "1" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 2         {{- => UNASSIGNED (keep state and data)
+        { publication_menu, "2" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 3         {{- => UNASSIGNED (keep state and data)
+        { publication_menu, "3" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 4         {{- => UNASSIGNED (keep state and data)
+        { publication_menu, "4" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 5         {{- => UNASSIGNED (keep state and data)
+        { publication_menu, "5" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 6         {{- => UNASSIGNED (keep state and data)
+        { publication_menu, "6" } ->
+            keep_state_and_data;
+
+        % }}-
+        % 7         {{- => Start playing FIRST article (i.e., first child)
+        { publication_menu, "7" } ->
+            content_selection(first);
+
+        % }}-
+        % 8         {{- => List articles
+        { publication_menu, "8" } ->
+            content_selection(children);
+
+        % }}-
+        % 9         {{- => Start playing LAST article (i.e., last child)
+        { publication_menu, "9" } ->
+            content_selection(last);
+
+        % }}-
+
+        % === ARTICLE (-> content_selection(next) )
+        % *          {{- => back (i.e., up in content hierarchy)
+        { article, "*" } ->
+            content_selection(up);
+
+        % }}-
+        % #          {{- => next article (i.e., next sibling)
+        { article, "#" } ->
+            content_selection(next);
+
+        % }}-
+        % 0          {{- => article_menu
+        { article, "0" } ->
+            {next_state, article_menu, Data};
+
+        % }}-
+        % 1          {{- => rewind (10s)
+        { article, "1" } ->
+
+        % }}-
+        % 2          {{- => pause/start
+        { article, "2" } ->
+
+        % }}-
+        % 3          {{- => forward (10s)
+        { article, "3" } ->
+
+        % }}-
+        % 4          {{- => slower
+        { article, "4" } ->
+
+        % }}-
+        % 5          {{- => volume down
+        { article, "5" } ->
+
+        % }}-
+        % 6          {{- => faster
+        { article, "6" } ->
+
+        % }}-
+        % TODO add to favourites
+        % 7          {{- => UNASSIGNED (keep state and data)
+        { article, "7" } ->
+
+        % }}-
+        % 8          {{- => volume up
+        { article, "8" } ->
+
+        % }}-
+        % 9          {{- => previous article (i.e., previous sibling)
+        { article, "9" } ->
+            content_selection(prev);
+
+        % }}-
+
+        % === ARTICLE_MENU (loop)
+        % *          {{- => back (i.e., up in content hierarchy)
+        { article_menu, "*" } ->
+            content_selection(current);
+
+        % }}-
+        % #          {{- => previous article_menu (i.e., previous sibling)
+        { article_menu, "#" } ->
+            content_selection(prev);
+
+        % }}-
+        % 0          {{- => main_menu
+        { article_menu, "0" } ->
+            {next_state, article_menu, Data};
+
+        % }}-
+        % 1          {{- => reset volume
+        { article_menu, "1" } ->
+
+        % }}-
+        % 2          {{- => reset speed
+        { article_menu, "2" } ->
+
+        % }}-
+
+        % === INACTIVITY_WARNING (-> current content)
+        % [*#0-9]    {{- => ignore (keep_state_and_data)
+        { inactivity_warning, _Digit} ->
+            keep_state_and_data;
+
+        % }}-
+
+        % === INVALID_SELECTION_WARNING (-> current content)
+        % [*#0-9]    {{- => ignore (keep_state_and_data)
+        { invalid_selection_warning, _Digit} ->
+            keep_state_and_data;
+
         % }}-
 
         % TODO Nothing should ever end up here, so remove once the basics are done
@@ -1029,9 +1140,19 @@ handle_event(
     case
         #{    current_state => State
          , stopped_playback => PlaybackName
+         % TODO: is stopped status necessary? If not, is there a scenario where it may be in the future?
+         % NOTE it is superfluous: {{-
+         % When CHANNEL_EXECUTE_COMPLETE playback of the same name as the state comes in, it means that nothing has stopped the playback, because the `stopped_playback/1` function is only called in the state enter function on state change. As a corollary, every other time where PlaybackName =/= State means that the playback has been stopped
+         % That is, the stopped status can be derived from the current state and ended playback.
+         % }}-
          ,       is_stopped => IsStopped
          }
     of
+        % === GREETING playback
+        % playback stops {{- => X
+        % No playback before greeting, hence nothing can stop here.
+        % }}-
+        % ended          {{- => content_root
         % The only playback that can be stopped in `greeting` is when the `greeting` playback finished playing, and instead of looping like in other menus, `greeting` should only play once, and should transition to `?CATEGORIES`
         % `is_stopped` is set to expect false, because it should not be possible to receive a `CHANNEL_EXECUTE_COMPLETE` of greeting in greeting that is true. Any input results in moving to another state while stopping greeting, therefore the resulting CHANNEL_EXECUTE_COMPLETE will arrive in some other state. And if greeting finished playing, it means we do not loop, but go to ?CATEGORIES.
         #{    current_state := greeting
@@ -1039,12 +1160,94 @@ handle_event(
          ,       is_stopped := false
          }
         ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
-            next_menu(
-              #{ menu => ?CATEGORIES
-               , data => NewData
-               , current_state => greeting
-               });
+            % logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
+            content_selection(content_root, NewData);
+
+        % }}-
+        % stopped        {{- => ignore (keep_state)
+        #{    current_state := _State
+         , stopped_playback := greeting
+         ,       is_stopped := true
+         }
+        ->
+            {keep_state, NewData};
+        % }}-
+
+        % === COLLECT_DIGITS
+        % playback stops {{- => ignore (keep_state)
+        % No playback ends in COLLECT_DIGITS naturally, because all playbacks are stopped upon state change (because of the state enter function), and COLLECT_DIGITS doesn't play anything
+        #{    current_state := collect_digits
+         , stopped_playback := _PlaybackName
+         ,       is_stopped := true
+         }
+        ->
+            {keep_state, NewData};
+        % }}-
+        % ended          {{- => X
+        % `collect_digits` does not play anything
+        % }}-
+        % stopped        {{- => X
+        % `collect_digits` does not play anything
+        % }}-
+
+        % Warnings are uninterruptable (except for hanging up, see HANDLE_DTMF_FOR_ALL_STATES), hence `is_stopped` should always be `false`.
+        % === INACTIVITY_WARNING
+        % playback stops {{- => ignore (keep_state)
+        #{    current_state := inactivity_warning
+         , stopped_playback := _PlaybackName
+         ,       is_stopped := true
+         }
+        ->
+            {keep_state, NewData};
+
+        % }}-
+        % ended          {{- => current content
+        #{    current_state := inactivity_warning
+         , stopped_playback := inactivity_warning
+         ,       is_stopped := false
+         }
+        ->
+            content_selection(current, NewData);
+
+        % }}-
+
+        % === INVALID_SELECTION_WARNING
+        % playback stops {{- => ignore (keep_state)
+        #{    current_state := inactivity_warning
+         , stopped_playback := _PlaybackName
+         ,       is_stopped := true
+         }
+        ->
+            {keep_state, NewData};
+
+        % }}-
+        % ended          {{- => current content
+        #{    current_state := invalid_selection_warning
+         , stopped_playback := invalid_selection_warning
+         ,       is_stopped := false
+         }
+        ->
+            content_selection(current, NewData);
+        % }}-
+
+        % === MAIN_MENU playback
+        % ended {{- => loop
+        #{    current_state := main_menu
+         , stopped_playback := main_menu
+         ,       is_stopped := false
+         }
+        ->
+            {repeat_state, NewData};
+
+        % }}-
+        % stopped {{- ignore and keep playing current state
+        #{    current_state := _State
+         , stopped_playback := main_menu
+         ,       is_stopped := true
+         }
+        ->
+            {keep_state, NewData};
+        % }}-
 
         % Playback stopped naturally, repeat menu.
         #{    current_state := _State
@@ -1052,7 +1255,7 @@ handle_event(
          ,       is_stopped := false
          }
         ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, warning, false} }),
+            logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, warning, false} }),
             % comfort_noise(2000),
             repeat_menu(
                 #{ menu => State
@@ -1180,9 +1383,9 @@ handle_event(
         % % SCENARIO II
         % % 4. (STATE: main_menu) # pressed
         % % 5. DTMF event processed in HANDLE_DTMF_FOR_ALL_STATES
-        % %    calling `leave_menu/1` (async playback stop, and go to sign_in/favorites)
+        % %    calling `leave_menu/1` (async playback stop, and go to sign_in/Favourites)
         % %    ===> will not result any event, because there is no other playback
-        % % 6. (STATE: sign_in/favorites) CHANNEL_EXECUTE_COMPLETE comes in for the stopped greeting
+        % % 6. (STATE: sign_in/Favourites) CHANNEL_EXECUTE_COMPLETE comes in for the stopped greeting
         % % 7. HANDLE_CHANNEL_EXECUTE_COMPLETE clause
         % #{        state := State
         %  , playback_ids := #{ greeting := PlaybackID }
@@ -1255,6 +1458,7 @@ handle_event(
             keep_state_and_data;
 
         unregistered ->
+            % TODO speak notice that hanging up as demo timer expired, and goodbye (don't forget to add new warning state to HANDLE_DTMF_FOR_ALL_STATES, and HANDLE_CHANNEL_EXECUTE_COMPLETE!)
             next_menu(
               #{ menu => {hangup, demo}
                , data => Data
@@ -1305,6 +1509,12 @@ handle_event(
 %% }}-
 
 % TODO Eval on 2 digits immediately to speed up things
+collect_digits(Data, Digit)
+    when Digit =:= "*";
+         Digit =:= "#"
+->
+    collect_digits(Data, "");
+
 collect_digits( % {{-
   #{recvd_digits := ReceivedDigits} = Data,
   Digit % string
@@ -1520,7 +1730,7 @@ stop_playback(#{ playbacks := [{_, _, true}|_] } = Data) ->
     Data;
 
 % Stop the currently playing prompt
-% (but just in case, end everything, even though only one should be playing only)
+% (but just in case, stop all, even though only one should be playing at any time)
 stop_playback( % {{-
   #{ playbacks :=
      [ { ApplicationUUID % |
@@ -1673,7 +1883,7 @@ play(
     Pound =
         case AuthStatus of
             registered ->
-                "For your favorites, ";
+                "For your Favourites, ";
             unregistered ->
                 "To log in, "
         end
@@ -2445,9 +2655,32 @@ ivr_graph() ->
     add_vertices(
       [ init
       , incoming_call
+      , greeting
+
+      , main_menu
+
+      , collect_digits
+      , content_selection
+
+      , category
+      , publication
+      , empty_publication
+      , article
       ]
     ),
-    add_default_edge(init, incoming_call).
+
+    % init
+    add_default_edge(init, incoming_call),
+
+    % incoming_call
+    add_default_edge(incoming_call, greeting),
+
+    % init
+    add_default_edge(greeting, content_selection).
+    % init
+    % init
+    % init
+    % init
 
 get_state() ->
     {_Edge, _From, To, _Label} =
@@ -2459,7 +2692,7 @@ update_state(NewState) ->
     digraph:del_edge(Graph, current_state),
     digraph:add_edge(Graph, current_state, current_state, NewState, []).
 
-next() ->
+default() ->
     {_Edge, _From, To, _Label} =
         digraph:edge
           ( get(ivr_graph)
