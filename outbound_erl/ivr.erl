@@ -136,17 +136,11 @@ handle_event(enter, OldState, State, Data) -> % {{-
     %         end
     %     end,
 
-    % ComfortFun =
-    %     fun(D) ->
-    %         comfort_noise(),
-    %         D
-    %     end,
-
-    GetNewData =
+    NewData =
         composeFlipped(
           % [ HistoryFun
           [ fun stop_playback/1
-          % , ComfortFun
+          , fun(GenData) -> comfort_noise(), GenData end
           , fun(GenData) -> play(State, GenData) end
           ]
         ),
@@ -1038,16 +1032,11 @@ handle_event(
 
         % }}-
 
-        % === INACTIVITY_WARNING (-> current content)
+        % === UNINTERRUPTABLE STATES
+        % warnings -> current content
+        % hangups  -> keep_state_and_data
         % [*#0-9]    {{- => ignore (keep_state_and_data)
-        { inactivity_warning, _Digit} ->
-            keep_state_and_data;
-
-        % }}-
-
-        % === INVALID_SELECTION_WARNING (-> current content)
-        % [*#0-9]    {{- => ignore (keep_state_and_data)
-        { invalid_selection_warning, _Digit} ->
+        { {_CompoundStateID, _}, _Digit} ->
             keep_state_and_data;
 
         % }}-
@@ -1125,280 +1114,61 @@ handle_event(
     %      }
     % } = Playbacks,
     { ApplicationUUID
-    , PlaybackName
+    , StoppedPlayback
     , IsStopped
     } =
         proplists:lookup(ApplicationUUID, Playbacks),
+
     NewPlaybacks =
         proplists:delete(ApplicationUUID, Playbacks),
     NewData =
         Data#{ playbacks := NewPlaybacks },
+    % NewData =
+    %     ( composeFlipped(
+    %         [ (curry(fun proplists:delete/2))(ApplicationUUID)
+    %         , fun(Value) -> maps:update(playbacks, Value, Data) end
+    %         ]
+    %       )
+    %     )(Data),
 
     % logger:debug(#{event => E}),
 
-    % Document the six possible cases with truth table and their notes
-    case
-        #{    current_state => State
-         , stopped_playback => PlaybackName
-         % TODO: is stopped status necessary? If not, is there a scenario where it may be in the future?
-         % NOTE it is superfluous: {{-
-         % When CHANNEL_EXECUTE_COMPLETE playback of the same name as the state comes in, it means that nothing has stopped the playback, because the `stopped_playback/1` function is only called in the state enter function on state change. As a corollary, every other time where PlaybackName =/= State means that the playback has been stopped
-         % That is, the stopped status can be derived from the current state and ended playback.
-         % }}-
-         ,       is_stopped => IsStopped
-         }
-    of
-        % === GREETING playback
-        % playback stops {{- => X
-        % No playback before greeting, hence nothing can stop here.
-        % }}-
-        % ended          {{- => content_root
-        % The only playback that can be stopped in `greeting` is when the `greeting` playback finished playing, and instead of looping like in other menus, `greeting` should only play once, and should transition to `?CATEGORIES`
-        % `is_stopped` is set to expect false, because it should not be possible to receive a `CHANNEL_EXECUTE_COMPLETE` of greeting in greeting that is true. Any input results in moving to another state while stopping greeting, therefore the resulting CHANNEL_EXECUTE_COMPLETE will arrive in some other state. And if greeting finished playing, it means we do not loop, but go to ?CATEGORIES.
-        #{    current_state := greeting
-         , stopped_playback := greeting
-         ,       is_stopped := false
-         }
-        ->
-            % logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
-            content_selection(content_root, NewData);
-
-        % }}-
-        % stopped        {{- => ignore (keep_state)
-        #{    current_state := _State
-         , stopped_playback := greeting
-         ,       is_stopped := true
-         }
-        ->
-            {keep_state, NewData};
-        % }}-
-
-        % === COLLECT_DIGITS
-        % playback stops {{- => ignore (keep_state)
-        % No playback ends in COLLECT_DIGITS naturally, because all playbacks are stopped upon state change (because of the state enter function), and COLLECT_DIGITS doesn't play anything
-        #{    current_state := collect_digits
-         , stopped_playback := _PlaybackName
-         ,       is_stopped := true
-         }
-        ->
-            {keep_state, NewData};
-        % }}-
-        % ended          {{- => X
-        % `collect_digits` does not play anything
-        % }}-
-        % stopped        {{- => X
-        % `collect_digits` does not play anything
-        % }}-
-
-        % Warnings are uninterruptable (except for hanging up, see HANDLE_DTMF_FOR_ALL_STATES), hence `is_stopped` should always be `false`.
-        % === INACTIVITY_WARNING
-        % playback stops {{- => ignore (keep_state)
-        #{    current_state := inactivity_warning
-         , stopped_playback := _PlaybackName
-         ,       is_stopped := true
-         }
-        ->
+    % TODO every `play/2` clause should have a corresponding entry here
+    %      (or vice versa, every state mentioned here should have a `play/2` clause`
+    case State of
+        % `is_stopped` should always be TRUE in this scenario
+        _ when StoppedPlayback =/= State ->
             {keep_state, NewData};
 
-        % }}-
-        % ended          {{- => current content
-        #{    current_state := inactivity_warning
-         , stopped_playback := inactivity_warning
-         ,       is_stopped := false
-         }
-        ->
-            content_selection(current, NewData);
-
-        % }}-
-
-        % === INVALID_SELECTION_WARNING
-        % playback stops {{- => ignore (keep_state)
-        #{    current_state := inactivity_warning
-         , stopped_playback := _PlaybackName
-         ,       is_stopped := true
-         }
-        ->
-            {keep_state, NewData};
-
-        % }}-
-        % ended          {{- => current content
-        #{    current_state := invalid_selection_warning
-         , stopped_playback := invalid_selection_warning
-         ,       is_stopped := false
-         }
-        ->
-            content_selection(current, NewData);
-        % }}-
-
-        % === MAIN_MENU playback
-        % ended {{- => loop
-        #{    current_state := main_menu
-         , stopped_playback := main_menu
-         ,       is_stopped := false
-         }
+        % `is_stopped` should always be FALSE in this scenario
+        % STATES TO BE LOOPED
+        _ when StoppedPlayback =:= State,
+               State =:= main_menu;
+               State =:= category;
+               State =:= category_menu;
+               State =:= publication_menu;
+               State =:= article_menu
         ->
             {repeat_state, NewData};
 
-        % }}-
-        % stopped {{- ignore and keep playing current state
-        #{    current_state := _State
-         , stopped_playback := main_menu
-         ,       is_stopped := true
-         }
-        ->
-            {keep_state, NewData};
-        % }}-
+        greeting ->
+            content_selection(content_root, NewData);
 
-        % Playback stopped naturally, repeat menu.
-        #{    current_state := _State
-         , stopped_playback := warning
-         ,       is_stopped := false
-         }
-        ->
-            logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, warning, false} }),
-            % comfort_noise(2000),
-            repeat_menu(
-                #{ menu => State
-                 , data => NewData
-                 });
+        {warning, _} ->
+            content_selection(current, NewData);
 
-        % Warning playback interrupted by user input; either to go to another menu (so a playback is already playing), or another warning (so ignore a stopped warning, because the other warning is running, and when it stops naturally, it will repeat the current menu (see above))
-        #{    current_state := _State
-         , stopped_playback := warning
-         ,       is_stopped := true
-         }
-        ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, warning, true} }),
-            {keep_state, NewData};
+        % Not really necessary to handle this, but it's here for completeness sake
+        {hangup, _} ->
+            keep_state_and_data;
 
-        % playback has been stopped but state remains the same (e.g., to play `invalid_selection/0`), so ignore. Once the warning finishes, it will repeat the same state menu
-        #{ is_stopped := true }
-        when State =:= PlaybackName
-        ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName, true} }),
-            {keep_state, NewData};
+        publication ->
+            content_selection(first, NewData);
 
-        % playback stopped naturally in the same state where it was started, so repeat it.
-        #{ is_stopped := false }
-        when State =:= PlaybackName
-        ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName, false} }),
-            % comfort_noise(2000),
-            repeat_menu(
-                #{ menu => State
-                 , data => NewData
-                 });
+        article ->
+            content_selection(next, NewData)
 
-        % CHANNEL_EXECUTE_COMPLETE "residue" after a state change
-        #{ is_stopped := true }
-        when State =/= PlaybackName ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
-            {keep_state, NewData};
-
-        % the only possibility not checked yet (unless I'm an idiot), and this shouldn't be possible. It would mean that a playback has stopped naturally, and `gen_statem` wandered off into another state.
-        % As the above should never happen, this is also good to test whether I did something wrong, and it actually does happen by making the process crash.
-        #{ is_stopped := false }
-        when State =/= PlaybackName ->
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", the_case => {State, PlaybackName} }),
-            % BUT this clause may be a possibility when adding `collect_digits` state - user hits [1-9] to start collection in eligible states, the playback is running, user has two seconds the enter the next digit, AND the edge case happens: the playback stops naturally, and we are in another state
-            % WHAT TO DO? probably just ignore (i.e., {keep_state, NewData}) because the interdigit_timer will time out in a second, triggering evaluation of collected digits, so depending on the outcome there will be a warning, go back to the previous menu, or go forth to the selected one etc.
-            crash_because_you_are_an_idiot
+        % collect_digits has no playback, hence no clause here
     end;
-
-        % % `greeting` stopped (for whatever reason; no loop anyway) {{-
-        % RESERVED Playback stopped by `unregistered_timer`
-        % RESERVED Exit prompt finished playing -> hang up
-
-
-        % %     IN main_menu {{-
-        % % An example on how to get here: {{-
-        % % 1. playback started in CALL_ANSWERED via `enter_menu/1`
-        % %    (state change: incoming_call -> greeting)
-        % % 2. 0 pressed while greeting was playing, async playback stop command issued, and state changed from `greeting` to `main_menu` via `leave_menu/1`
-        % % 3. A `CHANNEL_EXECUTE_COMPLETE` FreeSWITCH event arrived, signifying that something stopped a playback. The current state is main_menu (because of step 2. above), the map in Data#playback_ids only has one entry containing the application UUID when starting a playback in greeting. If the guard matches, it means that this event is a confirmation from FreeSWITCH is from the stopped greeting.
-        % % }}-
-        % #{        state := main_menu
-        %  , playback_ids := #{ greeting := PlaybackID }
-        %  }
-        % when PlaybackID =:= ApplicationUUID
-        % ->
-        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN main_menu"),
-        %     play_menu(main_menu, Data);
-        % % }}-
-
-        % %     IN ?CATEGORIES {{-
-        % #{        state := ?CATEGORIES
-        %  , playback_ids := #{ greeting := PlaybackID }
-        %  }
-        % when PlaybackID =:= ApplicationUUID
-        % ->
-        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN ?CATEGORIES"),
-        %     play_menu(?CATEGORIES, Data);
-        % % }}-
-
-        % %     IN a sub-category (i.e., `{category, [..]}`) {{-
-        % #{        state := State
-        %  , playback_ids := #{ greeting := PlaybackID }
-        %  }
-        % when element(1, State) =:= category,
-        %      PlaybackID =:= ApplicationUUID
-        % ->
-        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN " ++ s(State)),
-        %     play_menu(State, Data);
-        % % }}-
-
-        % %     IN greeting (i.e., playback ran its course) {{-
-        % #{        state := greeting
-        %  % NOTE This and the guard shouldn't even be necessary, {{-
-        %  % because the only other playback that can end in `greeting` is the comfort noise, but why not check it if it is already there (plus I may have messed up)
-        %  % }}-
-        %  , playback_ids := #{ greeting := PlaybackID }
-        %  }
-        % when PlaybackID =:= ApplicationUUID
-        % ->
-        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN greeting (natural stop)"),
-        %     enter_menu(
-        %       #{ from => greeting
-        %        , to   => ?CATEGORIES
-        %        , data => Data
-        %        }
-        %     );
-        % % }}-
-
-        % %     IN any other state, start the menu where it arrived {{-
-        % % TODO is this going to be a general case?
-
-        % % TODO so how to deal with events like the 0# transition?
-        % % 1. incoming_call -> greeting starts
-        % % 2. (STATE: greeting) 0 pressed
-        % % 3. (STATE: greeting)
-        % %    FreeSWITCH DTMF event processed in HANDLE_DTMF_FOR_ALL_STATES the case clause,
-        % %    issues `leave_menu/1` (requests async playback stop, and sets state to main_menu)
-
-        % % SCENARIO I
-        % % 4. (STATE: main_menu)
-        % %    CHANNEL_EXECUTE_COMPLETE (confirming that playback stopped) processed in
-        % %    HANDLE_CHANNEL_EXECUTE_COMPLETE (`enter_menu/1` resulting in `main_menu` playback
-
-        % % SCENARIO II
-        % % 4. (STATE: main_menu) # pressed
-        % % 5. DTMF event processed in HANDLE_DTMF_FOR_ALL_STATES
-        % %    calling `leave_menu/1` (async playback stop, and go to sign_in/Favourites)
-        % %    ===> will not result any event, because there is no other playback
-        % % 6. (STATE: sign_in/Favourites) CHANNEL_EXECUTE_COMPLETE comes in for the stopped greeting
-        % % 7. HANDLE_CHANNEL_EXECUTE_COMPLETE clause
-        % #{        state := State
-        %  , playback_ids := #{ greeting := PlaybackID }
-        %  }
-        % when PlaybackID =:= ApplicationUUID
-        % ->
-        %     logger:debug("HANDLE_CHANNEL_EXECUTE_COMPLETE - greeting stop IN " ++ s(State)),
-        %     % Ignore this event entirely
-        %     keep_state_and_data;
-        % % }}-
-
-    % end;
-        % % }}-
 %% }}-
 
 %% Debug clauses for `internal` events {{-
@@ -1479,24 +1249,26 @@ handle_event(
     NewData =
         Data#{ recvd_digits := [] },
 
-    case eval_collected_digits(ReceivedDigits, State) of
+    % case eval_collected_digits(ReceivedDigits, State) of
+    case content_selection(collected_digits, ReceivedDigits) of
 
         % `greeting`  -> `Category`  state change  is a  valid
         % one, so when there is an invalid entry in `greeting`
         % when collecting  digits, play  `?CATEGORIES`, ignore
         % the return value  (because `repeat_menu/1` ends with
         % `keep_state`), and drop to `?CATEGORIES
-        invalid when State =:= greeting ->
-            logger:debug(#{ a => "INTERDIGIT_TIMEOUT (invalid in greeting)", collected_digits => ReceivedDigits, state => State}),
-            NewDataWithUpdatedPlaybacks =
-                warning( invalid_selection(), NewData ),
-            {next_state, ?CATEGORIES, NewDataWithUpdatedPlaybacks};
+        % invalid when State =:= greeting ->
+            % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (invalid in greeting)", collected_digits => ReceivedDigits, state => State}),
+            % NewDataWithUpdatedPlaybacks =
+            %     warning( invalid_selection(), NewData ),
+            % {next_state, ?CATEGORIES, NewDataWithUpdatedPlaybacks};
 
         invalid ->
-            logger:debug(#{ a => "INTERDIGIT_TIMEOUT (simply invalid)", collected_digits => ReceivedDigits, state => State}),
-            NewDataWithUpdatedPlaybacks =
-                warning( invalid_selection(), NewData ),
-            {keep_state, NewDataWithUpdatedPlaybacks};
+            % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (simply invalid)", collected_digits => ReceivedDigits, state => State}),
+            % NewDataWithUpdatedPlaybacks =
+            %     warning( invalid_selection(), NewData ),
+            % {keep_state, NewDataWithUpdatedPlaybacks};
+            {next_state, {warning, invalid_selection}, NewData};
 
         Category ->
             logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
@@ -1534,31 +1306,31 @@ collect_digits( % {{-
     {next_state, collect_digits, NewData, [ InterDigitTimer ]}.
 % }}-
 
-eval_collected_digits([_|_] = ReceivedDigits, State) -> % {{-
-    CurrentCategoryDir =
-        case State of
-            greeting ->
-                ?CONTENT_ROOT;
+% eval_collected_digits([_|_] = ReceivedDigits, State) -> % {{-
+%     CurrentCategoryDir =
+%         case State of
+%             greeting ->
+%                 ?CONTENT_ROOT;
 
-            {category, CategoryDir} ->
-                CategoryDir
+%             {category, CategoryDir} ->
+%                 CategoryDir
 
-            % Not checking for {publication, _, _} because digit collection is disallowed there
-        end,
+%             % Not checking for {publication, _, _} because digit collection is disallowed there
+%         end,
 
-    SelectionDir =
-        filename:join(
-          CurrentCategoryDir,
-          ReceivedDigits
-        ),
+%     SelectionDir =
+%         filename:join(
+%           CurrentCategoryDir,
+%           ReceivedDigits
+%         ),
 
-    case filelib:is_dir(SelectionDir) of
-        false ->
-            invalid;
-        true ->
-            {category, SelectionDir}
-    end.
-% }}-
+%     case filelib:is_dir(SelectionDir) of
+%         false ->
+%             invalid;
+%         true ->
+%             {category, SelectionDir}
+%     end.
+% % }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions %%
@@ -1744,6 +1516,12 @@ stop_playback( % {{-
     % logger:debug("stop playback"),
     % TODO Should this  be `bgapi`? Will the  synchronous `api`
     %      call wreak havoc when many users are calling?
+
+    % TODO: is stopped status necessary? If not, is there a scenario where it may be in the future?
+    % NOTE it is superfluous: {{-
+    % When CHANNEL_EXECUTE_COMPLETE playback of the same name as the state comes in, it means that nothing has stopped the playback, because the `stopped_playback/1` function is only called in the state enter function on state change. As a corollary, every other time where PlaybackName =/= State means that the playback has been stopped
+    % That is, the stopped status can be derived from the current state and ended playback.
+    % }}-
     fsend({api, uuid_break, get(uuid) ++ " all"}),
     Data#{ playbacks := [{ApplicationUUID, PlaybackName, true}|Rest] }.
 % }}-
@@ -1827,49 +1605,8 @@ comfort_noise() ->
 sign_up() ->
     "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
 
-invalid_selection() ->
-    "Invalid selection. Please try again from the following categories.".
-% }}-
-
-% TODO Try out `mod_vlc` to play aac and m4a files. {{-
-% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
-% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
-% }}-
-play(
-  greeting = State,
-  #{ auth_status := AuthStatus
-   } = Data
-) -> % {{-
-    % logger:debug("play greeting"),
-    Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
-    PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
-    Unregistered =
-        case AuthStatus of
-            registered ->
-                "";
-            unregistered ->
-                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0, pound, followed by your code."
-                ++ sign_up()
-                ++ "To leave a message with your contact details, dial 0 2."
-        end,
-    GoToTutorial = "To listen to the tutorial, dial 01.",
-    GoToBlindnessServices = "To learn about other blindness services, dial 03.",
-    LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.",
-
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text =>
-           stitch(
-             [ Anchor
-             , Unregistered
-             , PoundOrStar
-             , GoToTutorial
-             , GoToBlindnessServices
-             , LeaveMessage
-             ])
-       }
-    );
+% invalid_selection() ->
+%     "Invalid selection. Please try again.".
 % }}-
 
 play(
@@ -1878,7 +1615,7 @@ play(
    } = Data
 ) -> % {{-
     Anchor = "Main menu.",
-    Zero = "For quick help, press 0.",
+    % Zero = "For quick help, press zero.",
     Star = "To go back to he previous menu, press star.",
     Pound =
         case AuthStatus of
@@ -1888,11 +1625,12 @@ play(
                 "To log in, "
         end
         ++ "press pound.",
-    Eight = "To go back to the main categories, press 8.",
-    Five = "For settings, press 5.",
-    One = "To start the tutorial, press 1.",
-    Two = "To leave a message, press 2.",
-    Three = "To learn about other blindness resources, press 3.",
+    % Zero = history listing
+    One = "To start the tutorial, press one.",
+    Two = "To leave a message, press two.",
+    % Three = "For settings, press three.",
+    Four = "To learn about other blindness resources, press four.",
+    % Five = randomize playback.
 
     speak(
       #{ playback_name => State
@@ -1900,21 +1638,20 @@ play(
        , text =>
            stitch(
              [ Anchor
-             , Zero
-             , One
+             % , Zero
              , Star
              , Pound
-             , Eight
-             , Five
+             , One
              , Two
-             , Three
+             % , Three
+             , Four
              ])
        }
     );
 % }}-
 
-% play({category, Vertex}, _Data) ->
-play({category, CategoryDir} = State, Data) -> % {{-
+% TODO
+play(category = State, Data) -> % {{-
     {category, _, Anchor} =
         get_meta(CategoryDir),
     Zero =
@@ -1941,6 +1678,74 @@ play({category, CategoryDir} = State, Data) -> % {{-
        }
      );
 % }}-
+
+play(category_menu, Data) ->
+    done;
+
+play(publication_menu, Data) ->
+    done;
+
+play(article_menu, Data) ->
+    done;
+
+% TODO Try out `mod_vlc` to play aac and m4a files. {{-
+% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
+% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
+% }}-
+play(
+  greeting = State,
+  #{ auth_status := AuthStatus
+   } = Data
+) -> % {{-
+    % logger:debug("play greeting"),
+    Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
+    PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
+    Unregistered =
+        case AuthStatus of
+            registered ->
+                "";
+            unregistered ->
+                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial zero pound, followed by your code."
+                ++ sign_up()
+                ++ "To leave a message with your contact details, dial zero two."
+        end,
+    GoToTutorial = "To listen to the tutorial, dial zero one.",
+    GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
+    LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial zero two to leave a message.",
+
+    speak(
+      #{ playback_name => State
+       , data => Data
+       , text =>
+           stitch(
+             [ Anchor
+             , Unregistered
+             , PoundOrStar
+             , GoToTutorial
+             , GoToBlindnessServices
+             , LeaveMessage
+             ])
+       }
+    );
+% }}-
+
+play({warning, inactivity} = State, Data) ->
+    WarningPrompt =
+        "Please press any key if you are still there.",
+    speak(
+      #{ playback_name => State
+       , data => Data
+       , text => WarningPrompt
+       });
+
+play({warning, invalid_selection} = State, Data) ->
+    WarningPrompt =
+        "Invalid selection. Please try again.",
+    speak(
+      #{ playback_name => State
+       , data => Data
+       , text => WarningPrompt
+       });
 
 play({hangup, demo} = State, Data) -> % {{-
     speak(
@@ -1990,6 +1795,11 @@ speak( % {{-
     Playback =
         { ApplicationUUID
         , PlaybackName % Only for convenience; already part of `ApplicationUUID`.
+        % TODO: is stopped status necessary? If not, is there a scenario where it may be in the future?
+        % NOTE it is superfluous: {{-
+        % When CHANNEL_EXECUTE_COMPLETE playback of the same name as the state comes in, it means that nothing has stopped the playback, because the `stopped_playback/1` function is only called in the state enter function on state change. As a corollary, every other time where PlaybackName =/= State means that the playback has been stopped
+        % That is, the stopped status can be derived from the current state and ended playback.
+        % }}-
         , false % Has the playback been stopped?
         },
         % #{ playback_name => PlaybackName
@@ -2066,15 +1876,15 @@ pop_history(#{ menu_history := [PrevState | RestHistory] } = Data) ->
 
 % TODO warning will become a new state, so eliminate this clause
 %      and create a `play` clause for it
-warning(WarningPrompt, Data) -> % {{-
-    logger:debug("SPEAK_WARNING: " ++ WarningPrompt),
-    NewData = stop_playback(Data),
-    comfort_noise(),
-    speak(
-      #{ playback_name => warning
-       , data => NewData
-       , text => WarningPrompt
-       }).
+% warning(WarningPrompt, Data) -> % {{-
+%     logger:debug("SPEAK_WARNING: " ++ WarningPrompt),
+%     NewData = stop_playback(Data),
+%     comfort_noise(),
+%     speak(
+%       #{ playback_name => warning
+%        , data => NewData
+%        , text => WarningPrompt
+%        }).
 % }}-
 
 % never push history (no point because just replaying menu prompt)
