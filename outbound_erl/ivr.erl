@@ -22,7 +22,7 @@
 -define(CONTENT_ROOT, "/home/toraritte/clones/phone-service/content-root/").
 % -define(CATEGORIES, {category, 0, ?CONTENT_ROOT}).
 -define(CATEGORIES, {category, 0, "Main category"}).
-erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -sname access_news -setcookie OldTimeRadio
+% erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -sname access_news -setcookie OldTimeRadio
 % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
 -define(DEMO_TIMEOUT, 300000). % 5 min
 -define(INTERDIGIT_TIMEOUT, 2000).
@@ -619,89 +619,18 @@ handle_event(
         % or forward in history instead of back?
 
         % === COLLECT_DIGITS
-        % === old COLLECT DIGITS {{-
-        % % [1-9] in any state AKA start collecting digits
-        % % (except for `main_menu`, `{publication, _, _}`, and `article`) {{-
-        % % NOTE Most of the guards are unnecessary (as previous clauses have already handled them), and are only here to make this clause explicit. TODO HOWEVER, they may be removed, because all possibilities are explicitly spelled out for each state (so hitting the unassigned 4 in main_menu shouldn't end up here to start collecting digits), and couldn't put the compound states (article & publication) in the guards as they are tuples, guards cannot be nested.
-        % % Not checking whether we are collecting digits, because {{-
-        % % this clause should be executed either way when digits 1 to 9 are pressed any time; if false, it means we are starting a new collection, and if true, we should keep collecting until the `interdigit_timer` times out (when the collected digits get evaluated).
-        % % }}-
-        % #{
-        %             state := _State
-        %  , received_digit := Digit
-        %  }
-        % % These states never collect digits and so [1-9] are instant actions without any IDTs. Listing them here is unecessary, as these digits within these states are called in previous clauses, but doing so makes it nice and explicit.
-        % when
-        %     RootState =/= main_menu,
-        %     RootState =/= publication,
-        %     RootState =/= article,
-
-        % %      % Only take digits in the [1-9] range
-        %      Digit =/= "0",
-        %      Digit =/= "*",
-        %      Digit =/= "#"
-        % ->
-        %     collect_digits(Data, Digit);
-
-        % % }}-
-        % % 0 in any state when collecting digits {{-
-        % #{                state := collect_digits
-        %  ,       received_digit := "0"
-        %  }
-        % ->
-        %     % Same as the previous clause, and zero is just an element now in the DTMF buffer that will get evaluated when the `interdigit_timer` expires
-        %     % Could've put in previous clause, but more explicit this way
-        %     collect_digits(Data, "0");
-
-        % % }}-
-        % % * (star) and # (pound) in any state when collecting digits (except `greeting`) {{-
-        % % Ignore (i.e., add empty string, will be flattened during eval anyway), but renew `interdigit_timer`
-        % % When a user presses them accidentally when signing in,
-        % % or when selecting the category, it will get filtered
-        % % out.
-        % #{                state := collect_digits
-        %  ,       received_digit := Digit
-        %  }
-        % when Digit =:= "*";
-        %      Digit =:= "#"
-        %      % Digit =:= "#",
-
-        %      % Innecessary; if collecting digits then `greeting` cannot be skipped anyway
-        %      % State =/= greeting
-        % % Guards and logic reminder {{-
-        % % (fun ({A, B})
-        % %      when B =:= x,            B =:= x;                   B =:= z;
-        % %           A =:= 0;            A =:= 0,                   A =:= 0,
-        % %           B =:= y             B =:= y                    B =:= y;
-        % %      ->                                                  A =/=7,
-        % %          yay;                                            B =:= x
-        % %      (_) ->
-        % %          nono
-        % %  end)    ({0, x}).  yay       ({0, x}).  yay            ({1, x}).  yay
-        % %          ({1, x}).  nono      ({1, x}).  yay            ({0, z}).  yay
-        % %          ({0, y}).  yay       ({0, y}).  yay            ({1, z}).  yay
-        % %          ({1, y}).  yay       ({1, y}).  nono           ({7, z}).  yay
-        % %                                                         ({0, y}).  yay
-        % %                                                         ({7, y}).  nono
-        % %                                                         ({7, x}).  nono
-        % %                                                         ({6, x}).  yay
-        % % }}-
-        % ->
-        %     collect_digits(Data, "");
-        % % }}-
-        % }}-
         { collect_digits, Digit } ->
             collect_digits(Data, Digit);
 
         % === GREETING (-> content_root)
         % *          {{- => content root
         { greeting, "*" } ->
-            content_selection(content_root);
+            go_to(content_root);
 
         % }}-
         % #          {{- => content root
         { greeting, "#" } ->
-            content_selection(content_root);
+            go_to(content_root);
 
         % }}-
         % 0          {{- => main_menu
@@ -717,7 +646,7 @@ handle_event(
         % === MAIN_MENU (loop)
         % * (star)  {{- <- Go back (current content)
         { main_menu, "*" } ->
-            content_selection(current);
+            go_to(current);
 
         % }}-
         % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
@@ -789,12 +718,12 @@ handle_event(
         % === CATEGORY (loop)
         % *          {{- => back (i.e., up in content hierarchy)
         { category, "*" } ->
-            content_selection(up);
+            go_to(parent);
 
         % }}-
         % #          {{- => next category (i.e., next sibling)
         { category, "#" } ->
-            content_selection(next);
+            go_to(next);
 
         % }}-
         % 0          {{- => category_menu
@@ -810,12 +739,12 @@ handle_event(
         % === CATEGORY_MENU (loop)
         % *         {{- => back (to current category)
         { category_menu, "*" } ->
-            content_selection(current);
+            go_to(current);
 
         % }}-
         % #         {{- => previous category (i.e., previous sibling)
         { category_menu, "#" } ->
-            content_selection(prev);
+            go_to(prev);
 
         % }}-
         % 0         {{- => main_menu
@@ -855,29 +784,29 @@ handle_event(
         % }}-
         % 7         {{- => Enter FIRST child (category/publication)
         { category_menu, "7" } ->
-            content_selection(first);
+            go_to(first);
 
         % }}-
         % 8         {{- => Jump to content root
         { category_menu, "8" } ->
-            content_selection(content_root);
+            go_to(content_root);
 
         % }}-
         % 9         {{- => Enter LAST child (category/publication)
         { category_menu, "9" } ->
-            content_selection(last);
+            go_to(last);
 
         % }}-
 
         % === PUBLICATION (-> first article, i.e., first child)
         % *          {{- => back (i.e., up in content hierarchy)
         { publication, "*" } ->
-            content_selection(up);
+            go_to(parent);
 
         % }}-
         % #          {{- => next publication (i.e., next sibling)
         { publication, "#" } ->
-            content_selection(next);
+            go_to(next);
 
         % }}-
         % 0          {{- => publication_menu
@@ -893,12 +822,12 @@ handle_event(
         % === PUBLICATION_MENU (loop)
         % *         {{- => back (to current category)
         { publication_menu, "*" } ->
-            content_selection(current);
+            go_to(current);
 
         % }}-
         % #         {{- => previous category (i.e., previous sibling)
         { publication_menu, "#" } ->
-            content_selection(prev);
+            go_to(prev);
 
         % }}-
         % 0         {{- => main_menu
@@ -938,29 +867,29 @@ handle_event(
         % }}-
         % 7         {{- => Start playing FIRST article (i.e., first child)
         { publication_menu, "7" } ->
-            content_selection(first);
+            go_to(first);
 
         % }}-
         % 8         {{- => List articles
         { publication_menu, "8" } ->
-            content_selection(children);
+            {next_state, list_articles, Data};
 
         % }}-
         % 9         {{- => Start playing LAST article (i.e., last child)
         { publication_menu, "9" } ->
-            content_selection(last);
+            go_to(last);
 
         % }}-
 
-        % === ARTICLE (-> content_selection(next) )
+        % === ARTICLE (-> go_to(next) )
         % *          {{- => back (i.e., up in content hierarchy)
         { article, "*" } ->
-            content_selection(up);
+            go_to(parent);
 
         % }}-
         % #          {{- => next article (i.e., next sibling)
         { article, "#" } ->
-            content_selection(next);
+            go_to(next);
 
         % }}-
         % 0          {{- => article_menu
@@ -1003,19 +932,19 @@ handle_event(
         % }}-
         % 9          {{- => previous article (i.e., previous sibling)
         { article, "9" } ->
-            content_selection(prev);
+            go_to(prev);
 
         % }}-
 
         % === ARTICLE_MENU (loop)
         % *          {{- => back (i.e., up in content hierarchy)
         { article_menu, "*" } ->
-            content_selection(current);
+            go_to(current);
 
         % }}-
         % #          {{- => previous article_menu (i.e., previous sibling)
         { article_menu, "#" } ->
-            content_selection(prev);
+            go_to(prev);
 
         % }}-
         % 0          {{- => main_menu
@@ -1030,6 +959,10 @@ handle_event(
         % 2          {{- => reset speed
         { article_menu, "2" } ->
 
+        % }}-
+        % [3-9]      {{- => ignore (keep_state_and_data)
+        { article_menu, Digit } ->
+            keep_state_and_data;
         % }}-
 
         % === UNINTERRUPTABLE STATES
@@ -1136,6 +1069,9 @@ handle_event(
     % TODO every `play/2` clause should have a corresponding entry here
     %      (or vice versa, every state mentioned here should have a `play/2` clause`
     case State of
+
+        % TODO list_articles
+
         % `is_stopped` should always be TRUE in this scenario
         _ when StoppedPlayback =/= State ->
             {keep_state, NewData};
@@ -1152,20 +1088,20 @@ handle_event(
             {repeat_state, NewData};
 
         greeting ->
-            content_selection(content_root, NewData);
+            go_to(content_root, NewData);
 
         {warning, _} ->
-            content_selection(current, NewData);
+            go_to(current, NewData);
 
         % Not really necessary to handle this, but it's here for completeness sake
         {hangup, _} ->
             keep_state_and_data;
 
         publication ->
-            content_selection(first, NewData);
+            go_to(first, NewData);
 
         article ->
-            content_selection(next, NewData)
+            go_to(next, NewData)
 
         % collect_digits has no playback, hence no clause here
     end;
@@ -1244,39 +1180,30 @@ handle_event(
   State,
   #{ recvd_digits := ReceivedDigits } = Data
 ) ->
-    % TODO Prod system along, or .
     % Always clear DTMF buffer when the `interdigit_timer` expires, because this is the point the buffer is evaluated. Outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result, and so a clean slate is needed.
     NewData =
         Data#{ recvd_digits := [] },
 
-    % case eval_collected_digits(ReceivedDigits, State) of
-    case content_selection(collected_digits, ReceivedDigits) of
+    Selection =
+        ( composeFlipped(
+            [ fun (List) -> string:join(List, "") end
+            % will throw on empty list but it should never happen the way collect_digits/2 is called
+            , fun erlang:list_to_integer/1
+            ]
+          )
+        )(ReceivedDigits),
 
-        % `greeting`  -> `Category`  state change  is a  valid
-        % one, so when there is an invalid entry in `greeting`
-        % when collecting  digits, play  `?CATEGORIES`, ignore
-        % the return value  (because `repeat_menu/1` ends with
-        % `keep_state`), and drop to `?CATEGORIES
-        % invalid when State =:= greeting ->
-            % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (invalid in greeting)", collected_digits => ReceivedDigits, state => State}),
-            % NewDataWithUpdatedPlaybacks =
-            %     warning( invalid_selection(), NewData ),
-            % {next_state, ?CATEGORIES, NewDataWithUpdatedPlaybacks};
+    % At this point the resulting list can only be tuples of {(category|publication), N, string}
+    SubCategories =
+        get_children(),
 
-        invalid ->
-            % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (simply invalid)", collected_digits => ReceivedDigits, state => State}),
-            % NewDataWithUpdatedPlaybacks =
-            %     warning( invalid_selection(), NewData ),
-            % {keep_state, NewDataWithUpdatedPlaybacks};
+    % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
+
+    case lists:keyfind(Selection, 2, SubCategories) of
+        false ->
             {next_state, {warning, invalid_selection}, NewData};
-
-        Category ->
-            logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
-            next_menu(
-              #{ menu => Category
-               , data => NewData
-               , current_state => State
-               })
+        {CatOrPub, Selection, _Prompt} = Content ->
+            {next_state, go_to(Content), NewData}
     end.
 %% }}-
 
@@ -1305,32 +1232,6 @@ collect_digits( % {{-
     % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
     {next_state, collect_digits, NewData, [ InterDigitTimer ]}.
 % }}-
-
-% eval_collected_digits([_|_] = ReceivedDigits, State) -> % {{-
-%     CurrentCategoryDir =
-%         case State of
-%             greeting ->
-%                 ?CONTENT_ROOT;
-
-%             {category, CategoryDir} ->
-%                 CategoryDir
-
-%             % Not checking for {publication, _, _} because digit collection is disallowed there
-%         end,
-
-%     SelectionDir =
-%         filename:join(
-%           CurrentCategoryDir,
-%           ReceivedDigits
-%         ),
-
-%     case filelib:is_dir(SelectionDir) of
-%         false ->
-%             invalid;
-%         true ->
-%             {category, SelectionDir}
-%     end.
-% % }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions %%
@@ -2025,6 +1926,15 @@ re_start_inactivity_timer(State) -> % {{-
     put(inactivity_warning, IWref),
     put(inactivity_hangup,  ITref).
 % }}-
+
+% {ContentType, ...} -> ContentType
+% ContentType = category | publication | article
+go_to(Content) when erlang:is_tuple(Content) ->
+    gen_server:call(content, {go_to, Content}),
+    erlang:element(1, Content).
+
+get_children() ->
+    gen_server:call(content, get_children).
 
 % TODO INVENTORY! (stringify, curry, composeFlipped)
 % {{-

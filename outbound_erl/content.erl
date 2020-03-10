@@ -45,18 +45,19 @@ init(_Args) ->
         , history         % from vertex
         , ?CONTENT_ROOT   % to
         , [?CONTENT_ROOT] % label, moonlighting as history stack
-        ).
+        ),
 
     {ok, Graph}.
 
-handle_call({look_up, PhoneNumber}, {Pid, _Ref}, PhoneNumberSet) ->
-    IsRegistered =
-        sets:is_element(
-            list_to_binary(PhoneNumber),
-            PhoneNumberSet
-         ),
-    log(debug, [lookup, Pid, PhoneNumber, IsRegistered]),
-    {reply, IsRegistered, PhoneNumberSet}.
+%           request,      from,        state
+handle_call(get_children, {Pid, _Ref}, Graph) ->
+    Children = get(Graph, child),
+    {reply, Children, Graph};
+
+handle_call({go_to, Content}, {Pid, _Ref}, Graph)
+  when erlang:is_tuple(Content)
+->
+    update_history(Graph, Content);
 
 handle_cast(reload_db = Request, _PhoneNumberSet) ->
     log(debug, [reload_db, Request]),
@@ -113,11 +114,11 @@ add_hierarcy_edges(Graph, ParentMeta, Meta) -> % {{-
       []              % label
     ),
     digraph:add_edge(
-      Graph,             % digraph
-      {parent_of, Meta}, % edge
-      Meta,              % from vertex
-      ParentMeta,        % to vertex
-      []                 % label
+      Graph,          % digraph
+      {parent, Meta}, % edge
+      Meta,           % from vertex
+      ParentMeta,     % to vertex
+      []              % label
     ).
 % }}-
 
@@ -227,33 +228,25 @@ current(Graph) ->
         digraph:edge(Graph, current),
     Current.
 
-% Graph -> Vertex
-navigation(Graph, Direction) ->
-    case  of
-        ?CONTENT_ROOT ->
-            ?CONTENT_ROOT;
-        Current ->
-            [ {{child, Current} % edge coming from parent
-            , Parent            % parent content
-            , Current           % current content
-            , []}               % edge label
-            ] =
-                [  digraph:edge(Graph, Edge)
-                || Edge <- digraph:in_edges(Graph, Current),
-                        erlang:element(1, Edge) =:= child
-                ],
+% Graph -> Direction -> [Vertex]
+% Direction = parent | next | prev | first | last | child
+get(Graph, Direction) ->
+    Current = get(Graph, current),
 
-            update_history(Graph, Parent),
-            Parent
-    end.
+    EdgeResults =
+        [  digraph:edge(Graph, Edge)
+        || Edge <- digraph:out_edges(Graph, Current),
+                   erlang:element(1, Edge) =:= Direction
+        ],
 
-% Graph -> Vertex
-next(Graph) ->
-    Current = current(Graph),
-
-% Graph -> Vertex
-up(Graph) ->
-    Current = current(Graph),
+    [  Vertex
+    || { {Direction, _} % edge
+       , _              % from
+       , Vertex         % to
+       , []             % edge label
+       }
+       <- EdgeResults
+    ].
 
 % Graph -> Vertex -> current | noop
 update_history(Graph, Current) ->
