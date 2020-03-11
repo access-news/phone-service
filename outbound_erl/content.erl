@@ -50,21 +50,58 @@ init(_Args) ->
     {ok, Graph}.
 
 %           request,      from,        state
-handle_call(get_children, {Pid, _Ref}, Graph) ->
-    Children = get(Graph, child),
-    {reply, Children, Graph};
-
-handle_call({go_to, Content}, {Pid, _Ref}, Graph)
-  when erlang:is_tuple(Content)
+handle_call({Action, Direction}, _From, Graph)
+  when Direction =:= parent
+     ; Direction =:= first
+     ; Direction =:= last
+     ; Direction =:= next
+     ; Direction =:= prev
+     ; Direction =:= content_root
+     ; Direction =:= current
+     ; Direction =:= children
 ->
-    update_history(Graph, Content);
+    { reply
+    , process_action(Graph, Action, Direction)
+    , Graph
+    }.
 
-handle_cast(reload_db = Request, _PhoneNumberSet) ->
-    log(debug, [reload_db, Request]),
-    NewPhoneNumberSet = load_phone_numbers(),
-    {noreply, NewPhoneNumberSet}.
+process_action(Graph, get, current) ->
+    current(Graph);
 
-terminate(Reason, _PhoneNumberSet) ->
+process_action(_Graph, get, content_root) ->
+    ?CONTENT_ROOT;
+
+process_action(Graph, get, children) ->
+    get_vertex(Graph, child);
+
+process_action(Graph, get, Direction) ->
+    hd(
+      get_vertex(Graph, Direction)
+    );
+
+process_action(Graph, go_to, children) ->
+    invalid_action;
+
+process_action(Graph, go_to, Direction)
+  when erlang:is_tuple(Direction)
+->
+    update_history(Graph, Direction),
+    Direction;
+
+process_action(Graph, go_to, Direction) ->
+    % TODO
+    % http://blog.sigfpe.com/2006/08/you-could-have-invented-monads-and.html
+    Vertex =
+        process_action(Graph, get, Direction),
+    update_history(Graph, Vertex),
+    Vertex.
+
+% handle_cast(reload_db = Request, _PhoneNumberSet) ->
+%     log(debug, [reload_db, Request]),
+%     NewPhoneNumberSet = load_phone_numbers(),
+%     {noreply, NewPhoneNumberSet}.
+
+terminate(Reason, _Graph) ->
     log(debug, [terminate_making_sure, Reason]),
     filog:remove_singleton_handler(?MODULE).
 
@@ -230,8 +267,8 @@ current(Graph) ->
 
 % Graph -> Direction -> [Vertex]
 % Direction = parent | next | prev | first | last | child
-get(Graph, Direction) ->
-    Current = get(Graph, current),
+get_vertex(Graph, Direction) ->
+    Current = get_vertex(Graph, current),
 
     EdgeResults =
         [  digraph:edge(Graph, Edge)
@@ -249,23 +286,27 @@ get(Graph, Direction) ->
     ].
 
 % Graph -> Vertex -> current | noop
-update_history(Graph, Current) ->
-    {current, history, _Current, History} =
+update_history(Graph, With) ->
+    { current % edge name
+    , history % from
+    , Current % to
+    , History % edge label
+    } =
         digraph:edge(Graph, current),
 
-        case hd(History) =:= Current of
-            true ->
-                noop;
-            false ->
-                digraph:del_edge(Graph, current),
-                digraph:add_edge
-                    ( Graph
-                    , current           % edge name
-                    , history           % from vertex
-                    , Current           % to
-                    , [Current|History] % label, moonlighting as history stack
-                    )
-        end.
+    case With =:= Current of
+        true ->
+            noop;
+        false ->
+            digraph:del_edge(Graph, current),
+            digraph:add_edge
+                ( Graph
+                , current        % edge name
+                , history        % from vertex
+                , With           % to
+                , [With|History] % label, moonlighting as history stack
+                )
+    end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% INTERNAL MODEL OF THE YET TO BE BUILT ACCESS NEWS WEB SERVICE      %%
@@ -492,6 +533,9 @@ stringify(Term) ->
     R = io_lib:format("~p",[Term]),
     lists:flatten(R).
 % }}-
+
+log(Level, ValueList) ->
+    filog:log(Level, ?MODULE, ValueList).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:

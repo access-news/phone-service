@@ -74,6 +74,10 @@ init(_Args) -> % {{-
     % filog:process_handler_filter(?MODULE, Ref),
     %% }}- }}-
 
+    % TODO launch content.erl gen_server
+    %      AND GET RID OF FILOG LOGGING there!
+    %      AND IT CANNOT HAVE content AS REGISTERED NAME ANYMORE!
+
     logger:debug("==========================="),
     logger:debug("==========================="),
     logger:debug("==========================="),
@@ -646,7 +650,7 @@ handle_event(
         % === MAIN_MENU (loop)
         % * (star)  {{- <- Go back (current content)
         { main_menu, "*" } ->
-            go_to(current);
+            {next_state, get_content(current), Data};
 
         % }}-
         % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
@@ -739,7 +743,7 @@ handle_event(
         % === CATEGORY_MENU (loop)
         % *         {{- => back (to current category)
         { category_menu, "*" } ->
-            go_to(current);
+            {next_state, get_content(current), Data};
 
         % }}-
         % #         {{- => previous category (i.e., previous sibling)
@@ -822,7 +826,7 @@ handle_event(
         % === PUBLICATION_MENU (loop)
         % *         {{- => back (to current category)
         { publication_menu, "*" } ->
-            go_to(current);
+            {next_state, get_content(current), Data};
 
         % }}-
         % #         {{- => previous category (i.e., previous sibling)
@@ -939,7 +943,7 @@ handle_event(
         % === ARTICLE_MENU (loop)
         % *          {{- => back (i.e., up in content hierarchy)
         { article_menu, "*" } ->
-            go_to(current);
+            {next_state, get_content(current), Data};
 
         % }}-
         % #          {{- => previous article_menu (i.e., previous sibling)
@@ -1091,7 +1095,7 @@ handle_event(
             go_to(content_root, NewData);
 
         {warning, _} ->
-            go_to(current, NewData);
+            {next_state, get_content(current), Data};
 
         % Not really necessary to handle this, but it's here for completeness sake
         {hangup, _} ->
@@ -1186,7 +1190,9 @@ handle_event(
 
     Selection =
         ( composeFlipped(
-            [ fun (List) -> string:join(List, "") end
+            % [ ((curry(fun flip/3))(fun string:join/2))("")
+            [ (cflip(fun string:join/2))("")
+            % [ fun (List) -> string:join(List, "") end
             % will throw on empty list but it should never happen the way collect_digits/2 is called
             , fun erlang:list_to_integer/1
             ]
@@ -1195,14 +1201,14 @@ handle_event(
 
     % At this point the resulting list can only be tuples of {(category|publication), N, string}
     SubCategories =
-        get_children(),
+        get(children),
 
     % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
 
     case lists:keyfind(Selection, 2, SubCategories) of
         false ->
             {next_state, {warning, invalid_selection}, NewData};
-        {CatOrPub, Selection, _Prompt} = Content ->
+        Content ->
             {next_state, go_to(Content), NewData}
     end.
 %% }}-
@@ -1933,8 +1939,24 @@ go_to(Content) when erlang:is_tuple(Content) ->
     gen_server:call(content, {go_to, Content}),
     erlang:element(1, Content).
 
+get_current_and_children() ->
+    get_content(current),
+    get_children().
+
 get_children() ->
-    gen_server:call(content, get_children).
+    get_content(get_children).
+
+get_content(Atom)
+  when Atom =:= current      % \
+     ; Atom =:= content_root % |
+     ; Atom =:= parent       % |
+     ; Atom =:= first        % | Vertex
+     ; Atom =:= last         % |
+     ; Atom =:= next         % |
+     ; Atom =:= prev         % /
+     ; Atom =:= get_children %   [ Vertex ], hence the standalone `get_children/0`
+->
+    gen_server:call(content, Atom).
 
 % TODO INVENTORY! (stringify, curry, composeFlipped)
 % {{-
@@ -1955,6 +1977,13 @@ composeFlipped([F,G|Rest]) ->
         end,
     composeFlipped([Composition|Rest]).
 % }}-
+
+flip(F, A, B) ->
+    F(B,A).
+
+% (a -> b -> c) -> b -> a -> c
+cflip(Arg) ->
+    (curry(fun flip/3))(Arg).
 
 curry(AnonymousFun) -> % {{-
     {arity, Arity} =
