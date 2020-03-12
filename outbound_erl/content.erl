@@ -11,7 +11,7 @@
    % gen_server callbacks
    , init/1
    , handle_call/3
-   , handle_cast/2
+   % , handle_cast/2
    , terminate/2
 
    % private functions
@@ -51,50 +51,62 @@ init(_Args) ->
 
 %           request,      from,        state
 handle_call({Action, Direction}, _From, Graph)
-  when Direction =:= parent
-     ; Direction =:= first
-     ; Direction =:= last
-     ; Direction =:= next
-     ; Direction =:= prev
-     ; Direction =:= content_root
-     ; Direction =:= current
-     ; Direction =:= children
+  when Direction =:= parent       % \
+     ; Direction =:= first        % |
+     ; Direction =:= last         % |
+     ; Direction =:= next         % | Vertex
+     ; Direction =:= prev         % |
+     ; Direction =:= content_root % |
+     ; Direction =:= current      % /
+     ; Direction =:= children     %   [ Vertex ]
 ->
     { reply
     , process_action(Graph, Action, Direction)
     , Graph
-    }.
+    };
 
+handle_call(_Command, _From, Graph) ->
+    {reply, invalid_action, Graph}.
+
+% Direction -> Vertex
 process_action(Graph, get, current) ->
     current(Graph);
 
+% Direction -> Vertex
 process_action(_Graph, get, content_root) ->
     ?CONTENT_ROOT;
 
+%! Direction -> [ Vertex ]
 process_action(Graph, get, children) ->
     get_vertex(Graph, child);
 
 process_action(Graph, get, Direction) ->
-    hd(
-      get_vertex(Graph, Direction)
-    );
-
-process_action(Graph, go_to, children) ->
-    invalid_action;
+    % TODO These are the only 2 options here, and if this does crash it means there's a logical error somewhere in this module.
+    case get_vertex(Graph, Direction) of
+        % This means that the current vertex does not have that specific direction. E.g., articles won't have child, first, last edges.
+        [] ->
+            invalid_action;
+        [Vertex] ->
+            Vertex
+    end;
 
 process_action(Graph, go_to, Direction)
-  when erlang:is_tuple(Direction)
+  when Direction =:= children;
+       Direction =:= invalid_action
 ->
-    update_history(Graph, Direction),
-    Direction;
+    invalid_action;
+
+process_action(Graph, go_to, Vertex)
+  when erlang:is_tuple(Vertex)
+->
+    update_history(Graph, Vertex),
+    Vertex;
 
 process_action(Graph, go_to, Direction) ->
     % TODO
     % http://blog.sigfpe.com/2006/08/you-could-have-invented-monads-and.html
-    Vertex =
-        process_action(Graph, get, Direction),
-    update_history(Graph, Vertex),
-    Vertex.
+    Vertex = process_action(Graph, get, Direction),
+    process_action(Graph, go_to, Vertex).
 
 % handle_cast(reload_db = Request, _PhoneNumberSet) ->
 %     log(debug, [reload_db, Request]),
@@ -114,24 +126,25 @@ terminate(Reason, _Graph) ->
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
 make_content_graph() ->
-    make_content_graph(?CONTENT_ROOT).
+    make_content_graph(?CONTENT_ROOT_DIR).
 
-make_content_graph(ContentRoot) -> % {{-
+make_content_graph(ContentRootDir) -> % {{-
     Graph =
         digraph:new([cyclic, protected]),
     % {category, 0, "Main category"}
-    RootMeta = get_meta(ContentRoot),
+    RootMeta = get_meta(ContentRootDir),
     digraph:add_vertex(Graph, RootMeta),
-    [ digraph:add_edge
-        ( Graph
-        , {Edge, RootMeta}
-        , RootMeta
-        , RootMeta
-        , []
-        )
-    || Edge <- [parent, prev, next]
-    ],
-    do_make(Graph, ContentRoot),
+    % NOTE Theoretically it is not necessary because `get_vertex/2` returns [] for non-existing edges
+    % [ digraph:add_edge
+    %     ( Graph
+    %     , {Edge, RootMeta}
+    %     , RootMeta
+    %     , RootMeta
+    %     , []
+    %     )
+    % || Edge <- [parent, prev, next]
+    % ],
+    do_make(Graph, ContentRootDir),
     Graph.
 % }}-
 
@@ -175,7 +188,9 @@ add_meta_to_path(ContentType, Dir, Path) ->
     Meta =
         case ContentType of
                category -> get_meta(FullPath);
-            publication -> {article, FullPath}
+            % TODO the anchor text should hold the name of the article's title
+            % TODO previous todo also implies that each article should alsw have a metafile, requiring extensive rewrite
+            publication -> {article, FullPath, #{ anchor => "article" }}
         end,
     {true, {Meta, FullPath}}.
 % }}-
@@ -265,7 +280,8 @@ current(Graph) ->
         digraph:edge(Graph, current),
     Current.
 
-% Graph -> Direction -> [Vertex]
+% Graph -> Direction -> List Vertex
+% TODO Direction is misleading because it means smth else in different contexts
 % Direction = parent | next | prev | first | last | child
 get_vertex(Graph, Direction) ->
     Current = get_vertex(Graph, current),
@@ -408,12 +424,23 @@ publication_guide() -> % {{-
     ].
 % }}-
 
-write_meta_file({_, _, _} = Category, Dir) -> % {{-
+write_meta_file
+  ( {ContentType, Selection, AnchorText} = _Category
+  , Dir
+  )
+-> % {{-
     MetaFilePath =
         filename:join(Dir, metafile_name()),
+    Content =
+        stringify(
+          { ContentType
+          , Selection
+          , #{ anchor => AnchorText }
+          }
+        ),
     file:write_file(
       MetaFilePath,
-      stringify(Category) ++ "."
+      Content ++ "."
     ),
     Dir.
 % }}-

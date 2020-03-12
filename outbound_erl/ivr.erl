@@ -89,6 +89,7 @@ init(_Args) -> % {{-
 
     Data =
         #{ recvd_digits => ""
+         ,       anchor => ""
          ,  auth_status => unregistered % | registered
          , menu_history => [] % used as a stack
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
@@ -145,7 +146,8 @@ handle_event(enter, OldState, State, Data) -> % {{-
           % [ HistoryFun
           [ fun stop_playback/1
           , fun(GenData) -> comfort_noise(), GenData end
-          , fun(GenData) -> play(State, GenData) end
+          % , fun(GenData) -> play(State, GenData) end
+          , (cflip(fun play/2))(State)
           ]
         ),
 
@@ -528,7 +530,7 @@ handle_event(
 ) ->
     % logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
     re_start_inactivity_timer(State),
-    {next_state , greeting , Data};
+    {next_state, greeting, Data};
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -629,12 +631,12 @@ handle_event(
         % === GREETING (-> content_root)
         % *          {{- => content root
         { greeting, "*" } ->
-            go_to(content_root);
+            go_to(content_root, Data);
 
         % }}-
         % #          {{- => content root
         { greeting, "#" } ->
-            go_to(content_root);
+            go_to(content_root, Data);
 
         % }}-
         % 0          {{- => main_menu
@@ -650,7 +652,7 @@ handle_event(
         % === MAIN_MENU (loop)
         % * (star)  {{- <- Go back (current content)
         { main_menu, "*" } ->
-            {next_state, get_content(current), Data};
+            go_to(current, Data);
 
         % }}-
         % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
@@ -722,12 +724,12 @@ handle_event(
         % === CATEGORY (loop)
         % *          {{- => back (i.e., up in content hierarchy)
         { category, "*" } ->
-            go_to(parent);
+            go_to(parent, Data);
 
         % }}-
         % #          {{- => next category (i.e., next sibling)
         { category, "#" } ->
-            go_to(next);
+            go_to(next, Data);
 
         % }}-
         % 0          {{- => category_menu
@@ -743,12 +745,12 @@ handle_event(
         % === CATEGORY_MENU (loop)
         % *         {{- => back (to current category)
         { category_menu, "*" } ->
-            {next_state, get_content(current), Data};
+            go_to(current, Data);
 
         % }}-
         % #         {{- => previous category (i.e., previous sibling)
         { category_menu, "#" } ->
-            go_to(prev);
+            go_to(prev, Data);
 
         % }}-
         % 0         {{- => main_menu
@@ -788,29 +790,29 @@ handle_event(
         % }}-
         % 7         {{- => Enter FIRST child (category/publication)
         { category_menu, "7" } ->
-            go_to(first);
+            go_to(first, Data);
 
         % }}-
         % 8         {{- => Jump to content root
         { category_menu, "8" } ->
-            go_to(content_root);
+            go_to(content_root, Data);
 
         % }}-
         % 9         {{- => Enter LAST child (category/publication)
         { category_menu, "9" } ->
-            go_to(last);
+            go_to(last, Data);
 
         % }}-
 
         % === PUBLICATION (-> first article, i.e., first child)
         % *          {{- => back (i.e., up in content hierarchy)
         { publication, "*" } ->
-            go_to(parent);
+            go_to(parent, Data);
 
         % }}-
         % #          {{- => next publication (i.e., next sibling)
         { publication, "#" } ->
-            go_to(next);
+            go_to(next, Data);
 
         % }}-
         % 0          {{- => publication_menu
@@ -826,12 +828,12 @@ handle_event(
         % === PUBLICATION_MENU (loop)
         % *         {{- => back (to current category)
         { publication_menu, "*" } ->
-            {next_state, get_content(current), Data};
+            go_to(current, Data);
 
         % }}-
         % #         {{- => previous category (i.e., previous sibling)
         { publication_menu, "#" } ->
-            go_to(prev);
+            go_to(prev, Data);
 
         % }}-
         % 0         {{- => main_menu
@@ -871,7 +873,7 @@ handle_event(
         % }}-
         % 7         {{- => Start playing FIRST article (i.e., first child)
         { publication_menu, "7" } ->
-            go_to(first);
+            go_to(first, Data);
 
         % }}-
         % 8         {{- => List articles
@@ -881,19 +883,19 @@ handle_event(
         % }}-
         % 9         {{- => Start playing LAST article (i.e., last child)
         { publication_menu, "9" } ->
-            go_to(last);
+            go_to(last, Data);
 
         % }}-
 
         % === ARTICLE (-> go_to(next) )
         % *          {{- => back (i.e., up in content hierarchy)
         { article, "*" } ->
-            go_to(parent);
+            go_to(parent, Data);
 
         % }}-
         % #          {{- => next article (i.e., next sibling)
         { article, "#" } ->
-            go_to(next);
+            go_to(next, Data);
 
         % }}-
         % 0          {{- => article_menu
@@ -901,6 +903,7 @@ handle_event(
             {next_state, article_menu, Data};
 
         % }}-
+        % TODO implement controls
         % 1          {{- => rewind (10s)
         { article, "1" } ->
 
@@ -936,26 +939,27 @@ handle_event(
         % }}-
         % 9          {{- => previous article (i.e., previous sibling)
         { article, "9" } ->
-            go_to(prev);
+            go_to(prev, Data);
 
         % }}-
 
         % === ARTICLE_MENU (loop)
         % *          {{- => back (i.e., up in content hierarchy)
         { article_menu, "*" } ->
-            {next_state, get_content(current), Data};
+            go_to(current, Data);
 
         % }}-
         % #          {{- => previous article_menu (i.e., previous sibling)
         { article_menu, "#" } ->
-            go_to(prev);
+            go_to(prev, Data);
 
         % }}-
         % 0          {{- => main_menu
         { article_menu, "0" } ->
-            {next_state, article_menu, Data};
+            {next_state, main_menu, Data};
 
         % }}-
+        % TODO implement controls
         % 1          {{- => reset volume
         { article_menu, "1" } ->
 
@@ -1074,7 +1078,7 @@ handle_event(
     %      (or vice versa, every state mentioned here should have a `play/2` clause`
     case State of
 
-        % TODO list_articles
+        % TODO list_articles (and lots others)
 
         % `is_stopped` should always be TRUE in this scenario
         _ when StoppedPlayback =/= State ->
@@ -1095,7 +1099,7 @@ handle_event(
             go_to(content_root, NewData);
 
         {warning, _} ->
-            {next_state, get_content(current), Data};
+            go_to(current, NewData);
 
         % Not really necessary to handle this, but it's here for completeness sake
         {hangup, _} ->
@@ -1184,10 +1188,6 @@ handle_event(
   State,
   #{ recvd_digits := ReceivedDigits } = Data
 ) ->
-    % Always clear DTMF buffer when the `interdigit_timer` expires, because this is the point the buffer is evaluated. Outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result, and so a clean slate is needed.
-    NewData =
-        Data#{ recvd_digits := [] },
-
     Selection =
         ( composeFlipped(
             % [ ((curry(fun flip/3))(fun string:join/2))("")
@@ -1202,6 +1202,9 @@ handle_event(
     % At this point the resulting list can only be tuples of {(category|publication), N, string}
     SubCategories =
         get(children),
+    % Always clear DTMF buffer when the `interdigit_timer` expires, because this is the point the buffer is evaluated. Outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result, and so a clean slate is needed.
+    NewData =
+        Data#{ recvd_digits := [] },
 
     % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
 
@@ -1557,10 +1560,9 @@ play(
     );
 % }}-
 
-% TODO
 play(category = State, Data) -> % {{-
     {category, _, Anchor} =
-        get_meta(CategoryDir),
+        
     Zero =
         "For the main menu, press 0.",
     Star =
@@ -1933,30 +1935,34 @@ re_start_inactivity_timer(State) -> % {{-
     put(inactivity_hangup,  ITref).
 % }}-
 
-% {ContentType, ...} -> ContentType
-% ContentType = category | publication | article
-go_to(Content) when erlang:is_tuple(Content) ->
-    gen_server:call(content, {go_to, Content}),
-    erlang:element(1, Content).
+% NOTE `go_to/1` and `retrieve/1` will crash if used improperly. It is not handled, because these are strictly internal functions not intended to be used from anywhere else, and if they crash then the culprit is an error in the surrounding code
+go_to(Direction, Data) ->
+    % TODO Make article vertices conform to 3-tuples
+    { ContentType
+    , _Selection
+    , #{ anchor := AnchorText }
+    } =
+        call_content(go_to, Direction),
+    NewData =
+        Data#{ anchor := AnchorText },
 
-get_current_and_children() ->
-    get_content(current),
-    get_children().
+    {next_state, ContentType, NewData}.
 
-get_children() ->
-    get_content(get_children).
+retrieve(Direction) ->
+    call_content(get, Direction).
 
-get_content(Atom)
-  when Atom =:= current      % \
-     ; Atom =:= content_root % |
-     ; Atom =:= parent       % |
-     ; Atom =:= first        % | Vertex
-     ; Atom =:= last         % |
-     ; Atom =:= next         % |
-     ; Atom =:= prev         % /
-     ; Atom =:= get_children %   [ Vertex ], hence the standalone `get_children/0`
-->
-    gen_server:call(content, Atom).
+% Action -> Direction -> Vertex
+% Action =
+%     go_to | get
+% Direction =
+%     parent | first | last | next | prev | content_root | current | children
+%     | Vertex
+% Vertex =
+%     {ContentType, ...}
+% ContentType =
+%     category | publication | article
+call_content(Action, Direction) ->
+    gen_server:call(get(content), {Action, Direction}).
 
 % TODO INVENTORY! (stringify, curry, composeFlipped)
 % {{-
