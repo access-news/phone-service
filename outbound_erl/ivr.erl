@@ -85,11 +85,13 @@ init(_Args) -> % {{-
     % TODO Why was this necessary?
     process_flag(trap_exit, true),
 
+    % TODO which approach is better: gen_server, or just module?
     ivr_graph(),
 
     Data =
         #{ recvd_digits => ""
          ,       anchor => ""
+         ,      article => {"", 0}
          ,  auth_status => unregistered % | registered
          , menu_history => [] % used as a stack
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
@@ -142,16 +144,17 @@ handle_event(enter, OldState, State, Data) -> % {{-
     %     end,
 
     NewData =
-        composeFlipped(
-          % [ HistoryFun
-          [ fun stop_playback/1
-          , fun(GenData) -> comfort_noise(), GenData end
-          % , fun(GenData) -> play(State, GenData) end
-          , (cflip(fun play/2))(State)
-          ]
-        ),
+        ( composeFlipped(
+            % [ HistoryFun
+            [ fun stop_playback/1
+            , fun(GenData) -> comfort_noise(), GenData end
+            % , fun(GenData) -> play(State, GenData) end
+            , (curry(fun play/2))(State)
+            ]
+          )
+        )(Data),
 
-    {keep_state, GetNewData(Data)};
+    {keep_state, NewData};
 % }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -949,7 +952,7 @@ handle_event(
             go_to(current, Data);
 
         % }}-
-        % #          {{- => previous article_menu (i.e., previous sibling)
+        % #          {{- => previous article (i.e., previous sibling)
         { article_menu, "#" } ->
             go_to(prev, Data);
 
@@ -1086,12 +1089,13 @@ handle_event(
 
         % `is_stopped` should always be FALSE in this scenario
         % STATES TO BE LOOPED
-        _ when StoppedPlayback =:= State,
-               State =:= main_menu;
-               State =:= category;
-               State =:= category_menu;
-               State =:= publication_menu;
-               State =:= article_menu
+        _ when StoppedPlayback =:= State
+             , State =:= main_menu
+             ; State =:= category
+             ; State =:= category_menu
+             ; State =:= publication_menu
+             ; State =:= article_menu
+             ; State =:= article_help
         ->
             {repeat_state, NewData};
 
@@ -1106,12 +1110,24 @@ handle_event(
             keep_state_and_data;
 
         publication ->
-            go_to(first, NewData);
+            { article
+            , ArticlePath
+            % ignoring until there's no metadata there, but otherwise this will be part of `article_entry`, besides only saying "press 0 for help"
+            , _AnchorText
+            } =
+                call_content(go_to, first),
+            { next_state
+            , article_entry
+            , NewData#{ article := {ArticlePath, 0}}
+            };
 
-        article ->
-            go_to(next, NewData)
+        article_entry ->
+            {next_state, article_playback, NewData};
 
-        % collect_digits has no playback, hence no clause here
+        % `collect_digits` has no menu playback (via `speak/3`), hence no clause here
+
+        % TODO do a playback CEC clause
+        % `article_playback` has a `play/2` clause but it uses dptools:playback instead of speak
     end;
 %% }}-
 
@@ -1519,20 +1535,14 @@ sign_up() ->
 %     "Invalid selection. Please try again.".
 % }}-
 
-play(
-  main_menu = State,
-  #{ auth_status := AuthStatus
-   } = Data
-) -> % {{-
+play(main_menu = State, #{auth_status := AuthStatus} = Data) -> % {{-
     Anchor = "Main menu.",
     % Zero = "For quick help, press zero.",
-    Star = "To go back to he previous menu, press star.",
+    Star = "To go back, press star.",
     Pound =
         case AuthStatus of
-            registered ->
-                "For your Favourites, ";
-            unregistered ->
-                "To log in, "
+              registered -> "For your Favourites, ";
+            unregistered -> "To log in, "
         end
         ++ "press pound.",
     % Zero = history listing
@@ -1542,52 +1552,45 @@ play(
     Four = "To learn about other blindness resources, press four.",
     % Five = randomize playback.
 
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text =>
-           stitch(
-             [ Anchor
-             % , Zero
-             , Star
-             , Pound
-             , One
-             , Two
-             % , Three
-             , Four
-             ])
-       }
-    );
-% }}-
+    PromptList =
+        [ Anchor
+        % , Zero
+        , Star
+        , Pound
+        , One
+        , Two
+        % , Three
+        , Four
+        ],
 
-play(category = State, Data) -> % {{-
-    {category, _, Anchor} =
-        
-    Zero =
-        "For the main menu, press 0.",
-    Star =
-        "To go back to he previous menu, press star.",
-    SubCategories =
-        stitch(
-          list_category_entries(CategoryDir)
+    speak(State, Data, PromptList);
+
+% }}-
+play(category    = State, #{anchor := AnchorText} = Data) -> % {{-
+    PromptList =
+        lists:flatten(
+          [ AnchorText
+          , common_options(State)
+          , choice_list()
+          ]
         ),
-    % EnterFirstCategory = "To start exploring the categories one by one, press pound, 9 to enter the first category.",
-    % CategoryBrowsePound = "To enter the next item, press the pound sign. Dial pound, 0 to get back into the previous item.",
+    speak(State, Data, PromptList);
 
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text =>
-           stitch(
-             [ Anchor
-             , Zero
-             , Star
-             , SubCategories
-             ])
-       }
-     );
 % }}-
+play(publication = State, #{anchor := AnchorText} = Data) -> % {{-
+    PromptList =
+        lists:flatten(
+          [ AnchorText
+          , common_options(State)
+          ]
+        ),
+    speak(State, Data, PromptList);
 
+% }}-
+play(article_entry = State, Data) -> % {{-
+    speak(State, Data, "Press 0 for help.");
+
+% }}-
 play(category_menu, Data) ->
     done;
 
@@ -1687,6 +1690,16 @@ play({hangup, inactivity} = State, Data) -> % {{-
 %     {ok, PlaybackName} =
 %         erl_parse:parse_term(Tokens),
 %     PlaybackName.
+
+speak(State, Data, PromptList)
+    when erlang:is_list(PromptList)
+->
+    speak(
+      #{ playback_name => State
+       , data => Data
+       , text => stitch(PromptList)
+      }
+    ).
 
 speak( % {{-
   #{ playback_name := PlaybackName
@@ -1934,6 +1947,43 @@ re_start_inactivity_timer(State) -> % {{-
     put(inactivity_warning, IWref),
     put(inactivity_hangup,  ITref).
 % }}-
+
+common_options(State)
+  when State =:= category
+     ; State =:= publication
+     ; State =:= article
+->
+    ContentType =
+        atom_to_list(State),
+
+    Star =
+        "To go back, press star.",
+    Pound =
+        "To jump to the next "
+        ++ ContentType
+        ++ ", press pound.",
+    Zero =
+        "For the "
+        ++ ContentType
+        ++ " menu, press 0.",
+
+    [ Zero
+    , Star
+    , Pound
+    ].
+
+choice_list() ->
+    [  "Press "
+       ++ atom_to_list(Selection)
+       ++ " for "
+       ++ AnchorText
+       ++ "."
+    || { _ContentType
+       , Selection
+       , #{ anchor := AnchorText }
+       }
+       <- retrieve(children)
+    ].
 
 % NOTE `go_to/1` and `retrieve/1` will crash if used improperly. It is not handled, because these are strictly internal functions not intended to be used from anywhere else, and if they crash then the culprit is an error in the surrounding code
 go_to(Direction, Data) ->

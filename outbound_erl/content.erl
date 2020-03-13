@@ -12,12 +12,16 @@
    , init/1
    , handle_call/3
    % , handle_cast/2
-   , terminate/2
+   % , terminate/2
 
    % private functions
    , make_content_graph/0
    , refresh_content_graph/1
    , realize/0
+
+   , get_vertex/2
+   , current/1
+   , update_history/2
    ]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -33,18 +37,17 @@ start() ->
     Pid.
 
 init(_Args) ->
-    %% Set up logging.
-    filog:add_singleton_handler(?MODULE),
-    filog:singleton_handler_filter(?MODULE),
-
     Graph = make_content_graph(),
     digraph:add_vertex(Graph, history, []),
+    % Necessary because ?CONTENT_ROOT gets written to the metafile, but that tuple is going to be changed when building the graph (and reading back from the file system).
+    ContentRoot =
+        lists:keyfind(0, 2, digraph:vertices(Graph)),
     digraph:add_edge
         ( Graph
         , current         % edge name
         , history         % from vertex
-        , ?CONTENT_ROOT   % to
-        , [?CONTENT_ROOT] % label, moonlighting as history stack
+        , ContentRoot   % to
+        , [ContentRoot] % label, moonlighting as history stack
         ),
 
     {ok, Graph}.
@@ -113,9 +116,9 @@ process_action(Graph, go_to, Direction) ->
 %     NewPhoneNumberSet = load_phone_numbers(),
 %     {noreply, NewPhoneNumberSet}.
 
-terminate(Reason, _Graph) ->
-    log(debug, [terminate_making_sure, Reason]),
-    filog:remove_singleton_handler(?MODULE).
+% terminate(Reason, _Graph) ->
+%     log(debug, [terminate_making_sure, Reason]),
+%     filog:remove_singleton_handler(?MODULE).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions                                                  %%
@@ -149,7 +152,7 @@ make_content_graph(ContentRootDir) -> % {{-
 % }}-
 
 refresh_content_graph(Graph) ->
-    refresh_content_graph(Graph, ?CONTENT_ROOT).
+    refresh_content_graph(Graph, ?CONTENT_ROOT_DIR).
 
 refresh_content_graph(Graph, ContentRoot) ->
     digraph:delete(Graph),
@@ -284,7 +287,7 @@ current(Graph) ->
 % TODO Direction is misleading because it means smth else in different contexts
 % Direction = parent | next | prev | first | last | child
 get_vertex(Graph, Direction) ->
-    Current = get_vertex(Graph, current),
+    Current = current(Graph),
 
     EdgeResults =
         [  digraph:edge(Graph, Edge)
@@ -561,8 +564,8 @@ stringify(Term) ->
     lists:flatten(R).
 % }}-
 
-log(Level, ValueList) ->
-    filog:log(Level, ?MODULE, ValueList).
+% log(Level, ValueList) ->
+%     filog:log(Level, ?MODULE, ValueList).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
