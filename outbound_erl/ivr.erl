@@ -86,12 +86,19 @@ init(_Args) -> % {{-
     process_flag(trap_exit, true),
 
     % TODO which approach is better: gen_server, or just module?
-    ivr_graph(),
+    % PROP each ivr gen_statem will get a copy of the content graph from the content gen_server during init, and the `content` will take care of keeping it up to date, and parsing during server startup (so it should start earlier than we could receive calls)
+    pipe(
+      [ gen_server:call(content, {get, graph})
+      , fun deserialize/1
+      , (curry(fun erlang:put/2))(content_graph)
+      ]
+    ),
 
     Data =
         #{ recvd_digits => ""
-         ,       anchor => ""
-         ,      article => {"", 0}
+         % ,       anchor => ""
+         % , current_content => {}
+         ,  current_article => #{ path => "", offset => 0 }
          ,  auth_status => unregistered % | registered
          , menu_history => [] % used as a stack
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
@@ -890,19 +897,23 @@ handle_event(
 
         % }}-
 
-        % === ARTICLE (-> go_to(next) )
+        % === {ARTICLE, (HELP|PLAYBACK)} (-> go_to(next) )
         % *          {{- => back (i.e., up in content hierarchy)
-        { article, "*" } ->
-            go_to(parent, Data);
+        { {article, _}, "*" } ->
+            % content(go_to, parent), % => parent publication
+            % content(go_to, parent), % => parent category
+            % next(Data);
 
         % }}-
         % #          {{- => next article (i.e., next sibling)
-        { article, "#" } ->
-            go_to(next, Data);
+        { {article, _}, "#" } ->
+            content(go_to, next),
+            next(Data);
 
         % }}-
+        % TODO stop article playback and save offset
         % 0          {{- => article_menu
-        { article, "0" } ->
+        { {article, _}, "0" } ->
             {next_state, article_menu, Data};
 
         % }}-
@@ -1111,14 +1122,19 @@ handle_event(
 
         publication ->
             { article
-            , ArticlePath
-            % ignoring until there's no metadata there, but otherwise this will be part of `article_entry`, besides only saying "press 0 for help"
-            , _AnchorText
+            , ArticlePath 
+            , _AnchorText % ignoring until there's no metadata there, but otherwise this will be part of `article_entry`, besides only saying "press 0 for help"
             } =
-                call_content(go_to, first),
+                content(go_to, first),
+
+            Article =
+                #{ path := ArticlePath
+                 , offset := 0
+                 },
+
             { next_state
             , article_entry
-            , NewData#{ article := {ArticlePath, 0}}
+            , NewData#{ current_article := Article }
             };
 
         article_entry ->
@@ -1127,7 +1143,7 @@ handle_event(
         % `collect_digits` has no menu playback (via `speak/3`), hence no clause here
 
         % TODO do a playback CEC clause
-        % `article_playback` has a `play/2` clause but it uses dptools:playback instead of speak
+        % `article_playback` does have a `play/2` clause but it uses dptools:playback instead of speak
     end;
 %% }}-
 
@@ -1328,8 +1344,8 @@ look_up(PhoneNumber) ->
 %%
 %%      See available `sendmsg` commands at
 %%      https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket#mod_event_socket-3.9.1Commands
-event_uuid_header(UUID) ->
-    {"Event-UUID", UUID}.
+% event_uuid_header(UUID) ->
+%     {"Event-UUID", UUID}.
 
 sendmsg_headers(execute, [App, Args], UUID) when is_list(Args) ->
     %% TODO "loops"  header   and  alternate  format   for  long
@@ -1337,7 +1353,8 @@ sendmsg_headers(execute, [App, Args], UUID) when is_list(Args) ->
     %%      not needed yet.
     [ {"execute-app-name", App}
     , {"execute-app-arg", Args}
-    , event_uuid_header(UUID)
+    , {"Event-UUID", UUID}
+    % , event_uuid_header(UUID)
     ];
 
 sendmsg_headers(hangup, [HangupCode], _UUID) ->
@@ -1567,31 +1584,68 @@ play(main_menu = State, #{auth_status := AuthStatus} = Data) -> % {{-
 
 % }}-
 play(category    = State, #{anchor := AnchorText} = Data) -> % {{-
+    { _ContentType
+    , _Selection
+    , #{ anchor := AnchorText }
+    } =
+        content(get, current),
+
     PromptList =
-        lists:flatten(
-          [ AnchorText
-          , common_options(State)
-          , choice_list()
-          ]
-        ),
-    speak(State, Data, PromptList);
+        [ AnchorText
+        , common_options(State)
+        , choice_list()
+        ],
+
+    pipe(
+      [ PromptList
+      , fun lists:flatten/1
+      , fun stitch/1
+      , ((curry(fun speak/3))(State))(Data)
+      ]
+    );
 
 % }}-
 play(publication = State, #{anchor := AnchorText} = Data) -> % {{-
+    % PromptList =
+    %     lists:flatten(
+    %       [ AnchorText
+    %       , common_options(State)
+    %       ]
+    %     ),
+    % speak(State, Data, PromptList);
     PromptList =
-        lists:flatten(
-          [ AnchorText
-          , common_options(State)
-          ]
-        ),
-    speak(State, Data, PromptList);
+        [ AnchorText
+        , common_options(State)
+        ],
+
+    pipe(
+      [ PromptList
+      , fun lists:flatten/1
+      , fun stitch/1
+      , ((curry(fun speak/3))(State))(Data)
+      ]
+    );
 
 % }}-
 play(article_entry = State, Data) -> % {{-
-    speak(State, Data, "Press 0 for help.");
+    Text =
+        [ "Playing article."
+        , "Press 2 to pause playback, and listen to the controls."
+        ],
+    speak(State, Data, Text);
 
 % }}-
-play(category_menu, Data) ->
+play(article_help = State, Data) -> % {{-
+    Anchor = "Pressing the following buttons during playback will have the same effect.",
+    Star = "Press star to go back to "
+    Text =
+        [ "Playing article."
+        , "Press 2 to pause playback, and listen to the controls."
+        ],
+    speak(State, Data, Text);
+
+% }}-
+play(article_playback, Data) ->
     done;
 
 play(publication_menu, Data) ->
@@ -1691,22 +1745,27 @@ play({hangup, inactivity} = State, Data) -> % {{-
 %         erl_parse:parse_term(Tokens),
 %     PlaybackName.
 
-speak(State, Data, PromptList)
-    when erlang:is_list(PromptList)
-->
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text => stitch(PromptList)
-      }
-    ).
+% speak(State, Data, PromptList)
+%     when erlang:is_list(PromptList)
+% ->
+%     speak(
+%       #{ playback_name => State
+%        , data => Data
+%        , text => stitch(PromptList)
+%       }
+%     ).
 
-speak( % {{-
-  #{ playback_name := PlaybackName
-   , data := #{ playbacks := Playbacks } = Data
-   , text := Text
-   }
-) ->
+speak
+  ( PlaybackName
+  , #{ playbacks := Playbacks } = Data
+  , Text
+  )
+-> % {{-
+  % #{ playback_name := PlaybackName
+  %  , data := #{ playbacks := Playbacks } = Data
+  %  , text := Text
+  %  }
+% ) ->
     % return the application UUID string.
     ApplicationUUID =
         sendmsg_locked(
@@ -1951,7 +2010,7 @@ re_start_inactivity_timer(State) -> % {{-
 common_options(State)
   when State =:= category
      ; State =:= publication
-     ; State =:= article
+     % ; State =:= article
 ->
     ContentType =
         atom_to_list(State),
@@ -1982,24 +2041,21 @@ choice_list() ->
        , Selection
        , #{ anchor := AnchorText }
        }
-       <- retrieve(children)
+       <- content(get, children)
     ].
 
 % NOTE `go_to/1` and `retrieve/1` will crash if used improperly. It is not handled, because these are strictly internal functions not intended to be used from anywhere else, and if they crash then the culprit is an error in the surrounding code
-go_to(Direction, Data) ->
-    % TODO Make article vertices conform to 3-tuples
+next(Data) ->
     { ContentType
     , _Selection
-    , #{ anchor := AnchorText }
+    , _Metadata
     } =
-        call_content(go_to, Direction),
-    NewData =
-        Data#{ anchor := AnchorText },
+        content(get, current),
 
-    {next_state, ContentType, NewData}.
+    {next_state, ContentType, Data}.
 
-retrieve(Direction) ->
-    call_content(get, Direction).
+% retrieve(Direction) ->
+%     call_content(get, Direction).
 
 % Action -> Direction -> Vertex
 % Action =
@@ -2011,8 +2067,41 @@ retrieve(Direction) ->
 %     {ContentType, ...}
 % ContentType =
 %     category | publication | article
-call_content(Action, Direction) ->
-    gen_server:call(get(content), {Action, Direction}).
+content(Action, Direction) ->
+    % { ContentType
+    % , _Selection
+    % , #{ anchor := AnchorText }
+    % } =
+    % gen_server:call(content, {Action, Direction}).
+    content:process_action
+      ( get(content_graph)
+      , Action
+      , Direction
+      ).
+        % call_content(get, current),
+    % Data#{ anchor := AnchorText }.
+
+deserialize(
+  { serialized_digraph
+  , VerticeList
+  , EdgeList
+  , NeighbourList
+  , _Cyclicity
+  }
+) ->
+    Graph =
+    { digraph
+    , Vertices
+    , Edges
+    , Neighbours
+    , true
+    } =
+        digraph:new([cyclic, protected]), % default values made explicit
+
+    ets:insert(Vertices, VerticeList),
+    ets:insert(Edges, EdgeList),
+    ets:insert(Neighbours, NeighbourList),
+    Graph.
 
 % TODO INVENTORY! (stringify, curry, composeFlipped)
 % {{-
@@ -2022,7 +2111,7 @@ stringify(Term) ->
     R = io_lib:format("~p",[Term]),
     lists:flatten(R).
 
-% Recursive left-to-right composition instead of a traditional one (i.e., more like a pipe); instead of (b -> c) -> (a -> b) -> (a -> c), it is (a -> b) -> (b -> c) -> ... -> (x -> y) -> (y -> z)
+% Recursive left-to-right composition instead of a traditional one instead of (b -> c) -> (a -> b) -> (a -> c), it is (a -> b) -> (b -> c) -> ... -> (x -> y) -> (y -> z)
 % See PureScript's Control.Semigroupoid.composeFlipped (>>>) or Haskell's Control.Arrow.>>>
 composeFlipped([G|[]]) -> % {{-
     G;
@@ -2033,6 +2122,9 @@ composeFlipped([F,G|Rest]) ->
         end,
     composeFlipped([Composition|Rest]).
 % }}-
+
+pipe([Arg|Functions]) ->
+    (composeFlipped(Functions))(Arg).
 
 flip(F, A, B) ->
     F(B,A).

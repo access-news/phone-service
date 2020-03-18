@@ -71,6 +71,19 @@ handle_call({Action, Direction}, _From, Graph)
 handle_call(_Command, _From, Graph) ->
     {reply, invalid_action, Graph}.
 
+process_action
+  ( {digraph, Vertices, Edges, Neighbours, Cyclicity}
+  , get
+  , graph
+  )
+->
+    { serialized_digraph
+    , ets:tab2list(Vertices)
+    , ets:tab2list(Edges)
+    , ets:tab2list(Neighbours)
+    , Cyclicity
+    };
+
 % Direction -> Vertex
 process_action(Graph, get, current) ->
     current(Graph);
@@ -133,7 +146,7 @@ make_content_graph() ->
 
 make_content_graph(ContentRootDir) -> % {{-
     Graph =
-        digraph:new([cyclic, protected]),
+        digraph:new([cyclic, protected]), % default values made explicit
     % {category, 0, "Main category"}
     RootMeta = get_meta(ContentRootDir),
     digraph:add_vertex(Graph, RootMeta),
