@@ -563,7 +563,7 @@ handle_event(
   #{
       recvd_digits := ReceivedDigits
    ,  auth_status := AuthStatus
-   % ,  menu_history := History
+   ,  content_history := History
    } = Data
 ) ->
     % logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
@@ -654,10 +654,7 @@ handle_event(
         % }}-
         % 0          {{- => main_menu
         { {greeting, ContentRoot}, "0" } ->
-            { next_state
-            , {main_menu, ContentRoot}
-            , Data
-            };
+            {next_state , {main_menu, ContentRoot} , Data};
 
         % }}-
         % [1-9]      {{- => collect digits
@@ -675,8 +672,8 @@ handle_event(
         { {main_menu, Content}, "#" } ->
             NextMenu =
                 case AuthStatus of
-                    registered   -> favourites;
-                    unregistered -> sign_in
+                    registered   -> {favourites, Content};
+                    unregistered -> {sign_in, Content}
                 end,
 
             {next_state, NextMenu, Data};
@@ -690,216 +687,347 @@ handle_event(
 
         % }}-
         % 1         {{- => tutorial
-        { main_menu, "1" } ->
-            {next_state, tutorial, Data};
+        { {main_menu, Content}, "1" } ->
+            {next_state, {tutorial, Content}, Data};
 
         % }}-
         % 2         {{- => leave_message
-        { main_menu, "2" } ->
-            {next_state, leave_message, Data};
+        { {main_menu, Content}, "2" } ->
+            {next_state, {leave_message, Content}, Data};
 
         % }}-
         % 3         {{- => settings
-        { main_menu, "3" } ->
-            {next_state, settings, Data};
+        { {main_menu, Content}, "3" } ->
+            {next_state, {settings, Content}, Data};
 
         % }}-
         % 4         {{- => blindness_services
-        { main_menu, "4" } ->
-            {next_state, blindness_services, Data};
+        { {main_menu, Content}, "4" } ->
+            {next_state, {blindness_services, Content}, Data};
 
         % }}-
         % TODO: play contents at random
         % 5         {{- => UNASSIGNED (keep state and data)
-        { main_menu, "5" } ->
+        { {main_menu, _Content}, "5" } ->
             % {next_state, random, Data};
             keep_state_and_data;
 
         % }}-
         % 6         {{- => UNASSIGNED (keep state and data)
-        { main_menu, "6" } ->
+        { {main_menu, _Content}, "6" } ->
             keep_state_and_data;
 
         % }}-
         % 7         {{- => UNASSIGNED (keep state and data)
-        { main_menu, "7" } ->
+        { {main_menu, _Content}, "7" } ->
             keep_state_and_data;
 
         % }}-
         % 8         {{- => UNASSIGNED (keep state and data)
-        { main_menu, "8" } ->
+        { {main_menu, _Content}, "8" } ->
             keep_state_and_data;
 
         % }}-
         % 9         {{- => UNASSIGNED (keep state and data)
-        { main_menu, "9" } ->
+        { {main_menu, _Content}, "9" } ->
             keep_state_and_data;
 
         % }}-
 
         % === CATEGORY (loop)
         % *          {{- => back (i.e., up in content hierarchy)
-        { category, "*" } ->
-            go_to(parent, Data);
+        { {content, #{ type := category } = Current}, "*" } ->
+            { next_state
+            , {content, content(Current, parent)}
+            , Data
+            };
 
         % }}-
         % #          {{- => next category (i.e., next sibling)
-        { category, "#" } ->
-            go_to(next, Data);
+        { {content, #{ type := category } = Current}, "#" } ->
+            { next_state
+            , {content, content(Current, next)}
+            , Data
+            };
 
         % }}-
         % 0          {{- => category_menu
-        { category, "0" } ->
-            {next_state, category_menu, Data};
+        { {content, #{ type := category } = Current}, "0" } ->
+            { next_state
+            , {category_menu, Current}
+            , Data
+            };
 
         % }}-
         % [1-9]      {{- => collect digits
-        { category, Digit } ->
-            collect_digits(Data, Digit);
+        { {content, #{ type := category } = Current}, Digit} ->
+            collect_digits(Current, Data, Digit);
         % }}-
 
         % === CATEGORY_MENU (loop)
-        % *         {{- => back (to current category)
-        { category_menu, "*" } ->
-            go_to(current, Data);
+        % *         {{- => back (to current content)
+        { {category_menu, Content}, "*" } ->
+            {next_state, {content, Content}, Data};
 
         % }}-
         % #         {{- => previous category (i.e., previous sibling)
-        { category_menu, "#" } ->
-            go_to(prev, Data);
+        { {category_menu, Content}, "#" } ->
+            { next_state
+            , {content, content(Current, prev)}
+            , Data
+            };
 
         % }}-
         % 0         {{- => main_menu
-        { category_menu, "0" } ->
-            {next_state, main_menu, Data};
+        { {category_menu, Content}, "0" } ->
+            {next_state, {main_menu, Content}, Data};
 
         % }}-
         % 1         {{- => UNASSIGNED (keep state and data)
-        { category_menu, "1" } ->
+        { {category_menu, Content}, "1" } ->
             keep_state_and_data;
 
         % }}-
         % 2         {{- => UNASSIGNED (keep state and data)
-        { category_menu, "2" } ->
+        { {category_menu, Content}, "2" } ->
             keep_state_and_data;
 
         % }}-
         % 3         {{- => UNASSIGNED (keep state and data)
-        { category_menu, "3" } ->
+        { {category_menu, Content}, "3" } ->
             keep_state_and_data;
 
         % }}-
         % 4         {{- => UNASSIGNED (keep state and data)
-        { category_menu, "4" } ->
+        { {category_menu, Content}, "4" } ->
             keep_state_and_data;
 
         % }}-
-        % 5         {{- => UNASSIGNED (keep state and data)
-        { category_menu, "5" } ->
-            keep_state_and_data;
+        % TODO play where_am_i
+        % 5         {{- => Where am I?
+        { {category_menu, Content}, "5" } ->
+            { next_state
+            , {where_am_i, Content}
+            , Data
+            };
 
         % }}-
         % 6         {{- => UNASSIGNED (keep state and data)
-        { category_menu, "6" } ->
+        { {category_menu, Content}, "6" } ->
             keep_state_and_data;
 
         % }}-
         % 7         {{- => Enter FIRST child (category/publication)
-        { category_menu, "7" } ->
-            go_to(first, Data);
+        { {category_menu, Current}, "7" } ->
+            { next_state
+            , {content, content(Current, first)}
+            , Data
+            };
 
         % }}-
         % 8         {{- => Jump to content root
-        { category_menu, "8" } ->
-            go_to(content_root, Data);
+        { {category_menu, _Content}, "8" } ->
+            { next_state
+            , {content, content_root()}
+            , Data
+            };
 
         % }}-
         % 9         {{- => Enter LAST child (category/publication)
-        { category_menu, "9" } ->
-            go_to(last, Data);
+        { {category_menu, Current}, "9" } ->
+            { next_state
+            , {content, content(Current, last)}
+            , Data
+            };
 
         % }}-
 
         % === PUBLICATION (-> first article, i.e., first child)
-        % *          {{- => back (i.e., up in content hierarchy)
-        { publication, "*" } ->
-            go_to(parent, Data);
+        % *         {{- => back (i.e., up in content hierarchy)
+        { {content, #{ type := publication } = Current}, "*" } ->
+            { next_state
+            , {content, content(Current, parent)}
+            , Data
+            };
 
         % }}-
-        % #          {{- => next publication (i.e., next sibling)
-        { publication, "#" } ->
-            go_to(next, Data);
+        % #         {{- => NEXT publication (i.e., next sibling)
+        { {content, #{ type := publication } = Current}, "#" } ->
+            { next_state
+            , {content, content(Current, next)}
+            , Data
+            };
 
         % }}-
-        % 0          {{- => publication_menu
-        { publication, "0" } ->
-            {next_state, publication_menu, Data};
+        % 0         {{- => publication_menu
+        { {content, #{ type := publication } = Current}, "0" } ->
+            { next_state
+            , {publication_menu, Current}
+            , Data
+            };
 
         % }}-
-        % [1-9]      {{- => ignore (keep_state_and_data)
-        { publication, Digit } ->
-            keep_state_and_data;
-        % }}-
-
-        % === PUBLICATION_MENU (loop)
-        % *         {{- => back (to current category)
-        { publication_menu, "*" } ->
-            go_to(current, Data);
+        % 1         {{- => Play FIRST article
+        { {content, #{ type := publication } = Current}, "1" } ->
+            { next_state
+            , {content, content(Current, first)}
+            , Data
+            };
 
         % }}-
-        % #         {{- => previous category (i.e., previous sibling)
-        { publication_menu, "#" } ->
-            go_to(prev, Data);
+        % 2         {{- => List articles
+        { {content, #{ type := publication } = Current}, "2" } ->
+            { next_state
+            , {list_articles, Current}
+            , Data
+            };
 
         % }}-
-        % 0         {{- => main_menu
-        { publication_menu, "0" } ->
-            {next_state, main_menu, Data};
-
-        % }}-
-        % 1         {{- => UNASSIGNED (keep state and data)
-        { publication_menu, "1" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 2         {{- => UNASSIGNED (keep state and data)
-        { publication_menu, "2" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 3         {{- => UNASSIGNED (keep state and data)
-        { publication_menu, "3" } ->
-            keep_state_and_data;
+        % 3         {{- => Play LAST article
+        { {content, #{ type := publication } = Current}, "3" } ->
+            { next_state
+            , {content, content(Current, last)}
+            , Data
+            };
 
         % }}-
         % 4         {{- => UNASSIGNED (keep state and data)
-        { publication_menu, "4" } ->
+        { {content, #{ type := publication } = Current}, "4" } ->
             keep_state_and_data;
 
         % }}-
-        % 5         {{- => UNASSIGNED (keep state and data)
-        { publication_menu, "5" } ->
+        % TODO play where_am_i
+        % 5         {{- => Where am I?
+        { {content, #{ type := publication } = Current}, "5" } ->
+            { next_state
+            , {where_am_i, Current}
+            , Data
+            };
+
+        % }}-
+        % 6         {{- => Go to main category
+        { {content, #{ type := publication } = _Current}, "6" } ->
+            { next_state
+            , {content, content_root()}
+            , Data
+            };
+
+        % }}-
+        % 7         {{- => NEXT publication (same as "#")
+        { {content, #{ type := publication } = Current}, "7" } ->
+            { next_state
+            , {content, content(Current, next)}
+            , Data
+            };
+
+        % }}-
+        % 8         {{- => List publications (same as "*")
+        { {content, #{ type := publication } = Current}, "8" } ->
+            { next_state
+            , {content, content(Current, parent)}
+            , Data
+            };
+
+        % }}-
+        % 9         {{- => PREVIOUS publication
+        { {content, #{ type := publication } = Current}, "9" } ->
+            { next_state
+            , {content, content(Current, prev)}
+            , Data
+            };
+
+        % }}-
+
+        % === PUBLICATION_MENU (loop)
+        % *         {{- => back (i.e., up in content hierarchy)
+        { {publication_menu, Current}, "*" } ->
+            {next_state, {content, Current}, Data};
+
+        % }}-
+        % #         {{- => PREVIOUS publication (i.e., previous sibling)
+        { {publication_menu, Current}, "#" } ->
+            { next_state
+            , {content, content(Current, prev)}
+            , Data
+            };
+
+        % }}-
+        % 0         {{- => main_menu
+        { {publication_menu, Content}, "0" } ->
+            { next_state
+            , {main_menu, Content}
+            , Data
+            };
+
+        % }}-
+        % 1         {{- => Play FIRST article
+        { {publication_menu, Current}, "1" } ->
+            { next_state
+            , {content, content(Current, first)}
+            , Data
+            };
+
+        % }}-
+        % 2         {{- => List articles
+        { {publication_menu, Content}, "2" } ->
+            { next_state
+            , {list_articles, Content}
+            , Data
+            };
+
+        % }}-
+        % 3         {{- => Play LAST article
+        { {publication_menu, Current}, "3" } ->
+            { next_state
+            , {content, content(Current, last)}
+            , Data
+            };
+
+        % }}-
+        % 4         {{- => UNASSIGNED (keep state and data)
+        { {publication_menu, _Content}, "4" } ->
             keep_state_and_data;
 
         % }}-
-        % 6         {{- => UNASSIGNED (keep state and data)
-        { publication_menu, "6" } ->
-            keep_state_and_data;
+        % TODO play where_am_i
+        % 5         {{- => Where am I?
+        { {publication_menu, Content}, "5" } ->
+            { next_state
+            , {where_am_i, Content}
+            , Data
+            };
 
         % }}-
-        % 7         {{- => Start playing FIRST article (i.e., first child)
-        { publication_menu, "7" } ->
-            go_to(first, Data);
+        % 6         {{- => Go to main category
+        { {publication_menu, _Content}, "6" } ->
+            { next_state
+            , {content, content_root()}
+            , Data
+            };
 
         % }}-
-        % 8         {{- => List articles
-        { publication_menu, "8" } ->
-            {next_state, list_articles, Data};
+        % 7         {{- => NEXT publication (same as "#")
+        { {publication_menu, Current}, "7" } ->
+            { next_state
+            , {content, content(Current, next)}
+            , Data
+            };
 
         % }}-
-        % 9         {{- => Start playing LAST article (i.e., last child)
-        { publication_menu, "9" } ->
-            go_to(last, Data);
+        % 8         {{- => List publications (same as "*")
+        { {publication_menu, Current}, "8" } ->
+            { next_state
+            , {content, content(Current, parent)}
+            , Data
+            };
+
+        % }}-
+        % 9         {{- => PREVIOUS publication
+        { {publication_menu, Current}, "9" } ->
+            { next_state
+            , {content, content(Current, prev)}
+            , Data
+            };
 
         % }}-
 
@@ -1262,15 +1390,12 @@ handle_event
 
     % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
 
-    % At this point the resulting list can only be list of maps
-    SubCategories =
-        content(Content, children),
     SelectionResult =
         [  Child
         || Child
-           <- SubCategories
-           , maps:find(selection, Child) =:= {ok, Selection}
-        ]
+           <- content(Content, children)
+           ,  maps:find(selection, Child) =:= {ok, Selection}
+        ],
 
     % case lists:keyfind(Selection, 2, SubCategories) of
     case SelectionResult of
@@ -2085,41 +2210,46 @@ choice_list() ->
     ].
 
 % NOTE `go_to/1` and `retrieve/1` will crash if used improperly. It is not handled, because these are strictly internal functions not intended to be used from anywhere else, and if they crash then the culprit is an error in the surrounding code
-next(Data, Content) ->
-    % { ContentType
-    % , _Selection
-    % , _Metadata
-    % } =
-        content(get, current),
+% next(Data, Content) ->
+%     % { ContentType
+%     % , _Selection
+%     % , _Metadata
+%     % } =
+%         content(get, current),
 
-    {next_state, Content, Data}.
+%     {next_state, Content, Data}.
 
 % retrieve(Direction) ->
 %     call_content(get, Direction).
 
-% Action -> Direction -> Vertex
-% Action =
-%     go_to | get
+% Direction -> Vertex
 % Direction =
-%     parent | first | last | next | prev | content_root | current | children
-%     | Vertex
-% Vertex =
-%     {ContentType, ...}
+%     parent | first | last | next | prev | content_root
+% CurrentVertex =
+%     #{ type := ContentType, ...} (see content.erl)
 % ContentType =
 %     category | publication | article
-% content(Action, Direction) ->
-content(Vertex, Direction) ->
+content(CurrentVertex, Direction) -> % List Content | []
     % { ContentType
     % , _Selection
     % , #{ anchor := AnchorText }
     % } =
-    % gen_server:call(content, {Action, Direction}).
-    content:process_action
+    Result =
+        gen_server:call
+          ( content
+          , {CurrentVertex, Direction}
+          ),
+    case Result of
+        [Vertex] -> Vertex; % all except `children`
+        [_|_] -> Result;    % `children`
+        [] -> nothing       % Vertex has no specified direction
+    end.
+    % content:process_action
       % ( get(content_graph)
-      ( content
-      , Vertex
-      , Direction
-      ).
+      % ( content
+      % , CurrentVertex
+      % , Direction
+      % ).
         % call_content(get, current),
     % Data#{ anchor := AnchorText }.
 
