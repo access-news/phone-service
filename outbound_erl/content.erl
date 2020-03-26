@@ -1,8 +1,7 @@
 -module(content).
 -behaviour(gen_server).
 
--define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").
--define(CONTENT_ROOT, {category, 0, "Main category"}).
+-define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").  % -define(CONTENT_ROOT, {category, 0, "Main category"}).
 
 -export(
    [ start/0
@@ -19,9 +18,11 @@
    , refresh_content_graph/1
    , realize/0
 
-   , get_vertex/2
-   , current/1
-   , update_history/2
+   , get_vertex/3
+   , process_call/3
+   , get_meta/1
+   % , current/1
+   % , update_history/2
    ]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -38,91 +39,101 @@ start() ->
 
 init(_Args) ->
     Graph = make_content_graph(),
-    digraph:add_vertex(Graph, history, []),
+    % digraph:add_vertex(Graph, history, []),
     % Necessary because ?CONTENT_ROOT gets written to the metafile, but that tuple is going to be changed when building the graph (and reading back from the file system).
-    ContentRoot =
-        lists:keyfind(0, 2, digraph:vertices(Graph)),
-    digraph:add_edge
-        ( Graph
-        , current         % edge name
-        , history         % from vertex
-        , ContentRoot   % to
-        , [ContentRoot] % label, moonlighting as history stack
-        ),
+    % ContentRoot =
+    %     lists:keyfind(0, 2, digraph:vertices(Graph)),
+    % digraph:add_edge
+    %     ( Graph
+    %     , current         % edge name
+    %     , history         % from vertex
+    %     , ContentRoot   % to
+    %     , [ContentRoot] % label, moonlighting as history stack
+    %     ),
 
     {ok, Graph}.
 
 %           request,      from,        state
-handle_call({Action, Direction}, _From, Graph)
+handle_call({Vertex, Direction}, _From, Graph)
+% handle_call({Action, Direction}, _From, Graph)
   when Direction =:= parent       % \
      ; Direction =:= first        % |
      ; Direction =:= last         % |
      ; Direction =:= next         % | Vertex
      ; Direction =:= prev         % |
      ; Direction =:= content_root % |
-     ; Direction =:= current      % /
+     % ; Direction =:= current      % /
      ; Direction =:= children     %   [ Vertex ]
 ->
     { reply
-    , process_action(Graph, Action, Direction)
+    % , process_action(Graph, Action, Direction)
+    , process_call(Graph, Vertex, Direction)
     , Graph
     };
 
 handle_call(_Command, _From, Graph) ->
-    {reply, invalid_action, Graph}.
+    {reply, invalid_command, Graph}.
 
-process_action
-  ( {digraph, Vertices, Edges, Neighbours, Cyclicity}
-  , get
-  , graph
-  )
-->
-    { serialized_digraph
-    , ets:tab2list(Vertices)
-    , ets:tab2list(Edges)
-    , ets:tab2list(Neighbours)
-    , Cyclicity
-    };
-
-% Direction -> Vertex
-process_action(Graph, get, current) ->
-    current(Graph);
+% HOW TO SERIALIZE A DIGRAPH
+% Serialization is implemented in ivr.erl (probably also commented out)
+% process_action
+%   ( {digraph, Vertices, Edges, Neighbours, Cyclicity}
+%   , get
+%   , graph
+%   )
+% ->
+%     { serialized_digraph
+%     , ets:tab2list(Vertices)
+%     , ets:tab2list(Edges)
+%     , ets:tab2list(Neighbours)
+%     , Cyclicity
+%     };
 
 % Direction -> Vertex
-process_action(_Graph, get, content_root) ->
-    ?CONTENT_ROOT;
+% process_action(Graph, get, current) ->
+%     current(Graph);
+
+% Direction -> Vertex
+process_call(Graph, _Vertex, content_root) ->
+    [  Vertex 
+    || Vertex
+       <- digraph:vertices(Graph)
+       , maps:find(selection, Vertex) =:= {ok, 0}
+    ];
 
 %! Direction -> [ Vertex ]
-process_action(Graph, get, children) ->
-    get_vertex(Graph, child);
+process_call(Graph, Vertex, children) ->
+    get_vertex(Graph, Vertex, child);
 
-process_action(Graph, get, Direction) ->
+process_call(Graph, Vertex, Direction) ->
     % TODO These are the only 2 options here, and if this does crash it means there's a logical error somewhere in this module.
-    case get_vertex(Graph, Direction) of
+    get_vertex(Graph, Vertex, Direction).
+    % case get_vertex(Graph, Vertex, Direction) of
         % This means that the current vertex does not have that specific direction. E.g., articles won't have child, first, last edges.
-        [] ->
-            invalid_action;
-        [Vertex] ->
-            Vertex
-    end;
+        % [] ->
+        %     nothing;
+        % [_Vertex] = Result ->
+        %     Result
+        % % [Vx] -> Vx
+    % end.
 
-process_action(Graph, go_to, Direction)
-  when Direction =:= children;
-       Direction =:= invalid_action
-->
-    invalid_action;
+% process_call(Graph, go_to, Direction)
+%   when Direction =:= children;
+%        Direction =:= invalid_action
+% ->
+%     invalid_action;
 
-process_action(Graph, go_to, Vertex)
-  when erlang:is_tuple(Vertex)
-->
-    update_history(Graph, Vertex),
-    Vertex;
+% process_call(Graph, go_to, Vertex)
+%   when erlang:is_tuple(Vertex)
+% ->
+%     update_history(Graph, Vertex),
+%     Vertex;
 
-process_action(Graph, go_to, Direction) ->
-    % TODO
-    % http://blog.sigfpe.com/2006/08/you-could-have-invented-monads-and.html
-    Vertex = process_action(Graph, get, Direction),
-    process_action(Graph, go_to, Vertex).
+% process_call(Graph, go_to, Direction) ->
+%     % TODO
+%     % http://blog.sigfpe.com/2006/08/you-could-have-invented-monads-and.html
+%     Vertex = process_action(Graph, get, Direction),
+%     process_action(Graph, go_to, Vertex).
 
 % handle_cast(reload_db = Request, _PhoneNumberSet) ->
 %     log(debug, [reload_db, Request]),
@@ -142,13 +153,16 @@ process_action(Graph, go_to, Direction) ->
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
 make_content_graph() ->
-    make_content_graph(?CONTENT_ROOT_DIR).
+    make_content_graph(
+      filename:join(?CONTENT_ROOT_DIR, "0")
+    ).
 
 make_content_graph(ContentRootDir) -> % {{-
     Graph =
         digraph:new([cyclic, protected]), % default values made explicit
-    % {category, 0, "Main category"}
-    RootMeta = get_meta(ContentRootDir),
+    RootMeta =
+        get_meta(ContentRootDir),
+
     digraph:add_vertex(Graph, RootMeta),
     % NOTE Theoretically it is not necessary because `get_vertex/2` returns [] for non-existing edges
     % [ digraph:add_edge
@@ -206,7 +220,11 @@ add_meta_to_path(ContentType, Dir, Path) ->
                category -> get_meta(FullPath);
             % TODO the anchor text should hold the name of the article's title
             % TODO previous todo also implies that each article should alsw have a metafile, requiring extensive rewrite
-            publication -> {article, FullPath, #{ anchor => "article" }}
+            publication ->
+                #{ type => article
+                 , path => FullPath
+                 , title => "article" % formerly known as "anchortext"
+                 }
         end,
     {true, {Meta, FullPath}}.
 % }}-
@@ -219,7 +237,8 @@ do_make(Graph, Dir) ->
             OrderedDirList =
                 ordsets:from_list(List),
             % If ContentType =:= publication then DirList will consist entirely of files (meta.erl + audio files)
-            {ContentType, _, _} = Meta =
+            % {ContentType, _, _} = Meta =
+            #{ type := ContentType } = Meta =
                 get_meta(Dir),
             MetaPathTuples =
                 lists:filtermap(
@@ -291,54 +310,54 @@ do_dirlist( % {{-
 % }}-
 
 % Graph -> Vertex
-current(Graph) ->
-    {current, history, Current, _History} =
-        digraph:edge(Graph, current),
-    Current.
+% current(Graph) ->
+%     {current, history, Current, _History} =
+%         digraph:edge(Graph, current),
+%     Current.
 
 % Graph -> Direction -> List Vertex
 % TODO Direction is misleading because it means smth else in different contexts
 % Direction = parent | next | prev | first | last | child
-get_vertex(Graph, Direction) ->
-    Current = current(Graph),
+get_vertex(Graph, Vertex, Direction) ->
+    % Current = current(Graph),
 
     EdgeResults =
         [  digraph:edge(Graph, Edge)
-        || Edge <- digraph:out_edges(Graph, Current),
+        || Edge <- digraph:out_edges(Graph, Vertex),
                    erlang:element(1, Edge) =:= Direction
         ],
 
-    [  Vertex
+    [  Vx % Vertex % this would not shadow the function argument, but confusing
     || { {Direction, _} % edge
        , _              % from
-       , Vertex         % to
+       , Vx             % to
        , []             % edge label
        }
        <- EdgeResults
     ].
 
 % Graph -> Vertex -> current | noop
-update_history(Graph, With) ->
-    { current % edge name
-    , history % from
-    , Current % to
-    , History % edge label
-    } =
-        digraph:edge(Graph, current),
+% update_history(Graph, With) ->
+%     { current % edge name
+%     , history % from
+%     , Current % to
+%     , History % edge label
+%     } =
+%         digraph:edge(Graph, current),
 
-    case With =:= Current of
-        true ->
-            noop;
-        false ->
-            digraph:del_edge(Graph, current),
-            digraph:add_edge
-                ( Graph
-                , current        % edge name
-                , history        % from vertex
-                , With           % to
-                , [With|History] % label, moonlighting as history stack
-                )
-    end.
+    % case With =:= Current of
+    %     true ->
+    %         noop;
+    %     false ->
+    %         digraph:del_edge(Graph, current),
+    %         digraph:add_edge
+    %             ( Graph
+    %             , current        % edge name
+    %             , history        % from vertex
+    %             , With           % to
+    %             , [With|History] % label, moonlighting as history stack
+    %             )
+    % end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% INTERNAL MODEL OF THE YET TO BE BUILT ACCESS NEWS WEB SERVICE      %%
@@ -348,100 +367,103 @@ update_history(Graph, With) ->
 % The publication guide below is just a representation of future data of the yet-to-be-implemented core web service, and its data may not contain such IDs, but that could be done on this end by ordering and adding that via a script.
 
 publication_guide() -> % {{-
-    [ { {category, 1, "Store sales advertising"}
-      , [ { {category, 1, "Grocery stores"}
-          , [ {publication, 1, "Safeway"}
-            , {publication, 2, "Raley's"}
-            , {publication, 3, "La Superior"}
-            , {publication, 4, "Food source"}
-            , {publication, 5, "Savemart"}
-            , {publication, 6, "Foods Co"}
-            , {publication, 7, "Trader Joe's"}
-            , {publication, 8, "Sprouts"}
-            , {publication, 9, "Lucky Supermarkets"}
+    [ { {category, 0, "Main category"}
+      , [ { {category, 1, "Store sales advertising"}
+          , [ { {category, 1, "Grocery stores"}
+              , [ {publication, 1, "Safeway"}
+                , {publication, 2, "Raley's"}
+                , {publication, 3, "La Superior"}
+                , {publication, 4, "Food source"}
+                , {publication, 5, "Savemart"}
+                , {publication, 6, "Foods Co"}
+                , {publication, 7, "Trader Joe's"}
+                , {publication, 8, "Sprouts"}
+                , {publication, 9, "Lucky Supermarkets"}
+                ]
+              }
+            , { {category, 2, "Drug stores"}
+              , [ {publication, 1, "CVS"}
+                , {publication, 2, "Rite Aid"}
+                , {publication, 3, "Walgreen's"}
+                ]
+              }
+            , { {category, 3, "Discount stores"}
+              , [ {publication, 1, "Target"}
+                , {publication, 2, "Walmart"}
+                ]
+              }
             ]
           }
-        , { {category, 2, "Drug stores"}
-          , [ {publication, 1, "CVS"}
-            , {publication, 2, "Rite Aid"}
-            , {publication, 3, "Walgreen's"}
+
+        , { {category, 2, "Sacramento newspapers and magazines"}
+          , [ { {category, 1, "Sacramento newspapers"}
+              , [ {publication, 1, "Sacramento Bee"}
+                , {publication, 2, "Sacramento News & Review"}
+                , {publication, 3, "Sacramento Press"}
+                , {publication, 4, "Sacramento Business Journal"}
+                , {publication, 5, "East Sacramento News by Valley Community Newspapers"}
+                , {publication, 6, "The Land Park News by Valley Community Newspapers"}
+                , {publication, 7, "The Pocket News by Valley Community Newspapers"}
+                ]
+              }
+            , { {category, 2, "Sacramento magazines"}
+              , [ {publication, 1, "Comstocks"}
+                , {publication, 2, "SacTown"}
+                , {publication, 3, "Sacramento Magazine"}
+                ]
+              }
             ]
           }
-        , { {category, 3, "Discount stores"}
-          , [ {publication, 1, "Target"}
-            , {publication, 2, "Walmart"}
+
+        , { {category, 3, "Greater Sacramento area newspapers"}
+          , [ {publication, 1, "Carmichael Times"}
+            , {publication, 2, "Arden Carmichael News"}
+            , {publication, 3, "California Kids"}
+            , {publication, 4, "Davis Enterprise"}
+            , {publication, 5, "Roseville Press Tribune"}
+            , {publication, 6, "Woodland Daily Democrat"}
+            , {publication, 7, "Carmichael Times"}
+            , {publication, 8, "Auburn Journal"}
+            , {publication, 9, "Grass Valley-Nevada City Union"}
+            , {publication, 10, "Arden Carmichael News by Valley Community Newspapers"}
+            , {publication, 11, "El Dorado County Mountain Democrat"}
             ]
           }
-        ]
-      }
 
-    , { {category, 2, "Sacramento newspapers and magazines"}
-      , [ { {category, 1, "Sacramento newspapers"}
-          , [ {publication, 1, "Sacramento Bee"}
-            , {publication, 2, "Sacramento News & Review"}
-            , {publication, 3, "Sacramento Press"}
-            , {publication, 4, "Sacramento Business Journal"}
-            , {publication, 5, "East Sacramento News by Valley Community Newspapers"}
-            , {publication, 6, "The Land Park News by Valley Community Newspapers"}
-            , {publication, 7, "The Pocket News by Valley Community Newspapers"}
+        , { {category, 4, "Central California newspapers"}
+          , [ {publication, 1, "Modesto Bee"}
+            , {publication, 2, "Stockton Record"}
             ]
           }
-        , { {category, 2, "Sacramento magazines"}
-          , [ {publication, 1, "Comstocks"}
-            , {publication, 2, "SacTown"}
-            , {publication, 3, "Sacramento Magazine"}
+
+        , { {category, 5, "San Francisco and Bay Area newspapers"}
+          , [ {publication, 1, "Vallejo Times Herald"}
+            , {publication, 2, "Santa Rosa Press Democrat"}
+            , {publication, 3, "SF Gate"}
+            , {publication, 4, "San Francisco Bay Guardian"}
+            , {publication, 5, "East Bay Times"}
+            , {publication, 6, "SF Weekly"}
+            , {publication, 7, "KQED Bay Area Bites"}
             ]
           }
-        ]
-      }
 
-    , { {category, 3, "Greater Sacramento area newspapers"}
-      , [ {publication, 1, "Carmichael Times"}
-        , {publication, 2, "Arden Carmichael News"}
-        , {publication, 3, "California Kids"}
-        , {publication, 4, "Davis Enterprise"}
-        , {publication, 5, "Roseville Press Tribune"}
-        , {publication, 6, "Woodland Daily Democrat"}
-        , {publication, 7, "Carmichael Times"}
-        , {publication, 8, "Auburn Journal"}
-        , {publication, 9, "Grass Valley-Nevada City Union"}
-        , {publication, 10, "Arden Carmichael News by Valley Community Newspapers"}
-        , {publication, 11, "El Dorado County Mountain Democrat"}
-        ]
-      }
-
-    , { {category, 4, "Central California newspapers"}
-      , [ {publication, 1, "Modesto Bee"}
-        , {publication, 2, "Stockton Record"}
-        ]
-      }
-
-    , { {category, 5, "San Francisco and Bay Area newspapers"}
-      , [ {publication, 1, "Vallejo Times Herald"}
-        , {publication, 2, "Santa Rosa Press Democrat"}
-        , {publication, 3, "SF Gate"}
-        , {publication, 4, "San Francisco Bay Guardian"}
-        , {publication, 5, "East Bay Times"}
-        , {publication, 6, "SF Weekly"}
-        , {publication, 7, "KQED Bay Area Bites"}
-        ]
-      }
-
-    , { {category, 6, "Northern California newspapers"}
-      , [ {publication, 1, "Fort Bragg Advocate News"}
-        , {publication, 2, "The Mendocino Beacon"}
-        , {publication, 3, "Humboldt Senior Resource Center's Senior News"}
-        , {publication, 4, "North Coast Journal"}
-        , {publication, 5, "Mad River Union"}
-        , {publication, 6, "Eureka Times Standard"}
-        , {publication, 7, "Ferndale Enterprise"}
+        , { {category, 6, "Northern California newspapers"}
+          , [ {publication, 1, "Fort Bragg Advocate News"}
+            , {publication, 2, "The Mendocino Beacon"}
+            , {publication, 3, "Humboldt Senior Resource Center's Senior News"}
+            , {publication, 4, "North Coast Journal"}
+            , {publication, 5, "Mad River Union"}
+            , {publication, 6, "Eureka Times Standard"}
+            , {publication, 7, "Ferndale Enterprise"}
+            ]
+          }
         ]
       }
     ].
 % }}-
 
 write_meta_file
-  ( {ContentType, Selection, AnchorText} = _Category
+  ( {ContentType, Selection, Title} = _Category
   , Dir
   )
 -> % {{-
@@ -449,10 +471,10 @@ write_meta_file
         filename:join(Dir, metafile_name()),
     Content =
         stringify(
-          { ContentType
-          , Selection
-          , #{ anchor => AnchorText }
-          }
+          #{ type => ContentType
+           , selection => Selection
+           , title => Title
+           }
         ),
     file:write_file(
       MetaFilePath,
@@ -515,10 +537,10 @@ realize() ->
 realize(ContentRoot) -> % {{-
     case file:make_dir(ContentRoot) of
         ok ->
-            write_meta_file(
-              ?CONTENT_ROOT,
-              ContentRoot
-            ),
+            % write_meta_file(
+            %   ?CONTENT_ROOT,
+            %   ContentRoot
+            % ),
             realize(publication_guide(), ContentRoot);
         {error, _} = Error ->
             Error

@@ -151,15 +151,15 @@ handle_event(enter, OldState, State, Data) -> % {{-
     %     end,
 
     NewData =
-        ( composeFlipped(
-            % [ HistoryFun
-            [ fun stop_playback/1
-            , fun(GenData) -> comfort_noise(), GenData end
-            % , fun(GenData) -> play(State, GenData) end
-            , (curry(fun play/2))(State)
-            ]
-          )
-        )(Data),
+        % ( composeFlipped(
+        pipe(
+          [ Data
+          , fun stop_playback/1
+          , fun(Data) -> comfort_noise(), Data end
+          % , fun(GenData) -> play(State, GenData) end
+          , (curry(fun play/2))(State)
+          ]
+        ),
 
     {keep_state, NewData};
 % }}-
@@ -351,20 +351,24 @@ handle_event(
 %% inactivity timers (info) {{-
 % The timers are started with `re_start_inactivity_timer/0` when a call comes in, or a DTMF signal is received. The purpose of button presses to change the state, so it is not important to restart the timers on the actual state change, and interdigit timers have a short value compared to the inactivity ones.
 % This way is even better, because on invalid category selection the user will remain in the same state as long as they can't input a correct number, but the timers will get reset on each try.
-handle_event(
-  info,
-  inactivity_warning,
-  State,
-  Data
-) ->
-    Inactive =
-        "Please any key if you are still there.",
+handle_event
+  ( info               % EventType
+  , inactivity_warning % EventContent
+  , {_, Content}       % State,
+  , Data
+  )
+->
+    % Inactive =
+    %     "Please any key if you are still there.",
 
     % TODO Add notes on how this works.
     % TODO how is this applicable when in {article, _}?
-    NewDataP =
-        warning(Inactive, Data),
-    {keep_state, NewDataP};
+    % NewDataP =
+    %     warning(Inactive, Data),
+    { next_state
+    , {inactivity_warning, Content}
+    , Data
+    };
 
 handle_event(
   info,
@@ -417,7 +421,7 @@ handle_event(
     keep_state_and_data;
 % }}-
 
-%% INCOMING_CALL (STATE: incoming_call -> greeting) {{-
+%% mod_erlang_event: call (STATE: init -> incoming_call) {{-
 
 %% Call init {{-
 %% ====================================================
@@ -524,7 +528,7 @@ handle_event(
     % };
 %% }}-
 
-%% CALL_ANSWERED (STATE: greeting -> greeting) {{-
+%% mod_erlang_event: call_event(CHANNEL_ANSWER) (STATE: incoming_call -> greeting) {{-
 
 handle_event(
   internal,                               % EventType
@@ -540,7 +544,11 @@ handle_event(
 ) ->
     % logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
     re_start_inactivity_timer(State),
-    {next_state, greeting, Data};
+
+    { next_state
+    , {greeting, content_root()}
+    , Data
+    };
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -555,7 +563,7 @@ handle_event(
   #{
       recvd_digits := ReceivedDigits
    ,  auth_status := AuthStatus
-   ,  menu_history := History
+   % ,  menu_history := History
    } = Data
 ) ->
     % logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
@@ -624,49 +632,47 @@ handle_event(
     %     end,
 
     case {State, Digit} of
-        % #{                state => State
-        %  ,       received_digit => Digit
-        %  % `ReceivedDigits` emptied after eval on `interdigit_timer` timeout
-        %  % ,    collecting_digits => ReceivedDigits =/= []
-        %  }
-    % of
         % TODO # has no function (except greeting, main_menu, article)
         % Use it to browse categories (step into the next one, like in article?)
         % or forward in history instead of back?
 
         % === COLLECT_DIGITS
-        { collect_digits, Digit } ->
-            collect_digits(Data, Digit);
+        { {collect_digits, Content}, Digit } ->
+            collect_digits(Content, Data, Digit);
 
         % === GREETING (-> content_root)
-        % *          {{- => content root
-        { greeting, "*" } ->
-            go_to(content_root, Data);
-
-        % }}-
-        % #          {{- => content root
-        { greeting, "#" } ->
-            go_to(content_root, Data);
+        % [*#]       {{- => content root
+        { {greeting, ContentRoot}, Digit }
+          when Digit =:= "*";
+               Digit =:= "#"
+        ->
+            { next_state
+            , {content, ContentRoot}
+            , Data
+            };
 
         % }}-
         % 0          {{- => main_menu
-        { greeting, "0" } ->
-            {next_state, main_menu, Data};
+        { {greeting, ContentRoot}, "0" } ->
+            { next_state
+            , {main_menu, ContentRoot}
+            , Data
+            };
 
         % }}-
         % [1-9]      {{- => collect digits
-        { greeting, Digit } ->
-            collect_digits(Data, Digit);
+        { {greeting, ContentRoot}, Digit } ->
+            collect_digits(ContentRoot, Data, Digit);
         % }}-
 
         % === MAIN_MENU (loop)
         % * (star)  {{- <- Go back (current content)
-        { main_menu, "*" } ->
-            go_to(current, Data);
+        { {main_menu, Content}, "*" } ->
+            {next_state, {content, Content}, Data};
 
         % }}-
         % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
-        { main_menu, "#" } ->
+        { {main_menu, Content}, "#" } ->
             NextMenu =
                 case AuthStatus of
                     registered   -> favourites;
@@ -1110,11 +1116,26 @@ handle_event(
         ->
             {repeat_state, NewData};
 
-        greeting ->
-            go_to(content_root, NewData);
-
-        {warning, _} ->
-            go_to(current, NewData);
+        % States where playback ended naturally,
+        % but that should not loop
+        % --------------------------------------
+        {greeting, ContentRoot} ->      % |
+            { next_state                % |
+            , {content, ContentRoot}    % |
+            , NewData                   % |
+            };                          % |
+        % formerly {warning, _}         % | TODO already see a pattern
+        {invalid_selection, Content} -> % |      here
+            { next_state                % |
+            , {content, Content}        % |
+            , NewData                   % |
+            };                          % |
+                                        % |
+        {inactivity_warning, Content} -> % |
+            { next_state                % |
+            , {content, Content}        % |
+            , NewData                   % |
+            };                          % |
 
         % Not really necessary to handle this, but it's here for completeness sake
         {hangup, _} ->
@@ -1214,51 +1235,65 @@ handle_event(
 %% }}-
 
 %% interdigit_timer {{-
-handle_event(
-  {timeout, interdigit_timer}, % EventType
-  eval_collected_digits,        % EventContent
-  State,
-  #{ recvd_digits := ReceivedDigits } = Data
-) ->
+handle_event
+  ( {timeout, interdigit_timer} % EventType
+  , eval_collected_digits       % EventContent
+  , {collect_digits, Content}   % State
+  , #{ recvd_digits := ReceivedDigits } = Data
+  )
+->
     Selection =
-        ( composeFlipped(
+        % ( composeFlipped(
+        pipe(
+          [ ReceivedDigits
             % [ ((curry(fun flip/3))(fun string:join/2))("")
-            [ (cflip(fun string:join/2))("")
+          , [ (cflip(fun string:join/2))("")
             % [ fun (List) -> string:join(List, "") end
             % will throw on empty list but it should never happen the way collect_digits/2 is called
-            , fun erlang:list_to_integer/1
-            ]
-          )
-        )(ReceivedDigits),
+          , fun erlang:list_to_integer/1
+          ]
+        ),
+          % )
+        % )(ReceivedDigits),
 
-    % At this point the resulting list can only be tuples of {(category|publication), N, string}
-    SubCategories =
-        get(children),
     % Always clear DTMF buffer when the `interdigit_timer` expires, because this is the point the buffer is evaluated. Outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result, and so a clean slate is needed.
     NewData =
         Data#{ recvd_digits := [] },
 
     % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
 
-    case lists:keyfind(Selection, 2, SubCategories) of
-        false ->
-            {next_state, {warning, invalid_selection}, NewData};
-        Content ->
-            {next_state, go_to(Content), NewData}
+    % At this point the resulting list can only be list of maps
+    SubCategories =
+        content(Content, children),
+    SelectionResult =
+        [  Child
+        || Child
+           <- SubCategories
+           , maps:find(selection, Child) =:= {ok, Selection}
+        ]
+
+    % case lists:keyfind(Selection, 2, SubCategories) of
+    case SelectionResult of
+        [] ->
+            {next_state, {invalid_selection, Content}, NewData};
+        [SelectedContent] ->
+            {next_state, {content, SelectedContent}, NewData}
     end.
 %% }}-
 
 % TODO Eval on 2 digits immediately to speed up things
-collect_digits(Data, Digit)
+collect_digits(Content, Data, Digit)
     when Digit =:= "*";
          Digit =:= "#"
 ->
-    collect_digits(Data, "");
+    collect_digits(Content, Data, "");
 
-collect_digits( % {{-
-  #{recvd_digits := ReceivedDigits} = Data,
-  Digit % string
-) ->
+collect_digits % {{-
+  ( Content
+  , #{recvd_digits := ReceivedDigits} = Data
+  , Digit % string
+  )
+->
     NewData =
         Data#{recvd_digits := ReceivedDigits ++ Digit},
     % The notion is that the `InterDigitTimer` is restarted whenever {{-
@@ -1270,8 +1305,13 @@ collect_digits( % {{-
         , ?INTERDIGIT_TIMEOUT         % , Time
         , eval_collected_digits       % , EventContent }
         },
+
     % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
-    {next_state, collect_digits, NewData, [ InterDigitTimer ]}.
+    { next_state
+    , {collect_digits, Content}
+    , NewData
+    , [ InterDigitTimer ]
+    }.
 % }}-
 
 %%%%%%%%%%%%%%%%%%%%%%%
@@ -1695,7 +1735,7 @@ play(
     );
 % }}-
 
-play({warning, inactivity} = State, Data) ->
+play({inactivity_warning, Content} = State, Data) ->
     WarningPrompt =
         "Please press any key if you are still there.",
     speak(
@@ -1704,7 +1744,7 @@ play({warning, inactivity} = State, Data) ->
        , text => WarningPrompt
        });
 
-play({warning, invalid_selection} = State, Data) ->
+play({invalid_selection, Content} = State, Data) ->
     WarningPrompt =
         "Invalid selection. Please try again.",
     speak(
@@ -2045,14 +2085,14 @@ choice_list() ->
     ].
 
 % NOTE `go_to/1` and `retrieve/1` will crash if used improperly. It is not handled, because these are strictly internal functions not intended to be used from anywhere else, and if they crash then the culprit is an error in the surrounding code
-next(Data) ->
-    { ContentType
-    , _Selection
-    , _Metadata
-    } =
+next(Data, Content) ->
+    % { ContentType
+    % , _Selection
+    % , _Metadata
+    % } =
         content(get, current),
 
-    {next_state, ContentType, Data}.
+    {next_state, Content, Data}.
 
 % retrieve(Direction) ->
 %     call_content(get, Direction).
@@ -2067,41 +2107,47 @@ next(Data) ->
 %     {ContentType, ...}
 % ContentType =
 %     category | publication | article
-content(Action, Direction) ->
+% content(Action, Direction) ->
+content(Vertex, Direction) ->
     % { ContentType
     % , _Selection
     % , #{ anchor := AnchorText }
     % } =
     % gen_server:call(content, {Action, Direction}).
     content:process_action
-      ( get(content_graph)
-      , Action
+      % ( get(content_graph)
+      ( content
+      , Vertex
       , Direction
       ).
         % call_content(get, current),
     % Data#{ anchor := AnchorText }.
 
-deserialize(
-  { serialized_digraph
-  , VerticeList
-  , EdgeList
-  , NeighbourList
-  , _Cyclicity
-  }
-) ->
-    Graph =
-    { digraph
-    , Vertices
-    , Edges
-    , Neighbours
-    , true
-    } =
-        digraph:new([cyclic, protected]), % default values made explicit
+content_root() ->
+    content(ignore, content_root).
 
-    ets:insert(Vertices, VerticeList),
-    ets:insert(Edges, EdgeList),
-    ets:insert(Neighbours, NeighbourList),
-    Graph.
+% NOTE The corresponding serialization function is in content.erl (also commented out)
+% deserialize(
+%   { serialized_digraph
+%   , VerticeList
+%   , EdgeList
+%   , NeighbourList
+%   , _Cyclicity
+%   }
+% ) ->
+%     Graph =
+%     { digraph
+%     , Vertices
+%     , Edges
+%     , Neighbours
+%     , true
+%     } =
+%         digraph:new([cyclic, protected]), % default values made explicit
+
+%     ets:insert(Vertices, VerticeList),
+%     ets:insert(Edges, EdgeList),
+%     ets:insert(Neighbours, NeighbourList),
+%     Graph.
 
 % TODO INVENTORY! (stringify, curry, composeFlipped)
 % {{-
