@@ -15,7 +15,7 @@
 
    % private functions
    , make_content_graph/0
-   , refresh_content_graph/1
+   % , refresh_content_graph/1
    , realize/0
 
    , get_vertex/3
@@ -149,6 +149,56 @@ process_call(Graph, Vertex, Direction) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % CONTENT GRAPH {{-
+import(PublicationGuide) ->
+    Graph =
+        digraph:new([cyclic, protected]), % default values made explicit
+    % "no_parent" means that when adding edges (child, parent, etc) will fail with an `error` tuple, but it will not crash
+    add_content_vertex(Graph, "no_parent", PublicationGuide),
+
+    % do_items(Graph, ItemList),
+    Graph.
+
+add_content_vertex
+( Graph
+, ParentVertex
+, #{  "type" := Type
+   , "title" := Title
+   , "id"    := ID
+   , "items" := ItemList
+   } = Map
+) ->
+    Vertex   = #{ "title" => Title, "id" => ID },
+    digraph:add_vertex(Graph, Vertex),
+    add_hierarcy_edges(Graph, ParentVertex, Vertex),
+
+    add_meta_vertices(Map),
+
+
+    digraph:add_vertex(Graph, Category),
+
+    add_edge(Graph, meta, Category, Vertex),
+
+    do_items(ItemList);
+
+add_content_vertex
+(
+  ParentVertex
+, #{  "type" := "publication"
+   , "title" := Title
+   ,    "id" := ID
+   , "items" := ItemList
+   } = Map
+) ->
+    Vertex = #{ "title" => Title },
+    Publication = #{ "type" => "publication" },
+
+    digraph:add_vertex(Graph, Vertex),
+    digraph:add_vertex(Graph, Publication),
+
+    add_edge(Graph, meta, Publication, Vertex),
+    add_hierarcy_edges(Graph, ParentVertex, Vertex),
+
+    do_items(ItemList);
 
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
@@ -178,35 +228,35 @@ make_content_graph(ContentRootDir) -> % {{-
     Graph.
 % }}-
 
-refresh_content_graph(Graph) ->
-    refresh_content_graph(Graph, ?CONTENT_ROOT_DIR).
+% refresh_content_graph(Graph) ->
+%     refresh_content_graph(Graph, ?CONTENT_ROOT_DIR).
 
-refresh_content_graph(Graph, ContentRoot) ->
-    digraph:delete(Graph),
-    make_content_graph(ContentRoot).
+% refresh_content_graph(Graph, ContentRoot) ->
+%     digraph:delete(Graph),
+%     make_content_graph(ContentRoot).
 
-add_hierarcy_edges(Graph, ParentMeta, Meta) -> % {{-
+% `EdgeNote` and not `EdgeLabel` because that is already taken for `digraph:add_edge/5`
+add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
     digraph:add_edge(
-      Graph,          % digraph
-      {child, Meta},  % edge
-      ParentMeta,     % from vertex
-      Meta,           % to vertex
-      []              % label
-    ),
-    digraph:add_edge(
-      Graph,          % digraph
-      {parent, Meta}, % edge
-      Meta,           % from vertex
-      ParentMeta,     % to vertex
-      []              % label
+      Graph,                 % digraph
+      { EdgeNote             % |
+      , erlang:system_time() % | edge
+      },                     % |
+      FromVertex,            % from vertex
+      ToVertex,              % to vertex
+      []                     % label
     ).
+
+add_hierarcy_edges(Graph, ParentVertex, ChildVertex) -> % {{-
+    add_edge(Graph, child,  ParentVertex, ChildVertex),
+    add_edge(Graph, parent, ChildVertex, ParentVertex).
 % }}-
 
-add_next_edge(Graph, From, To) ->
-    digraph:add_edge(Graph, {next, To}, From, To, []).
+% add_next_edge(Graph, From, To) ->
+%     digraph:add_edge(Graph, {next, To}, From, To, []).
 
-add_prev_edge(Graph, From, To) ->
-    digraph:add_edge(Graph, {prev, To}, From, To, []).
+% add_prev_edge(Graph, From, To) ->
+%     digraph:add_edge(Graph, {prev, To}, From, To, []).
 
 add_meta_to_path(_ContentType, _Dir, "meta.erl") -> % {{-
     % logger:notice("meta"),
@@ -224,6 +274,8 @@ add_meta_to_path(ContentType, Dir, Path) ->
                 #{ type => article
                  , path => FullPath
                  , title => "article" % formerly known as "anchortext"
+                 % FORGET ABOUT MUTABLE STATE IN VERTEX!
+                 % , offset => -1 
                  }
         end,
     {true, {Meta, FullPath}}.
@@ -248,6 +300,32 @@ do_make(Graph, Dir) ->
                 ),
             do_dirlist(Graph, Meta, [first|MetaPathTuples])
     end.
+
+add_meta_vertices_and_edges(Graph, Vertex, Map) ->
+    MetaMap =
+        maps:filter
+          ( fun(Key, _) ->
+                not(lists:member(Key, ["title", "id", "items"]))
+            end
+          , Map
+          ),
+    [  do_add(Graph, Vertex, MapElem)
+    || MapElem <- maps:to_list(MetaMap)
+    ].
+
+do_add(Graph, Vertex, {_Key, _Value} = Tuple) ->
+    do_add(Graph, Vertex, [Tuple]);
+
+do_add(_Graph, _Vertex, []) ->
+    done;
+
+do_add(Graph, Vertex, [{Key, Value}|Rest]) ->
+    Meta = #{ Key => Value },
+    digraph:add_vertex(Graph, Meta),
+    add_edge(Graph, meta, Meta, Vertex),
+    do_add(Graph, Vertex, Rest).
+
+
 
 do_dirlist(_Graph, _ParentMeta, []) ->
     done;
@@ -461,6 +539,275 @@ publication_guide() -> % {{-
       }
     ].
 % }}-
+
+% TODO converting this to JSON should be trivial
+% TODO `meta` edges
+%      "directional" edges follow the pattern {dir, #{...}} so tag, type, periodicity (what else?) nodes will be tagged as meta and will be incident edges (is that the right term?)
+publication_guide2 =
+    #{ "type"  => "category"
+     , "title" => "Main category"
+     , "id"    => 1
+     , "items" =>
+         [ #{ "type"  => "category"
+            , "title" => "Store sales advertising"
+            , "id"    => 2
+            , "items" =>
+                [ #{ "type"  => "category"
+                   , "title" => "Grocery stores"
+                   , "id"    => 3
+                   , "items" =>
+                          % TODO "type" are going to be nodes of #{ type => type, name => value}
+                          % TODO find specific type vertices
+                          % [V || V <- digraph:vertices(G), maps:find(type, V) =:= {ok, publication}]
+                       [ #{ "type"  => "publication"
+                          , "title" => "Safeway"
+                          , "id"    => 4
+                          % TODO "tags" are going to be nodes of #{ type => tag, name => value}
+                          , "tags"  => ["flyer", "ads"]
+                          % TODO "periodicity" are going to be nodes of #{ type => periodicity, name => value}
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Raley's"
+                          , "id"    => 5
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "La Superior"
+                          , "id"    => 6
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Food Source"
+                          , "id"    => 7
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Savemart"
+                          , "id"    => 8
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Foods Co"
+                          , "id"    => 9
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Trader Joe's"
+                          , "id"    => 10
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Sprouts"
+                          , "id"    => 11
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Lucky Supermarkets"
+                          , "id"    => 12
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       ]
+                   }
+                , #{ "type"  => "category"
+                   , "title" => "Drug stores"
+                   , "id"    => 13
+                   , "items" =>
+                       [ #{ "type"  => "publication"
+                          , "title" => "CVS"
+                          , "id"    => 14
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Rite Aid"
+                          , "id"    => 15
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Walgreen's"
+                          , "id"    => 16
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       ]
+                   }
+                , #{ "type"  => "category"
+                   , "title" => "Discount stores"
+                   , "id"    => 17
+                   , "items" =>
+                       [ #{ "type"  => "publication"
+                          , "title" => "Target"
+                          , "id"    => 18
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Walmart"
+                          , "id"    => 19
+                          , "tags"  => ["flyer", "ads"]
+                          , "periodicity" => "weekly"
+                          }
+                       ]
+                   }
+                ]
+            }
+         , #{ "type"  => "category"
+            , "title" => "Sacramento newspapers and magazines"
+            , "id"    => 20
+            , "items" =>
+                [ #{ "type"  => "category"
+                   , "title" => "Sacramento newspapers"
+                   , "id"    => 21
+                   , "items" =>
+                          % TODO "type" are going to be nodes of #{ type => type, name => value}
+                          % TODO find specific type vertices
+                          % [V || V <- digraph:vertices(G), maps:find(type, V) =:= {ok, publication}]
+                       [ #{ "type"  => "publication"
+                          , "title" => "Sacramento Bee"
+                          % TODO "tags" are going to be nodes of #{ type => tag, name => value}
+                          , "id"    => 22
+                          , "tags"  => ["general"]
+                          , "publication_type" => "newspaper"
+                          % TODO add "location" and "publisher" to others as well
+                          , "location" => ["Sacramento", "Sacramento Valley", "Sacramento County"] % TODO What else?
+                          , "publisher" => "McClatchy Company"
+                          % TODO "periodicity" are going to be nodes of #{ type => periodicity, name => value}
+                          , "periodicity" => "daily"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Sacramento News and Review"
+                          , "id"    => 23
+                          , "tags"  => ["alternative", "free", "general"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Sacramento Press"
+                          , "id"    => 24
+                          , "tags"  => ["general"]
+                          , "periodicity" => "daily"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Sacramento Business Journal"
+                          , "id"    => 25
+                          , "tags"  => ["business"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "East Sacramento News"
+                          , "id"    => 26
+                          , "tags"  => ["small community news", "general"]
+                          , "publisher" => "Valley Community Newspapers"
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Land Park News"
+                          , "id"    => 27
+                          , "tags"  => ["small community news", "general"]
+                          , "publisher" => "Valley Community Newspapers"
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Pocket News"
+                          , "id"    => 28
+                          , "tags"  => ["small community news", "general"]
+                          , "publisher" => "Valley Community Newspapers"
+                          , "periodicity" => "weekly"
+                          }
+                       ]
+                   }
+                , #{ "type"  => "category"
+                   , "title" => "Sacramento magazines"
+                   , "id"    => 29
+                   , "items" =>
+                       [ #{ "type"  => "publication"
+                          , "title" => "Comstock's"
+                          , "id"    => 30
+                          , "tags"  => ["magazine"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "SacTown"
+                          , "id"    => 31
+                          , "tags"  => ["magazine"]
+                          , "periodicity" => "weekly"
+                          }
+                       , #{ "type"  => "publication"
+                          , "title" => "Sacramento Magazine"
+                          , "id"    => 32
+                          , "tags"  => ["magazine"]
+                          , "periodicity" => "weekly"
+                          }
+                       ]
+                   }
+                ]
+            }
+         , #{ "type"  => "category"
+            , "title" => "Greater Sacramento area newspapers"
+            , "id"    => 33
+            , "items" =>
+                [ #{ "type"  => "publication"
+                   , "title" => "Carmichael Times"
+                   , "id"    => 34
+                   , "tags"  => ["newspaper"]
+                   , "periodicity" => "weekly"
+                   }
+                , #{ "type"  => "publication"
+                   , "title" => "Arden Carmichael News"
+                   , "id"    => 35
+                   , "tags"  => ["small community news", "general"]
+                   , "publisher" => "Valley Community Newspapers"
+                   , "periodicity" => "weekly"
+                   }
+                , #{ "type"  => "publication"
+                   , "title" => "Davis Enterprise"
+                   , "id"    => 36
+                   , "tags"  => ["newspaper"]
+                   , "periodicity" => "weekly"
+                   }
+                , #{ "type"  => "publication"
+                   , "title" => "Rosevill Press Tribune"
+                   , "id"    => 37
+                   , "tags"  => ["newspaper"]
+                   , "periodicity" => "weekly"
+                   }
+                , #{ "type"  => "publication"
+                   , "title" => "Woodland Daily Democrat"
+                   , "id"    => 38
+                   , "tags"  => ["newspaper"]
+                   , "periodicity" => "weekly"
+                   }
+                , #{ "type"  => "publication"
+                   , "title" => "Auburn Journal"
+                   , "id"    => 39
+                   , "tags"  => ["newspaper"]
+                   , "periodicity" => "weekly"
+                   }
+                , #{ "type"  => "publication"
+                   , "title" => "The Union"
+                   , "id"    => 40
+                   , "location"  => ["Grass Valley", "Nevada City"]
+                   , "periodicity" => "weekly"
+                   }
+                , #{ "type"  => "publication"
+                   , "title" => "Mountain Democrat"
+                   , "id"    => 41
+                   , "location"  => ["Placerville", "El Dorado County"]
+                   , "periodicity" => "weekly"
+                   }
+                ]
+            }
+        ]
+     }
 
 write_meta_file
   ( {ContentType, Selection, Title} = _Category

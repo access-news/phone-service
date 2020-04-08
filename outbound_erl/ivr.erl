@@ -87,18 +87,18 @@ init(_Args) -> % {{-
 
     % TODO which approach is better: gen_server, or just module?
     % PROP each ivr gen_statem will get a copy of the content graph from the content gen_server during init, and the `content` will take care of keeping it up to date, and parsing during server startup (so it should start earlier than we could receive calls)
-    pipe(
-      [ gen_server:call(content, {get, graph})
-      , fun deserialize/1
-      , (curry(fun erlang:put/2))(content_graph)
-      ]
-    ),
+    % pipe(
+    %   [ gen_server:call(content, {get, graph})
+    %   , fun deserialize/1
+    %   , (curry(fun erlang:put/2))(content_graph)
+    %   ]
+    % ),
 
     Data =
         #{ recvd_digits => ""
          % ,       anchor => ""
          % , current_content => {}
-         ,  current_article => #{ path => "", offset => 0 }
+         ,  offset => -1
          ,  auth_status => unregistered % | registered
          , menu_history => [] % used as a stack
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
@@ -1269,25 +1269,52 @@ handle_event(
         {hangup, _} ->
             keep_state_and_data;
 
-        publication ->
-            { article
-            , ArticlePath 
-            , _AnchorText % ignoring until there's no metadata there, but otherwise this will be part of `article_entry`, besides only saying "press 0 for help"
-            } =
-                content(go_to, first),
+        {content, #{type := publication} = Current} ->
+            % Article =
+            %     content(Current, first),
 
-            Article =
-                #{ path := ArticlePath
-                 , offset := 0
-                 },
+            % Article =
+            %     #{ path := ArticlePath
+            %      , offset := 0
+            %      },
 
             { next_state
-            , article_entry
-            , NewData#{ current_article := Article }
+            , {content, content(Current, first)} % i.e., article
+            % TODO checking the offset is done at play
+            % -1 -> read article title and meta
+            % other -> keep playing from given offset
+            % NOTE: not touching `offset`; it is -1 when coming from publication (either because it played or because option 1 or 3 is selected)
+            , NewData
             };
 
-        article_entry ->
-            {next_state, article_playback, NewData};
+        {content, #{type := article} = Current} ->
+            case NewData of
+                % article meta played (aka, `article_entry`)
+                #{ offset := 0 } ->
+                    { next_state
+                    , State
+                    , NewData
+                    };
+                % #{ offset := 1 } - article playback finished without interruptions
+                % #{ offset := Offset } when Offset >= 1 - article playback was interrupted at one point 
+                #{ offset := Offset }
+                % `when Offset > 0` would have sufficed but this documents it better
+                  when Offset =:= 1 % article playback finished without interruptions
+                     ; Offset > 1   % article playback was interrupted at one point (to go to a menu, etc.)
+                ->
+                    { next_state
+                    , content(Current, next)
+                    , NewData#{ offset := -1 }
+                    }
+            end,
+
+            { next_state
+            , NextMenu
+            , NewData
+            }
+
+        % article_entry ->
+        %     {next_state, article_playback, NewData};
 
         % `collect_digits` has no menu playback (via `speak/3`), hence no clause here
 
@@ -1717,7 +1744,11 @@ sign_up() ->
 %     "Invalid selection. Please try again.".
 % }}-
 
-play(main_menu = State, #{auth_status := AuthStatus} = Data) -> % {{-
+play
+  ( {main_menu, _Content}        = State
+  , #{auth_status := AuthStatus} = Data
+  )
+-> % {{-
     Anchor = "Main menu.",
     % Zero = "For quick help, press zero.",
     Star = "To go back, press star.",
@@ -1748,15 +1779,14 @@ play(main_menu = State, #{auth_status := AuthStatus} = Data) -> % {{-
     speak(State, Data, PromptList);
 
 % }}-
-play(category    = State, #{anchor := AnchorText} = Data) -> % {{-
-    { _ContentType
-    , _Selection
-    , #{ anchor := AnchorText }
-    } =
-        content(get, current),
+play
+  ( {content, #{ type := category, title := Title} = Current}
+  , Data
+  )
+-> % {{-
 
     PromptList =
-        [ AnchorText
+        [ Title
         , common_options(State)
         , choice_list()
         ],
@@ -1770,7 +1800,11 @@ play(category    = State, #{anchor := AnchorText} = Data) -> % {{-
     );
 
 % }}-
-play(publication = State, #{anchor := AnchorText} = Data) -> % {{-
+play
+  ( {content, #{ type := publication, title := Title} = Current}
+  , Data
+  )
+-> % {{-
     % PromptList =
     %     lists:flatten(
     %       [ AnchorText
@@ -1792,27 +1826,60 @@ play(publication = State, #{anchor := AnchorText} = Data) -> % {{-
     );
 
 % }}-
-play(article_entry = State, Data) -> % {{-
-    Text =
-        [ "Playing article."
-        , "Press 2 to pause playback, and listen to the controls."
-        ],
-    speak(State, Data, Text);
+% play(article_entry = State, Data) -> % {{-
+%     Text =
+%         [ "Playing article."
+%         , "Press 2 to pause playback, and listen to the controls."
+%         ],
+%     speak(State, Data, Text);
+
+% % }}-
+% play(article_help = State, Data) -> % {{-
+%     Anchor = "Pressing the following buttons during playback will have the same effect.",
+%     Star = "Press star to go back to "
+%     Text =
+%         [ "Playing article."
+%         , "Press 2 to pause playback, and listen to the controls."
+%         ],
+%     speak(State, Data, Text);
 
 % }}-
-play(article_help = State, Data) -> % {{-
-    Anchor = "Pressing the following buttons during playback will have the same effect.",
-    Star = "Press star to go back to "
-    Text =
-        [ "Playing article."
-        , "Press 2 to pause playback, and listen to the controls."
-        ],
-    speak(State, Data, Text);
+% `article_entry`
+play
+  ( { content
+    , #{ type := article
+       , title := Title
+       } = Current}
+  , #{ offset := -1 } = Data
+  )
+-> % {{-
+    % Shows that metadata has been spoken (aka, `article_entry`)
+    NewData =
+        Data#{ offset := 0 },
+    % TODO `speak` article metadata
 
 % }}-
-play(article_playback, Data) ->
-    done;
+% This clause plays the actual recording
+play
+  ( { content
+    , #{ type := article
+       , title := Title
+       } = Current}
+  , #{ offset := 0 } = Data
+  )
+-> % {{-
+    % Changing the offset from zero, because if the file plays through without interruption (pause, enter other menus etc) then when it is finished playing, the CHANNEL_EXECUTE_COMPLETE `handle_event` clauses would assume that `article_entry` just played and would start playing the same recording all over again. This way, it will know to skip to the next article.
 
+    % TODO WHEN TO RESET THE OFFSET TO -1
+    %   1. Playback finished uninterrupted (i.e., implicit next in CHANNEL_EXECUTE_COMPLETE.)
+    %   2. Switching to another article (next, last, first, etc.)
+    %   3. Leaving the publication (e.g., next publication, jump to main category from main_menu).
+    % TODO Save article offsets at one point for "Would you like to continue where you left off?" when visiting the same article next time
+    NewData =
+        Data#{ offset := 1 }, % otherwise the same article would get played because of the clause in HANDLE_CHANNEL_EXECUTE_COMPLETE
+    % TODO `speak` article metadata
+
+% }}-
 play(publication_menu, Data) ->
     done;
 
@@ -2172,9 +2239,9 @@ re_start_inactivity_timer(State) -> % {{-
     put(inactivity_hangup,  ITref).
 % }}-
 
-common_options(State)
-  when State =:= category
-     ; State =:= publication
+common_options(#{ type := Type } = Content)
+  when Type =:= category
+     ; Type =:= publication
      % ; State =:= article
 ->
     ContentType =
