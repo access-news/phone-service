@@ -4,26 +4,26 @@
 -define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").  % -define(CONTENT_ROOT, {category, 0, "Main category"}).
 
 -export(
-   [ start/0
-   , start_link/0
+    [ start/0
+    , start_link/0
 
-   % gen_server callbacks
-   , init/1
-   , handle_call/3
-   % , handle_cast/2
-   % , terminate/2
+    % gen_server callbacks
+    , init/1
+    , handle_call/3
+    % , handle_cast/2
+    % , terminate/2
 
-   % private functions
-   , make_content_graph/0
-   % , refresh_content_graph/1
-   , realize/0
+    % private functions
+    , make_content_graph/0
+    % , refresh_content_graph/1
+    , realize/0
 
-   , get_vertex/3
-   , process_call/3
-   , get_meta/1
-   % , current/1
-   % , update_history/2
-   ]).
+    , get_vertex/3
+    , process_call/3
+    , get_meta/1
+    % , current/1
+    % , update_history/2
+    ]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% gen_server callbacks                                               %%
@@ -164,41 +164,39 @@ add_content_vertex
 , #{  "type" := Type
    , "title" := Title
    , "id"    := ID
+   % This presumes that the canonical form of each content map has an `"items"` key (with empty list if no children)
    , "items" := ItemList
    } = Map
+)
+->
+    Vertex   = #{ "title" => Title, "id" => ID }
+,   digraph:add_vertex(Graph, Vertex)
+,   add_hierarcy_edges(Graph, ParentVertex, Vertex)
+
+,   add_meta_vertices_and_edges(Graph, Vertex, Map)
+,   do_items(Graph, Vertex, [first|ItemList])
+,   Vertex
+.
+
+do_items(Graph, ParentVertex, [LastItem]) ->
+
+do_items(_Graph, _ParentVertex, [first]) ->
+    done;
+
+do_items
+( Graph
+, ParentVertex
+, [ first | [FirstItem|_] = Itemlist]
+)
+->
+    add_content_vertex(Graph, ParentVertex, FirstItem),
+    do_add_meta(Graph, First
+
+do_items
+( Graph
+, ParentVertex
+, [ItemA, ItemB | Rest] = Items
 ) ->
-    Vertex   = #{ "title" => Title, "id" => ID },
-    digraph:add_vertex(Graph, Vertex),
-    add_hierarcy_edges(Graph, ParentVertex, Vertex),
-
-    add_meta_vertices(Map),
-
-
-    digraph:add_vertex(Graph, Category),
-
-    add_edge(Graph, meta, Category, Vertex),
-
-    do_items(ItemList);
-
-add_content_vertex
-(
-  ParentVertex
-, #{  "type" := "publication"
-   , "title" := Title
-   ,    "id" := ID
-   , "items" := ItemList
-   } = Map
-) ->
-    Vertex = #{ "title" => Title },
-    Publication = #{ "type" => "publication" },
-
-    digraph:add_vertex(Graph, Vertex),
-    digraph:add_vertex(Graph, Publication),
-
-    add_edge(Graph, meta, Publication, Vertex),
-    add_hierarcy_edges(Graph, ParentVertex, Vertex),
-
-    do_items(ItemList);
 
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
@@ -237,6 +235,7 @@ make_content_graph(ContentRootDir) -> % {{-
 
 % `EdgeNote` and not `EdgeLabel` because that is already taken for `digraph:add_edge/5`
 add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
+    % `digraph` is just 3 ETS tables, and so edges need to be unique, hence the `erlang:system_time/0`. The `Counter` in the tuple is to make temporal ordering absolutely possible (e.g., `first` and `last` edges) because `erlang:system_time/0` values are not **strictly** monotonically increasing values (that is, calling it fast enough may result in the same value, but not lower).
     digraph:add_edge(
       Graph,                 % digraph
       { EdgeNote             % |
@@ -309,21 +308,21 @@ add_meta_vertices_and_edges(Graph, Vertex, Map) ->
             end
           , Map
           ),
-    [  do_add(Graph, Vertex, MapElem)
+    [  do_add_meta(Graph, Vertex, MapElem)
     || MapElem <- maps:to_list(MetaMap)
     ].
 
-do_add(Graph, Vertex, {_Key, _Value} = Tuple) ->
-    do_add(Graph, Vertex, [Tuple]);
+do_add_meta(Graph, Vertex, {_Key, _Value} = Tuple) ->
+    do_add_meta(Graph, Vertex, [Tuple]);
 
-do_add(_Graph, _Vertex, []) ->
+do_add_meta(_Graph, _Vertex, []) ->
     done;
 
-do_add(Graph, Vertex, [{Key, Value}|Rest]) ->
+do_add_meta(Graph, Vertex, [{Key, Value}|Rest]) ->
     Meta = #{ Key => Value },
     digraph:add_vertex(Graph, Meta),
     add_edge(Graph, meta, Meta, Vertex),
-    do_add(Graph, Vertex, Rest).
+    do_add_meta(Graph, Vertex, Rest).
 
 
 
@@ -543,7 +542,26 @@ publication_guide() -> % {{-
 % TODO converting this to JSON should be trivial
 % TODO `meta` edges
 %      "directional" edges follow the pattern {dir, #{...}} so tag, type, periodicity (what else?) nodes will be tagged as meta and will be incident edges (is that the right term?)
-publication_guide2 =
+
+% Yes, this could have been just the one string below, but it is not.
+% string:join([ erlang:integer_to_list(erlang:system_time()) | tl(string:lexemes(erlang:ref_to_list(erlang:make_ref()), ".>"))], "-")
+make_id() ->
+    NowString =
+        f:pipe(
+          [ erlang:system_time()
+          , fun erlang:integer_to_list/1
+          ]
+        ),
+    RefNumbers =
+        f:pipe(
+          [ erlang:make_ref()
+          , fun erlang:ref_to_list/1
+          , (f:cflip(fun string:lexemes/2))(".>")
+          ]
+        ),
+    string:join([NowString|tl(RefNumbers)], "-").
+
+publication_guide2() ->
     #{ "type"  => "category"
      , "title" => "Main category"
      , "id"    => 1
@@ -566,54 +584,63 @@ publication_guide2 =
                           , "tags"  => ["flyer", "ads"]
                           % TODO "periodicity" are going to be nodes of #{ type => periodicity, name => value}
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Raley's"
                           , "id"    => 5
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "La Superior"
                           , "id"    => 6
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Food Source"
                           , "id"    => 7
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Savemart"
                           , "id"    => 8
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Foods Co"
                           , "id"    => 9
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Trader Joe's"
                           , "id"    => 10
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Sprouts"
                           , "id"    => 11
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Lucky Supermarkets"
                           , "id"    => 12
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        ]
                    }
@@ -626,18 +653,21 @@ publication_guide2 =
                           , "id"    => 14
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Rite Aid"
                           , "id"    => 15
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Walgreen's"
                           , "id"    => 16
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        ]
                    }
@@ -650,12 +680,14 @@ publication_guide2 =
                           , "id"    => 18
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Walmart"
                           , "id"    => 19
                           , "tags"  => ["flyer", "ads"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        ]
                    }
@@ -683,24 +715,28 @@ publication_guide2 =
                           , "publisher" => "McClatchy Company"
                           % TODO "periodicity" are going to be nodes of #{ type => periodicity, name => value}
                           , "periodicity" => "daily"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Sacramento News and Review"
                           , "id"    => 23
                           , "tags"  => ["alternative", "free", "general"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Sacramento Press"
                           , "id"    => 24
                           , "tags"  => ["general"]
                           , "periodicity" => "daily"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Sacramento Business Journal"
                           , "id"    => 25
                           , "tags"  => ["business"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "East Sacramento News"
@@ -708,6 +744,7 @@ publication_guide2 =
                           , "tags"  => ["small community news", "general"]
                           , "publisher" => "Valley Community Newspapers"
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Land Park News"
@@ -715,6 +752,7 @@ publication_guide2 =
                           , "tags"  => ["small community news", "general"]
                           , "publisher" => "Valley Community Newspapers"
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Pocket News"
@@ -722,6 +760,7 @@ publication_guide2 =
                           , "tags"  => ["small community news", "general"]
                           , "publisher" => "Valley Community Newspapers"
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        ]
                    }
@@ -734,18 +773,21 @@ publication_guide2 =
                           , "id"    => 30
                           , "tags"  => ["magazine"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "SacTown"
                           , "id"    => 31
                           , "tags"  => ["magazine"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        , #{ "type"  => "publication"
                           , "title" => "Sacramento Magazine"
                           , "id"    => 32
                           , "tags"  => ["magazine"]
                           , "periodicity" => "weekly"
+                          , "items" => []
                           }
                        ]
                    }
@@ -760,6 +802,7 @@ publication_guide2 =
                    , "id"    => 34
                    , "tags"  => ["newspaper"]
                    , "periodicity" => "weekly"
+                   , "items" => []
                    }
                 , #{ "type"  => "publication"
                    , "title" => "Arden Carmichael News"
@@ -767,42 +810,49 @@ publication_guide2 =
                    , "tags"  => ["small community news", "general"]
                    , "publisher" => "Valley Community Newspapers"
                    , "periodicity" => "weekly"
+                   , "items" => []
                    }
                 , #{ "type"  => "publication"
                    , "title" => "Davis Enterprise"
                    , "id"    => 36
                    , "tags"  => ["newspaper"]
                    , "periodicity" => "weekly"
+                   , "items" => []
                    }
                 , #{ "type"  => "publication"
                    , "title" => "Rosevill Press Tribune"
                    , "id"    => 37
                    , "tags"  => ["newspaper"]
                    , "periodicity" => "weekly"
+                   , "items" => []
                    }
                 , #{ "type"  => "publication"
                    , "title" => "Woodland Daily Democrat"
                    , "id"    => 38
                    , "tags"  => ["newspaper"]
                    , "periodicity" => "weekly"
+                   , "items" => []
                    }
                 , #{ "type"  => "publication"
                    , "title" => "Auburn Journal"
                    , "id"    => 39
                    , "tags"  => ["newspaper"]
                    , "periodicity" => "weekly"
+                   , "items" => []
                    }
                 , #{ "type"  => "publication"
                    , "title" => "The Union"
                    , "id"    => 40
                    , "location"  => ["Grass Valley", "Nevada City"]
                    , "periodicity" => "weekly"
+                   , "items" => []
                    }
                 , #{ "type"  => "publication"
                    , "title" => "Mountain Democrat"
                    , "id"    => 41
                    , "location"  => ["Placerville", "El Dorado County"]
                    , "periodicity" => "weekly"
+                   , "items" => []
                    }
                 ]
             }
