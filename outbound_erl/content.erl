@@ -15,7 +15,7 @@
 
     % private functions
     , make_content_graph/0
-    % , refresh_content_graph/1
+    , refresh_content_graph/1
     , realize/0
 
     , get_vertex/3
@@ -227,12 +227,9 @@ make_content_graph(ContentRootDir) -> % {{-
     Graph.
 % }}-
 
-% refresh_content_graph(Graph) ->
-%     refresh_content_graph(Graph, ?CONTENT_ROOT_DIR).
-
-% refresh_content_graph(Graph, ContentRoot) ->
-%     digraph:delete(Graph),
-%     make_content_graph(ContentRoot).
+refresh_content_graph(Graph) ->
+    digraph:delete(Graph),
+    make_content_graph().
 
 % `EdgeNote` and not `EdgeLabel` because that is already taken for `digraph:add_edge/5`
 add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
