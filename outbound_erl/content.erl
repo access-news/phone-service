@@ -74,7 +74,7 @@ handle_call({Vertex, Direction}, _From, Graph)
 handle_call(_Command, _From, Graph) ->
     {reply, invalid_command, Graph}.
 
-% HOW TO SERIALIZE A DIGRAPH
+% HOW TO SERIALIZE A DIGRAPH {{-
 % Serialization is implemented in ivr.erl (probably also commented out)
 % process_action
 %   ( {digraph, Vertices, Edges, Neighbours, Cyclicity}
@@ -92,6 +92,7 @@ handle_call(_Command, _From, Graph) ->
 % Direction -> Vertex
 % process_action(Graph, get, current) ->
 %     current(Graph);
+% }}-
 
 % Direction -> Vertex
 process_call(Graph, _Vertex, content_root) ->
@@ -239,8 +240,9 @@ add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
     digraph:add_edge(
       Graph,                 % digraph
       { EdgeNote             % |
-      % , erlang:system_time() % | edge
-      , ToVertex % |
+      % the UU(ish)ID is needed (e.g., 2 siblings will have the same {parent, ...} edge)
+      , erlang:system_time() % | edge
+      , ToVertex             % |
       },                     % |
       FromVertex,            % from vertex
       ToVertex,              % to vertex
@@ -403,20 +405,29 @@ do_dirlist( % {{-
 get_vertex(Graph, Vertex, Direction) ->
     % Current = current(Graph),
 
-    EdgeResults =
-        [  digraph:edge(Graph, Edge)
-        || Edge <- digraph:out_edges(Graph, Vertex),
-                   erlang:element(1, Edge) =:= Direction
-        ],
+    % The below usage would be helpful but pattern matching won't work in the generator pattern.
+    % https://erlang.org/doc/programming_examples/list_comprehensions.html#variable-bindings-in-list-comprehensions
+    % > [ X || {lofa, X} <- [{lofa, 7}, {lofa, 27}]].
+    % [7,27]
+    % > [ X || {lofa, X} <- [{lofa, 7}, {miez, 27}]].
+    % [7]
 
-    [  Vx % Vertex % this would not shadow the function argument, but confusing
-    || { {Direction, _} % edge
-       , _              % from
-       , Vx             % to
-       , []             % edge label
-       }
-       <- EdgeResults
+    % EdgeResults =
+        % [  digraph:edge(Graph, Edge)
+    [  V
+    || {_Dir, _UUishID, V} = Edge
+    <- digraph:out_edges(Graph, Vertex),
+       erlang:element(1, Edge) =:= Direction
     ].
+
+    % [  Vx % Vertex % this would not shadow the function argument, but confusing
+    % || { {Direction, _} % edge
+    %    , _              % from
+    %    , Vx             % to
+    %    , []             % edge label
+    %    }
+    %    <- EdgeResults
+    % ].
 
 % Graph -> Vertex -> current | noop
 % update_history(Graph, With) ->
