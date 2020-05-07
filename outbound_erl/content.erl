@@ -239,7 +239,8 @@ add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
     digraph:add_edge(
       Graph,                 % digraph
       { EdgeNote             % |
-      , erlang:system_time() % | edge
+      % , erlang:system_time() % | edge
+      , ToVertex % |
       },                     % |
       FromVertex,            % from vertex
       ToVertex,              % to vertex
