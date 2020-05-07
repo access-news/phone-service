@@ -54,7 +54,7 @@ init(_Args) ->
     {ok, Graph}.
 
 %           request,      from,        state
-handle_call({Vertex, Direction}, _From, Graph)
+handle_call({Direction, Vertex}, _From, Graph)
 % handle_call({Action, Direction}, _From, Graph)
   when Direction =:= parent       % \
      ; Direction =:= first        % |
@@ -144,6 +144,44 @@ process_call(Graph, Vertex, Direction) ->
 % terminate(Reason, _Graph) ->
 %     log(debug, [terminate_making_sure, Reason]),
 %     filog:remove_singleton_handler(?MODULE).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Public API                                                         %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Direction -> Vertex
+% Direction =
+%     parent | first | last | next | prev | content_root
+% CurrentVertex =
+%     #{ type := ContentType, ...} (see content.erl)
+% ContentType =
+%     category | publication | article
+content(Direction, CurrentVertex) -> % List Content | []
+    % { ContentType
+    % , _Selection
+    % , #{ anchor := AnchorText }
+    % } =
+    Result =
+        gen_server:call
+          ( content
+          , {Direction, CurrentVertex}
+          ),
+    case Result of
+        [Vertex] -> Vertex; % all except `children`
+        [_|_] -> Result;    % `children`
+        [] -> dir_not_applicable       % Vertex has no specified direction
+    end.
+    % content:process_action
+      % ( get(content_graph)
+      % ( content
+      % , CurrentVertex
+      % , Direction
+      % ).
+        % call_content(get, current),
+    % Data#{ anchor := AnchorText }.
+
+root() ->
+    content(content_root, ignore).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions                                                  %%

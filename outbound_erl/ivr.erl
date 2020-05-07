@@ -543,10 +543,13 @@ handle_event(
    } = Data                               % /         set there must also be true.
 ) ->
     % logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
-    re_start_inactivity_timer(State),
+
+    % NOTE No need for this, because greeting transitions to the main category never to be revisited again in the same session, and the timer will started there.
+    % re_start_inactivity_timer(State),
 
     { next_state
-    , {greeting, content_root()}
+    % , {greeting, content_root()}
+    , greeting
     , Data
     };
 %% }}-
@@ -563,7 +566,7 @@ handle_event(
   #{
       recvd_digits := ReceivedDigits
    ,  auth_status := AuthStatus
-   ,  content_history := History
+   ,  menu_history := MenuHistory
    } = Data
 ) ->
     % logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
@@ -642,24 +645,34 @@ handle_event(
 
         % === GREETING (-> content_root)
         % [*#]       {{- => content root
-        { {greeting, ContentRoot}, Digit }
+        { greeting, Digit }
+        % { {greeting, ContentRoot}, Digit }
           when Digit =:= "*";
                Digit =:= "#"
         ->
-            { next_state
-            , {content, ContentRoot}
-            , Data
-            };
+            next_menu(root_category, content:root(), Data);
+            % { next_state
+            % , root_category
+            % % , {content, ContentRoot}
+            % , Data
+            % };
 
         % }}-
         % 0          {{- => main_menu
-        { {greeting, ContentRoot}, "0" } ->
-            {next_state , {main_menu, ContentRoot} , Data};
+        { greeting, "0" } ->
+            next_menu(main_menu, content:root(), Data);
+            % {next_state , {main_menu, ContentRoot} , Data};
 
         % }}-
         % [1-9]      {{- => collect digits
-        { {greeting, ContentRoot}, Digit } ->
-            collect_digits(ContentRoot, Data, Digit);
+        { greeting, Digit } ->
+            NextMenu =
+                next_menu
+                  ( collect_digits
+                  , content:root()
+                  , Data
+                  ),
+            collect_digits(NextMenu, Digit);
         % }}-
 
         % === MAIN_MENU (loop)
@@ -736,7 +749,8 @@ handle_event(
 
         % === CATEGORY (loop)
         % *          {{- => back (i.e., up in content hierarchy)
-        { {content, #{ type := category } = Current}, "*" } ->
+        { category, "*" } ->
+        % { {content, #{ type := category } = Current}, "*" } ->
             { next_state
             , {content, content(Current, parent)}
             , Data
@@ -1188,7 +1202,8 @@ handle_event(
   } = E,                           % /
   State,
   % #{ prev_state := PrevState } = Data
-  #{ playbacks := Playbacks
+  #{    playbacks := Playbacks
+   , menu_history := MenuHistory
    } = Data
 ) ->
     % PlaybackName =
@@ -1204,7 +1219,7 @@ handle_event(
     % } = Playbacks,
     { ApplicationUUID
     , StoppedPlayback
-    , IsStopped
+    , _IsStopped
     } =
         proplists:lookup(ApplicationUUID, Playbacks),
 
@@ -1247,11 +1262,14 @@ handle_event(
         % States where playback ended naturally,
         % but that should not loop
         % --------------------------------------
-        {greeting, ContentRoot} ->      % |
-            { next_state                % |
-            , {content, ContentRoot}    % |
-            , NewData                   % |
-            };                          % |
+        greeting ->                     % |
+            next_menu(root_category, content:root(), NewData);
+            % NewerData =
+            %     Data#{ menu_history := [content:root()|MenuHistory],
+            % { next_state                % |
+            % , root_category    % |
+            % , NewerData                   % |
+            % };                          % |
         % formerly {warning, _}         % | TODO already see a pattern
         {invalid_selection, Content} -> % |      here
             { next_state                % |
@@ -1433,15 +1451,18 @@ handle_event
 %% }}-
 
 % TODO Eval on 2 digits immediately to speed up things
-collect_digits(Content, Data, Digit)
+collect_digits(NextMenu, Digit)
     when Digit =:= "*";
          Digit =:= "#"
 ->
-    collect_digits(Content, Data, "");
+    collect_digits(NextMenu, "");
 
 collect_digits % {{-
-  ( Content
-  , #{recvd_digits := ReceivedDigits} = Data
+  ( { next_state
+    , collect_digits
+    , #{ recvd_digits := ReceivedDigits
+       } = Data
+    } = NextMenu
   , Digit % string
   )
 ->
@@ -1459,7 +1480,7 @@ collect_digits % {{-
 
     % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
     { next_state
-    , {collect_digits, Content}
+    , collect_digits
     , NewData
     , [ InterDigitTimer ]
     }.
@@ -1515,6 +1536,7 @@ is_user_registered(CallerNumber) -> %% {{-
     look_up(PhoneNumber).
 %% }}-
 
+% TODO this should be in `user_db` module
 look_up(PhoneNumber) ->
     gen_server:call(user_db, {look_up, PhoneNumber}).
 
@@ -1632,16 +1654,18 @@ stop_playback(#{ playbacks := [] } = Data) ->
 % Nothing is playing and the most recent playback has been stopped before.
 % For example, ?CATEGORIES is playing, "*" is sent when nothing is in history, `warning/?` stops playback, warning starts playing, ends naturally, so HANDLE_CHANNEL_EXECUTE_COMPLETE get clears {warning, false}, and calls that scenario in its `case`, which is `repeat/?`, that also has a `stop_playback/1`, and the most recent playback is the stopped ?CATEGORIES. Subsequent HANDLE_CHANNEL_EXECUTE_COMPLETE clauses will clear out these entries. (or should...)
 % TODO make sure that the Data#playbacks stack gets cleared properly
-stop_playback(#{ playbacks := [{_, _, true}|_] } = Data) ->
+% TODO QUESTION Where are the stopped recordings filtered out? Or does this act as a history? But not all menus play prompts.
+% TODO QUESTION If there is only one playback allowed at one time, why is `Data#playbacks a list?
+stop_playback(#{ playbacks := [{_, _, {stopped, true}}|_] } = Data) ->
     Data;
 
 % Stop the currently playing prompt
 % (but just in case, stop all, even though only one should be playing at any time)
 stop_playback( % {{-
   #{ playbacks :=
-     [ { ApplicationUUID % |
-       , PlaybackName    % | currently playing
-       , false           % |
+     [ { ApplicationUUID  % |
+       , PlaybackName     % | currently playing
+       , {stopped, false} % |
        }
        | Rest
      ]
@@ -1657,7 +1681,8 @@ stop_playback( % {{-
     % That is, the stopped status can be derived from the current state and ended playback.
     % }}-
     fsend({api, uuid_break, get(uuid) ++ " all"}),
-    Data#{ playbacks := [{ApplicationUUID, PlaybackName, true}|Rest] }.
+    StoppedPlayback = {ApplicationUUID, PlaybackName, {stopped, true}},
+    Data#{ playbacks := [StoppedPlayback|Rest] }.
 % }}-
 
 % Access News controls {{-
@@ -1741,6 +1766,43 @@ sign_up() ->
 
 % invalid_selection() ->
 %     "Invalid selection. Please try again.".
+% }}-
+
+% TODO Try out `mod_vlc` to play aac and m4a files. {{-
+% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
+% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
+% }}-
+play
+( greeting = State
+, #{ auth_status := AuthStatus } = Data
+)
+-> % {{-
+    % logger:debug("play greeting"),
+    Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
+    PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
+    Unregistered =
+        case AuthStatus of
+            registered ->
+                "";
+            unregistered ->
+                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial zero pound, followed by your code."
+                ++ sign_up()
+                ++ "To leave a message with your contact details, dial zero two."
+        end,
+    GoToTutorial = "To listen to the tutorial, dial zero one.",
+    GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
+    LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial zero two to leave a message.",
+
+    PromptList =
+        [ Anchor
+        , Unregistered
+        , PoundOrStar
+        , GoToTutorial
+        , GoToBlindnessServices
+        , LeaveMessage
+        ],
+
+    speak(State, Data, PromptList);
 % }}-
 
 play
@@ -1885,47 +1947,6 @@ play(publication_menu, Data) ->
 play(article_menu, Data) ->
     done;
 
-% TODO Try out `mod_vlc` to play aac and m4a files. {{-
-% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
-% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
-% }}-
-play(
-  greeting = State,
-  #{ auth_status := AuthStatus
-   } = Data
-) -> % {{-
-    % logger:debug("play greeting"),
-    Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
-    PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
-    Unregistered =
-        case AuthStatus of
-            registered ->
-                "";
-            unregistered ->
-                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial zero pound, followed by your code."
-                ++ sign_up()
-                ++ "To leave a message with your contact details, dial zero two."
-        end,
-    GoToTutorial = "To listen to the tutorial, dial zero one.",
-    GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
-    LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial zero two to leave a message.",
-
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text =>
-           stitch(
-             [ Anchor
-             , Unregistered
-             , PoundOrStar
-             , GoToTutorial
-             , GoToBlindnessServices
-             , LeaveMessage
-             ])
-       }
-    );
-% }}-
-
 play({inactivity_warning, Content} = State, Data) ->
     WarningPrompt =
         "Please press any key if you are still there.",
@@ -2001,7 +2022,7 @@ speak
     ApplicationUUID =
         sendmsg_locked(
           #{ sendmsg_command => execute
-           , arguments       => ["speak", "flite|kal|" ++ Text]
+           , arguments       => ["speak", "flite|kal|" ++ stitch(Text)]
            , playback_name   => PlaybackName
            }),
     Playback =
@@ -2012,7 +2033,7 @@ speak
         % When CHANNEL_EXECUTE_COMPLETE playback of the same name as the state comes in, it means that nothing has stopped the playback, because the `stopped_playback/1` function is only called in the state enter function on state change. As a corollary, every other time where PlaybackName =/= State means that the playback has been stopped
         % That is, the stopped status can be derived from the current state and ended playback.
         % }}-
-        , false % Has the playback been stopped?
+        , {stopped, false} % Has the playback been stopped?
         },
         % #{ playback_name => PlaybackName
         %  ,    is_stopped => false
@@ -2115,17 +2136,17 @@ repeat_menu( % {{-
 % }}-
 
 %       = NextState
-next_menu(NextMenu, Data) ->  % {{-
-  % #{ menu := NextMenu
-  %  , data := Data
-  %  , current_state := CurrentState
-  %  }
-% )
-% when CurrentState =/= NextMenu % use `repeat_menu/3` otherwise
-% ->
+next_menu
+( NextState
+, CurrentContent
+, #{ menu_history := MenuHistory } = Data
+)
+->  % {{-
+
     logger:debug("NEXT_MENU"),
 
-    % Update menu history (if permitted)
+    NewData = Data#{ menu_history := [{NextState, CurrentContent}|MenuHistory] },
+    % Update menu history (if permitted) {{-
     % NewDataH =
     %     push_history(Data, CurrentState),
         % case {CurrentState, NextMenu} of {{-
@@ -2157,13 +2178,13 @@ next_menu(NextMenu, Data) ->  % {{-
     % }}-
 
     % NewDataP = stop_playback(Data),
-    % comfort_noise(),
+    % comfort_noise(), }}-
 
     % TODO put play/2 in CEC
     % NewDataPP =
     %     play(NextMenu, NewDataP),
 
-    {next_state, NextMenu, NewDataPP}.
+    {next_state, NextState, NewData}.
 % }}-
 
 prev_menu(#{ menu_history := History } = Data) -> % {{-
@@ -2287,40 +2308,6 @@ choice_list() ->
 
 % retrieve(Direction) ->
 %     call_content(get, Direction).
-
-% Direction -> Vertex
-% Direction =
-%     parent | first | last | next | prev | content_root
-% CurrentVertex =
-%     #{ type := ContentType, ...} (see content.erl)
-% ContentType =
-%     category | publication | article
-content(CurrentVertex, Direction) -> % List Content | []
-    % { ContentType
-    % , _Selection
-    % , #{ anchor := AnchorText }
-    % } =
-    Result =
-        gen_server:call
-          ( content
-          , {CurrentVertex, Direction}
-          ),
-    case Result of
-        [Vertex] -> Vertex; % all except `children`
-        [_|_] -> Result;    % `children`
-        [] -> nothing       % Vertex has no specified direction
-    end.
-    % content:process_action
-      % ( get(content_graph)
-      % ( content
-      % , CurrentVertex
-      % , Direction
-      % ).
-        % call_content(get, current),
-    % Data#{ anchor := AnchorText }.
-
-content_root() ->
-    content(ignore, content_root).
 
 % NOTE The corresponding serialization function is in content.erl (also commented out)
 % deserialize(
