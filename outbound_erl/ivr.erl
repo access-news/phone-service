@@ -95,12 +95,13 @@ init(_Args) -> % {{-
     % ),
 
     Data =
-        #{ recvd_digits => ""
+        #{ received_digits => ""
          % ,       anchor => ""
          % , current_content => {}
          ,  offset => -1
          ,  auth_status => unregistered % | registered
-         , menu_history => [] % used as a stack
+         % , menu_history => [] % used as a stack
+         , current_content => none
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
          % Could have used a proplist instead as a stack but (1) lookup is less convenient (more on that below), (2) less explicit (see below).
          ,    playbacks => []
@@ -529,7 +530,6 @@ handle_event(
 %% }}-
 
 %% mod_erlang_event: call_event(CHANNEL_ANSWER) (STATE: incoming_call -> greeting) {{-
-
 handle_event(
   internal,                               % EventType
   { _UUID                                 % \
@@ -537,10 +537,11 @@ handle_event(
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
   },                                      % /
   incoming_call = State,                       % State
-  #{ auth_status  := _AuthStatus           % \         Made  explicit  all  values  that  are  known,
-   , menu_history := []                   % | Data    because the only state change to this state is
-   % , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
-   } = Data                               % /         set there must also be true.
+  % #{ auth_status  := _AuthStatus           % \         Made  explicit  all  values  that  are  known,
+  %  % , menu_history := []                   % | Data    because the only state change to this state is
+  %  % , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
+  %  } =
+  Data                               % /         set there must also be true.
 ) ->
     % logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
 
@@ -564,9 +565,9 @@ handle_event(
   State,
    % if `ReceivedDigits =/= []`, we are collecting digits
   #{
-      recvd_digits := ReceivedDigits
+      received_digits := ReceivedDigits
    ,  auth_status := AuthStatus
-   ,  menu_history := MenuHistory
+   % ,  menu_history := MenuHistory
    } = Data
 ) ->
     % logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
@@ -634,119 +635,111 @@ handle_event(
     %             element(1, State)
     %     end,
 
-    case {State, Digit} of
+    % case {State, Digit} of
+    case State of
         % TODO # has no function (except greeting, main_menu, article)
         % Use it to browse categories (step into the next one, like in article?)
         % or forward in history instead of back?
 
-        % === COLLECT_DIGITS
-        { {collect_digits, Content}, Digit } ->
-            collect_digits(Content, Data, Digit);
-
-        % === GREETING (-> content_root)
-        % [*#]       {{- => content root
-        { greeting, Digit }
-        % { {greeting, ContentRoot}, Digit }
-          when Digit =:= "*";
-               Digit =:= "#"
-        ->
-            next_menu(root_category, content:root(), Data);
-            % { next_state
-            % , root_category
-            % % , {content, ContentRoot}
-            % , Data
-            % };
-
+        % === COLLECT_DIGITS % {{-
+        % { collect_digits, Digit } ->
+        collect_digits ->
+            collect_digits(Digit, Data);
         % }}-
-        % 0          {{- => main_menu
-        { greeting, "0" } ->
-            next_menu(main_menu, content:root(), Data);
-            % {next_state , {main_menu, ContentRoot} , Data};
+        % === GREETING (-> content_root) {{-
+        % { greeting, Digit }
+        greeting ->
+            % Set `current_content` (it is `none` at this point)
+            NewData = set_current(content:root(), Data),
 
+            case Digit of
+                % [*#]       {{- => content root
+                _ when Digit =:= "*";
+                       Digit =:= "#"
+                ->
+                    {next_state, content_root, NewData};
+                % }}-
+                % 0          {{- => main_menu
+                "0" ->
+                    {next_state, main_menu, NewData};
+                % }}-
+                % [1-9]      {{- => collect digits
+                _ ->
+                    collect_digits(Digit, NewData)
+                % }}-
+            end;
         % }}-
-        % [1-9]      {{- => collect digits
-        { greeting, Digit } ->
-            NextMenu =
-                next_menu
-                  ( collect_digits
-                  , content:root()
-                  , Data
-                  ),
-            collect_digits(NextMenu, Digit);
+        % === MAIN_MENU (loop) {{-
+        main_menu ->
+            case Digit of
+                % * (star)  {{- <- Go back (current content)
+                "*" ->
+                    { next_state
+                    , derive_state(Data)
+                    , Data
+                    };
+                % }}-
+                % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
+                "#" ->
+                    NextMenu =
+                        case AuthStatus of
+                            registered   -> favourites;
+                            unregistered -> sign_in
+                        end,
+
+                    {next_state, NextMenu, Data};
+                % }}-
+                % 0         {{- => content_root
+                "0" ->
+                    next_content(content_root, Data);
+                % }}-
+                % 1         {{- => tutorial
+                "1" ->
+                    {next_state, tutorial, Data};
+                % }}-
+                % 2         {{- => leave_message
+                "2" ->
+                    {next_state, leave_message, Data};
+                % }}-
+                % 3         {{- => settings
+                "3" ->
+                    {next_state, settings, Data};
+                % }}-
+                % 4         {{- => blindness_services
+                "4" ->
+                    {next_state, blindness_services, Data};
+                % }}-
+                % 5-9       {{- => UNASSIGNED (keep state and data)
+                "5" -> keep_state_and_data;
+                "6" -> keep_state_and_data;
+                "7" -> keep_state_and_data;
+                "8" -> keep_state_and_data;
+                "9" -> keep_state_and_data
+                % }}-
+            end;
         % }}-
-
-        % === MAIN_MENU (loop)
-        % * (star)  {{- <- Go back (current content)
-        { {main_menu, Content}, "*" } ->
-            {next_state, {content, Content}, Data};
-
+        % === CONTENT_ROOT (loop) {{-
+        content_root ->
+            case Digit of
+                % TODO implement content history
+                % *          {{- => ignore
+                "*" ->
+                    keep_state_and_data;
+                % }}-
+                % 0          {{- => main_menu
+                "0" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % #          {{- => enter first child category
+                "#" ->
+                    next_content(first, Data);
+                % }}-
+                % [1-9]      {{- => collect digits
+                _ ->
+                    collect_digits(Digit, Data)
+                % }}-
+            end;
         % }}-
-        % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
-        { {main_menu, Content}, "#" } ->
-            NextMenu =
-                case AuthStatus of
-                    registered   -> {favourites, Content};
-                    unregistered -> {sign_in, Content}
-                end,
-
-            {next_state, NextMenu, Data};
-
-        % }}-
-        % TODO list history
-        % 0         {{- => UNASSIGNED (keep state and data)
-        % Left it empty because users may just bang on 0 just to get to main_menu.
-        { main_menu, "0" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 1         {{- => tutorial
-        { {main_menu, Content}, "1" } ->
-            {next_state, {tutorial, Content}, Data};
-
-        % }}-
-        % 2         {{- => leave_message
-        { {main_menu, Content}, "2" } ->
-            {next_state, {leave_message, Content}, Data};
-
-        % }}-
-        % 3         {{- => settings
-        { {main_menu, Content}, "3" } ->
-            {next_state, {settings, Content}, Data};
-
-        % }}-
-        % 4         {{- => blindness_services
-        { {main_menu, Content}, "4" } ->
-            {next_state, {blindness_services, Content}, Data};
-
-        % }}-
-        % TODO: play contents at random
-        % 5         {{- => UNASSIGNED (keep state and data)
-        { {main_menu, _Content}, "5" } ->
-            % {next_state, random, Data};
-            keep_state_and_data;
-
-        % }}-
-        % 6         {{- => UNASSIGNED (keep state and data)
-        { {main_menu, _Content}, "6" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 7         {{- => UNASSIGNED (keep state and data)
-        { {main_menu, _Content}, "7" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 8         {{- => UNASSIGNED (keep state and data)
-        { {main_menu, _Content}, "8" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 9         {{- => UNASSIGNED (keep state and data)
-        { {main_menu, _Content}, "9" } ->
-            keep_state_and_data;
-
-        % }}-
-
         % === CATEGORY (loop)
         % *          {{- => back (i.e., up in content hierarchy)
         { category, "*" } ->
@@ -1263,11 +1256,11 @@ handle_event(
         % but that should not loop
         % --------------------------------------
         greeting ->                     % |
-            next_menu(root_category, content:root(), NewData);
+            next_menu(content_root, content:root(), NewData);
             % NewerData =
             %     Data#{ menu_history := [content:root()|MenuHistory],
             % { next_state                % |
-            % , root_category    % |
+            % , content_root    % |
             % , NewerData                   % |
             % };                          % |
         % formerly {warning, _}         % | TODO already see a pattern
@@ -1411,8 +1404,10 @@ handle_event(
 handle_event
   ( {timeout, interdigit_timer} % EventType
   , eval_collected_digits       % EventContent
-  , {collect_digits, Content}   % State
-  , #{ recvd_digits := ReceivedDigits } = Data
+  , collect_digits   % State
+  % , {collect_digits, Content}   % State
+  , #{ received_digits := ReceivedDigits
+     } = Data
   )
 ->
     Selection =
@@ -1421,7 +1416,8 @@ handle_event
           [ ReceivedDigits
           , [ (f:cflip(fun string:join/2))("")
             % [ fun (List) -> string:join(List, "") end
-            % will throw on empty list but it should never happen the way collect_digits/2 is called
+            % Will throw on empty list but it should never happen the way collect_digits/2 is called
+            % (to elaborate: `collect_digits/2` is only triggered by DTMF digits 1-9, hence it should never be empty. If it is, it means that the menu calling (i.e., DTMF-processing) logic is wrong, and should be corrected)
           , fun erlang:list_to_integer/1
           ]
         ),
@@ -1430,44 +1426,55 @@ handle_event
 
     % Always clear DTMF buffer when the `interdigit_timer` expires, because this is the point the buffer is evaluated. Outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result, and so a clean slate is needed.
     NewData =
-        Data#{ recvd_digits := [] },
+        Data#{ received_digits := [] },
 
     % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
 
     SelectionResult =
         [  Child
         || Child
-           <- content(Content, children)
+           <- get_content(children, Data)
            ,  maps:find(selection, Child) =:= {ok, Selection}
         ],
 
     % case lists:keyfind(Selection, 2, SubCategories) of
     case SelectionResult of
         [] ->
-            {next_state, {invalid_selection, Content}, NewData};
+            {next_state, invalid_selection, NewData};
         [SelectedContent] ->
-            {next_state, {content, SelectedContent}, NewData}
+            { next_state
+            % `content_root` will never be possible here so pattern matching would have sufficed but this is more uniform
+            , derive_state(NewData)
+            , set_current(SelectedContent, NewData)
+            }
     end.
 %% }}-
 
 % TODO Eval on 2 digits immediately to speed up things
-collect_digits(NextMenu, Digit)
+collect_digits(Digit, Data)
     when Digit =:= "*";
          Digit =:= "#"
 ->
-    collect_digits(NextMenu, "");
+    collect_digits("", Data);
 
 collect_digits % {{-
-  ( { next_state
-    , collect_digits
-    , #{ recvd_digits := ReceivedDigits
-       } = Data
-    } = NextMenu
-  , Digit % string
+  ( Digit
+  , #{ received_digits := ReceivedDigits
+     } = Data
   )
+when Digit =:= "1";
+     Digit =:= "2";
+     Digit =:= "3";
+     Digit =:= "4";
+     Digit =:= "5";
+     Digit =:= "6";
+     Digit =:= "7";
+     Digit =:= "8";
+     Digit =:= "9";
+     Digit =:= "0"
 ->
     NewData =
-        Data#{recvd_digits := ReceivedDigits ++ Digit},
+        Data#{received_digits := ReceivedDigits ++ Digit},
     % The notion is that the `InterDigitTimer` is restarted whenever {{-
     % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
     % }}-
@@ -1560,24 +1567,24 @@ look_up(PhoneNumber) ->
 % event_uuid_header(UUID) ->
 %     {"Event-UUID", UUID}.
 
-sendmsg_headers(execute, [App, Args], UUID) when is_list(Args) ->
+sendmsg_headers(execute, [App, Args], ApplicationUUID) when is_list(Args) ->
     %% TODO "loops"  header   and  alternate  format   for  long
     %%      messages (is it needed here?)  not added as they are
     %%      not needed yet.
     [ {"execute-app-name", App}
     , {"execute-app-arg", Args}
-    , {"Event-UUID", UUID}
-    % , event_uuid_header(UUID)
+    , {"Event-UUID", ApplicationUUID}
+    % , event_uuid_header(ApplicationUUID)
     ];
 
-sendmsg_headers(hangup, [HangupCode], _UUID) ->
+sendmsg_headers(hangup, [HangupCode], _ApplicationUUID) ->
     %% For hangup codes, see
     %% https://freeswitch.org/confluence/display/FREESWITCH/Hangup+Cause+Code+Table
     [{"hangup-cause", HangupCode}];
 
 %% This will  blow up,  one way or  the other,  but not
 %% planning to get there anyway.
-sendmsg_headers(_SendmsgCommand, _Args, _UUID) ->
+sendmsg_headers(_SendmsgCommand, _Args, _ApplicationUUID) ->
     % filog:process_log(
     %   emergency,
     %   ["`sendmsg` command not implemented yet"
@@ -2052,55 +2059,55 @@ stitch([Utterance|Rest]) ->
 %% }}-
 
 %% Push/pop history {{-
-push_history(Data, State)
-when State =:= incoming_call;
-     State =:= greeting;
-     % State =:= main_menu;
-     % State =:= quick_help;
-     State =:= collect_digits;
-     % TODO These are compound states!
-     element(1, State) =:= warning
-     % State =:= publication;
-     % State =:= article
-->
-    push_history(Data, {skip, State});
+% push_history(Data, State)
+% when State =:= incoming_call;
+%      State =:= greeting;
+%      % State =:= main_menu;
+%      % State =:= quick_help;
+%      State =:= collect_digits;
+%      % TODO These are compound states!
+%      element(1, State) =:= warning
+%      % State =:= publication;
+%      % State =:= article
+% ->
+%     push_history(Data, {skip, State});
 
-push_history(#{ menu_history := History } = Data, State) ->
-    logger:debug(#{ self() => ["PUSH_HISTORY", {history, History}, {state, State}]}),
-    Data#{ menu_history := [State | History] }.
+% push_history(#{ menu_history := History } = Data, State) ->
+%     logger:debug(#{ self() => ["PUSH_HISTORY", {history, History}, {state, State}]}),
+%     Data#{ menu_history := [State | History] }.
 
-% Why not check if history is empty? {{-
-% ====================================================
-% Because it will (or at least should) not happen: Call comes in, FreeSWITCH start `ivr.erl`, `init/0` sets history to `[?CATEGORIES]`, meaning that states before that (i.e., `incoming_call` and `greeting`) can never be revisited. When traversing the history backwards with * (star), `HANDLE_DTMF_FOR_ALL_STATES` will make sure that when the `?HISTORY_ROOT` is reached, pressing the * (star) will be ignored (see `case` clause starting with comment "Go up/back").
-% UPDATE
-% What is said above still holds, but the root is now [].
-% }}-
-pop_history(#{ menu_history := [] } = Data) ->
-    { ?CATEGORIES
-    , Data
-    };
+% % Why not check if history is empty? {{-
+% % ====================================================
+% % Because it will (or at least should) not happen: Call comes in, FreeSWITCH start `ivr.erl`, `init/0` sets history to `[?CATEGORIES]`, meaning that states before that (i.e., `incoming_call` and `greeting`) can never be revisited. When traversing the history backwards with * (star), `HANDLE_DTMF_FOR_ALL_STATES` will make sure that when the `?HISTORY_ROOT` is reached, pressing the * (star) will be ignored (see `case` clause starting with comment "Go up/back").
+% % UPDATE
+% % What is said above still holds, but the root is now [].
+% % }}-
+% pop_history(#{ menu_history := [] } = Data) ->
+%     { ?CATEGORIES
+%     , Data
+%     };
 
-% TODO adjust when final form of `article` state is known
-pop_history(
-  #{ menu_history :=
-     [ {article, _}
-     , _Publication
-     , Category
-     | RestHistory
-     ]
-   } = Data
-) ->
-    pop_history(Data#{ menu_history := [Category|RestHistory] });
+% % TODO adjust when final form of `article` state is known
+% pop_history(
+%   #{ menu_history :=
+%      [ {article, _}
+%      , _Publication
+%      , Category
+%      | RestHistory
+%      ]
+%    } = Data
+% ) ->
+%     pop_history(Data#{ menu_history := [Category|RestHistory] });
 
-pop_history(#{ menu_history := [{skip, _} | RestHistory] } = Data) ->
-    pop_history(Data#{ menu_history := RestHistory });
+% pop_history(#{ menu_history := [{skip, _} | RestHistory] } = Data) ->
+%     pop_history(Data#{ menu_history := RestHistory });
 
-pop_history(#{ menu_history := [PrevState | RestHistory] } = Data) ->
-    logger:debug(#{ self() => ["POP_HISTORY", {history, [PrevState|RestHistory]}]}),
-    { PrevState
-    , Data#{ menu_history := RestHistory }
-    }.
-% }}-
+% pop_history(#{ menu_history := [PrevState | RestHistory] } = Data) ->
+%     logger:debug(#{ self() => ["POP_HISTORY", {history, [PrevState|RestHistory]}]}),
+%     { PrevState
+%     , Data#{ menu_history := RestHistory }
+%     }.
+% % }}-
 
 % Playback keeps going while accepting DTMFs, and each subsequent entry has a pre-set IDT
 % 1-9 trigger collection (all states except some, see HANDLE_DTMF_FOR_ALL_STATES)
@@ -2136,56 +2143,56 @@ repeat_menu( % {{-
 % }}-
 
 %       = NextState
-next_menu
-( NextState
-, CurrentContent
-, #{ menu_history := MenuHistory } = Data
-)
-->  % {{-
+% next_menu
+% ( NextState
+% , CurrentContent
+% , #{ menu_history := MenuHistory } = Data
+% )
+% ->  % {{-
 
-    logger:debug("NEXT_MENU"),
+%     logger:debug("NEXT_MENU"),
 
-    NewData = Data#{ menu_history := [{NextState, CurrentContent}|MenuHistory] },
-    % Update menu history (if permitted) {{-
-    % NewDataH =
-    %     push_history(Data, CurrentState),
-        % case {CurrentState, NextMenu} of {{-
+%     NewData = Data#{ menu_history := [{NextState, CurrentContent}|MenuHistory] },
+%     % Update menu history (if permitted) {{-
+%     % NewDataH =
+%     %     push_history(Data, CurrentState),
+%         % case {CurrentState, NextMenu} of {{-
 
-        %     % TODO re-write so that always pushing history; more straightforward, plus extra debug info. mark states that shouldn't be revisited by user via *
-        %     % State changes when history is not updated  with prev
-        %     % state (corner cases)
-        %     % ====================================================
-        %     % NOTE: This is adding behaviour to `next_menu/1`, which {{-
-        %     % I do not like, but these are the only cases when history is not pushed (so far). Another advantage is that all corner cases are listed in one place.
-        %     % }}-
-        %     % NOTE: `main_menu` -> `?CATEGORIES` {{-
-        %     % Go to `?CATEGORIES` from `main_menu` (only forward option from `main_menu`), but do not add `main_menu` to history
-        %     % NOTE Currently it is possible to accumulate `?CATEGORIES` in history by going to `main_menu` and forward to `?CATEGORIES`, as it will add `?CATEGORIES` each time but leaving it as is
-        %     % }}-
-        %     {main_menu, ?CATEGORIES}  -> Data;
-        %     % {{-
-        %     %   + `greeting` -> `?CATEGORIES` (i.e., when pressing * or #  in `greeting` or playback stops)
-        %         % No `next_menu/1` here to keep the history empty so that `greeting` cannot be revisited, making `?CATEGORIES` the root. Whatever navigations happen there
-        %         % Why not keep state? Reminder: 0# (not very relevant in this particular case, but keeping state changes consistent makes it easier to think about each `handle_event/4` clause. Read note at the very end of HANDLE_DTMF_FOR_ALL_STATES `handle_event/4` clause)
-        %     % }}-
-        %     {greeting, ?CATEGORIES}   -> Data;
-        %     {greeting, main_menu}     -> Data;
-        %     {incoming_call, greeting} -> Data;
+%         %     % TODO re-write so that always pushing history; more straightforward, plus extra debug info. mark states that shouldn't be revisited by user via *
+%         %     % State changes when history is not updated  with prev
+%         %     % state (corner cases)
+%         %     % ====================================================
+%         %     % NOTE: This is adding behaviour to `next_menu/1`, which {{-
+%         %     % I do not like, but these are the only cases when history is not pushed (so far). Another advantage is that all corner cases are listed in one place.
+%         %     % }}-
+%         %     % NOTE: `main_menu` -> `?CATEGORIES` {{-
+%         %     % Go to `?CATEGORIES` from `main_menu` (only forward option from `main_menu`), but do not add `main_menu` to history
+%         %     % NOTE Currently it is possible to accumulate `?CATEGORIES` in history by going to `main_menu` and forward to `?CATEGORIES`, as it will add `?CATEGORIES` each time but leaving it as is
+%         %     % }}-
+%         %     {main_menu, ?CATEGORIES}  -> Data;
+%         %     % {{-
+%         %     %   + `greeting` -> `?CATEGORIES` (i.e., when pressing * or #  in `greeting` or playback stops)
+%         %         % No `next_menu/1` here to keep the history empty so that `greeting` cannot be revisited, making `?CATEGORIES` the root. Whatever navigations happen there
+%         %         % Why not keep state? Reminder: 0# (not very relevant in this particular case, but keeping state changes consistent makes it easier to think about each `handle_event/4` clause. Read note at the very end of HANDLE_DTMF_FOR_ALL_STATES `handle_event/4` clause)
+%         %     % }}-
+%         %     {greeting, ?CATEGORIES}   -> Data;
+%         %     {greeting, main_menu}     -> Data;
+%         %     {incoming_call, greeting} -> Data;
 
-        %     % On any other state change
-        %     _ -> push_history(Data, CurrentState)
-        % end,
-    % }}-
+%         %     % On any other state change
+%         %     _ -> push_history(Data, CurrentState)
+%         % end,
+%     % }}-
 
-    % NewDataP = stop_playback(Data),
-    % comfort_noise(), }}-
+%     % NewDataP = stop_playback(Data),
+%     % comfort_noise(), }}-
 
-    % TODO put play/2 in CEC
-    % NewDataPP =
-    %     play(NextMenu, NewDataP),
+%     % TODO put play/2 in CEC
+%     % NewDataPP =
+%     %     play(NextMenu, NewDataP),
 
-    {next_state, NextState, NewData}.
-% }}-
+%     {next_state, NextState, NewData}.
+% % }}-
 
 prev_menu(#{ menu_history := History } = Data) -> % {{-
   % #{ current_state := CurrentState
@@ -2295,6 +2302,45 @@ choice_list() ->
        }
        <- content(get, children)
     ].
+
+derive_state(Data) ->
+    case maps:get(current_content, Data) of
+        #{ selection := 0 } ->
+            content_root;
+        #{ type := ContentType } ->
+            ContentType
+    end.
+
+% TODO add content history
+set_current(Content, Data) ->
+    Data#{ current_content := Content }.
+
+get_current(#{ current_content := Content } = _Data) ->
+    Content.
+
+get_content(Direction, Data) ->
+    content:pick(Direction, get_current(Data)).
+
+next_content(Direction, Data)
+  % `children` and a bad direction return a list which blow up when saved as current_content (hence the explicit whitelisting, instead of just blacklisting `children`)
+  when Direction =:= parent;
+       Direction =:= first;
+       Direction =:= last;
+       Direction =:= next;
+       Direction =:= prev;
+       Direction =:= content_root
+->
+    NewData =
+        f:pipe
+          ([ Data
+           , (f:curry(fun get_content/2))(Direction)
+           , (f:cflip(fun set_current/2))(Data)
+           ]),
+    % Not simply pattern-matching `NewData` because if "up" results in the root category then the next state is `content_root` and not `category`
+    NextState =
+        derive_state(NewData),
+
+    { next_state, NextState, NewData }.
 
 % NOTE `go_to/1` and `retrieve/1` will crash if used improperly. It is not handled, because these are strictly internal functions not intended to be used from anywhere else, and if they crash then the culprit is an error in the surrounding code
 % next(Data, Content) ->

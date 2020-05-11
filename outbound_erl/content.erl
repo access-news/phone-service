@@ -13,6 +13,10 @@
     % , handle_cast/2
     % , terminate/2
 
+    % public API
+    , pick/2
+    , root/0
+
     % private functions
     , make_content_graph/0
     , refresh_content_graph/1
@@ -156,7 +160,7 @@ process_call(Graph, Vertex, Direction) ->
 %     #{ type := ContentType, ...} (see content.erl)
 % ContentType =
 %     category | publication | article
-content(Direction, CurrentVertex) -> % List Content | []
+pick(Direction, CurrentVertex) -> % List Content | []
     % { ContentType
     % , _Selection
     % , #{ anchor := AnchorText }
@@ -181,7 +185,7 @@ content(Direction, CurrentVertex) -> % List Content | []
     % Data#{ anchor := AnchorText }.
 
 root() ->
-    content(content_root, ignore).
+    pick(content_root, ignore).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions                                                  %%
