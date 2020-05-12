@@ -173,7 +173,7 @@ pick(Direction, CurrentVertex) -> % List Content | []
     case Result of
         [Vertex] -> Vertex; % all except `children`
         [_|_] -> Result;    % `children`
-        [] -> dir_not_applicable       % Vertex has no specified direction
+        [] -> none       % Vertex has no specified direction (i.e., it is the last item without a `next` edge, content root was called with parent/next/etc and so on)
     end.
     % content:process_action
       % ( get(content_graph)
@@ -393,8 +393,14 @@ do_dirlist( % {{-
     add_edge(Graph, first, ParentMeta, Meta),
     add_hierarcy_edges(Graph, ParentMeta, Meta),
     % add_vertex_and_parent_edge(Graph, ParentMeta, Meta),
-    do_make(Graph, FullPath),
-    do_dirlist(Graph, ParentMeta, [MetaPath|Rest]);
+    case Rest of
+        [] ->
+            add_edge(Graph, last, ParentMeta, Meta),
+            done;
+        [_|_] ->
+            do_make(Graph, FullPath),
+            do_dirlist(Graph, ParentMeta, [MetaPath|Rest])
+    end;
 % }}-
 
 do_dirlist( % {{-
