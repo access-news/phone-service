@@ -10,10 +10,6 @@
     , callback_mode/0
     , handle_event/4
     , terminate/3
-    , realize/0
-    , realize/1
-    , add_recordings/2
-    , publication_guide/0
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
@@ -151,14 +147,15 @@ handle_event(enter, OldState, State, Data) -> % {{-
     %         end
     %     end,
 
+    % TODO PROD hang up when hangup timers expire, and their prompt has been read
     NewData =
         % ( composeFlipped(
-        pipe(
+        f:pipe(
           [ Data
           , fun stop_playback/1
           , fun(Data) -> comfort_noise(), Data end
           % , fun(GenData) -> play(State, GenData) end
-          , (curry(fun play/2))(State)
+          , (f:curry(fun play/2))(State)
           ]
         ),
 
@@ -349,42 +346,6 @@ handle_event(
     keep_state_and_data;
 %% }}-
 
-%% inactivity timers (info) {{-
-% The timers are started with `re_start_inactivity_timer/0` when a call comes in, or a DTMF signal is received. The purpose of button presses to change the state, so it is not important to restart the timers on the actual state change, and interdigit timers have a short value compared to the inactivity ones.
-% This way is even better, because on invalid category selection the user will remain in the same state as long as they can't input a correct number, but the timers will get reset on each try.
-handle_event
-  ( info               % EventType
-  , inactivity_warning % EventContent
-  , {_, Content}       % State,
-  , Data
-  )
-->
-    % Inactive =
-    %     "Please any key if you are still there.",
-
-    % TODO Add notes on how this works.
-    % TODO how is this applicable when in {article, _}?
-    % NewDataP =
-    %     warning(Inactive, Data),
-    { next_state
-    , {inactivity_warning, Content}
-    , Data
-    };
-
-handle_event(
-  info,
-  inactivity_hangup,
-  State,
-  Data
-) ->
-
-    next_menu(
-      #{ menu => {hangup, inactivity}
-       , data => Data
-       , current_state => State
-       });
-%% }}-
-
 %% DEBUG (info) {{-
 %% Catch-all clause to see unhandled `info` events.
 handle_event(
@@ -509,7 +470,7 @@ handle_event(
                 DemoTimeout =                       % Generic timeout
                     { {timeout, unregistered_timer} % { {timeout, Name}
                     , ?DEMO_TIMEOUT                 % , Time
-                    , hang_up                       % , EventContent }
+                    , demo_hangup                       % , EventContent }
                     },
                 { unregistered
                 , [ DemoTimeout
@@ -650,6 +611,8 @@ handle_event(
         % { greeting, Digit }
         greeting ->
             % Set `current_content` (it is `none` at this point)
+            % QUESTION Should this be set in `init/1` instead?
+            %          I think it is easier to understand it this way.
             NewData = set_current(content:root(), Data),
 
             case Digit of
@@ -740,407 +703,173 @@ handle_event(
                 % }}-
             end;
         % }}-
-        % === CATEGORY (loop)
-        % *          {{- => back (i.e., up in content hierarchy)
-        { category, "*" } ->
-        % { {content, #{ type := category } = Current}, "*" } ->
-            { next_state
-            , {content, content(Current, parent)}
-            , Data
-            };
-
+        % === CATEGORY (loop) {{-
+        category ->
+            case Digit of
+                % *          {{- => back (i.e., up in content hierarchy)
+                "*" ->
+                    next_content(parent, Data);
+                % }}-
+                % 0          {{- => main_menu
+                "0" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % #          {{- => next category (i.e., next sibling)
+                "#" ->
+                    next_content(next, Data);
+                % }}-
+                % [1-9]      {{- => collect digits
+                { {content, #{ type := category } = Current}, Digit} ->
+                    collect_digits(Current, Data, Digit)
+                % }}-
+            end;
         % }}-
-        % #          {{- => next category (i.e., next sibling)
-        { {content, #{ type := category } = Current}, "#" } ->
-            { next_state
-            , {content, content(Current, next)}
-            , Data
-            };
-
+        % === PUBLICATION (-> first article, if there's one TODO PROD handle no articles) {{-
+        publication ->
+            case Digit of
+                % *          {{- => back (i.e., up in content hierarchy)
+                "*" ->
+                    next_content(parent, Data);
+                % }}-
+                % 0          {{- => main_menu
+                "0" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % #          {{- => next publication (i.e., next sibling)
+                "#" ->
+                    next_content(next, Data);
+                % }}-
+                % 1         {{- => Play FIRST article
+                "1" ->
+                    next_content(first, Data);
+                % }}-
+                % TODO FEATURE list articles
+                % 2         {{- => UNASSIGNED (keep_state_and_data)
+                "2" -> keep_state_and_data;
+                % }}-
+                % 3         {{- => Play LAST article
+                "3" ->
+                    next_content(last, Data);
+                % }}-
+                % 4-8       {{- => UNASSIGNED (keep_state_and_data)
+                "4" -> keep_state_and_data;
+                % TODO FEATURE play where_am_i
+                "5" -> keep_state_and_data;
+                % TODO FEATURE list articles (basically a shortcut for "*" to emphasize that one can just do that to listen to available publications in a category)
+                "6" -> keep_state_and_data;
+                "7" -> keep_state_and_data;
+                % TODO FEATURE "continue from last time"
+                "8" -> keep_state_and_data;
+                % }}-
+                % 9         {{- => PREVIOUS publication
+                "9" ->
+                    next_content(prev, Data)
+                % }}-
+            end;
         % }}-
-        % 0          {{- => category_menu
-        { {content, #{ type := category } = Current}, "0" } ->
-            { next_state
-            , {category_menu, Current}
-            , Data
-            };
-
+        % === ARTICLE (i.e., article playback) -> next article {{-
+        article ->
+            case Digit of
+                % *          {{- => back (i.e., up in content hierarchy)
+                "*" ->
+                    next_content(parent, Data);
+                % }}-
+                % 0          {{- => main_menu
+                "0" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % #          {{- => next article (i.e., next sibling)
+                "#" ->
+                    next_content(next, Data);
+                % }}-
+                % TODO PROD implement controls
+                % 1          {{- => rewind (10s)
+                "1" -> todo;
+                % }}-
+                % 2          {{- => pause (stop) article
+                "2" -> todo;
+                % }}-
+                % 3          {{- => forward (10s)
+                "3" -> todo;
+                % }}-
+                % 4          {{- => slower
+                "4" -> todo;
+                % }}-
+                % 5          {{- => volume down
+                "5" -> todo;
+                % }}-
+                % 6          {{- => faster
+                "6" -> todo;
+                % }}-
+                % TODO FEATURE add to favourites
+                % 7          {{- => restart article
+                "7" -> todo;
+                % }}-
+                % 8          {{- => volume up
+                "8" -> todo;
+                % }}-
+                % 9          {{- => previous article
+                "9" ->
+                    next_content(prev, Data)
+                % }}-
+            end;
         % }}-
-        % [1-9]      {{- => collect digits
-        { {content, #{ type := category } = Current}, Digit} ->
-            collect_digits(Current, Data, Digit);
-        % }}-
-
-        % === CATEGORY_MENU (loop)
-        % *         {{- => back (to current content)
-        { {category_menu, Content}, "*" } ->
-            {next_state, {content, Content}, Data};
-
-        % }}-
-        % #         {{- => previous category (i.e., previous sibling)
-        { {category_menu, Content}, "#" } ->
-            { next_state
-            , {content, content(Current, prev)}
-            , Data
-            };
-
-        % }}-
-        % 0         {{- => main_menu
-        { {category_menu, Content}, "0" } ->
-            {next_state, {main_menu, Content}, Data};
-
-        % }}-
-        % 1         {{- => UNASSIGNED (keep state and data)
-        { {category_menu, Content}, "1" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 2         {{- => UNASSIGNED (keep state and data)
-        { {category_menu, Content}, "2" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 3         {{- => UNASSIGNED (keep state and data)
-        { {category_menu, Content}, "3" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 4         {{- => UNASSIGNED (keep state and data)
-        { {category_menu, Content}, "4" } ->
-            keep_state_and_data;
-
-        % }}-
-        % TODO play where_am_i
-        % 5         {{- => Where am I?
-        { {category_menu, Content}, "5" } ->
-            { next_state
-            , {where_am_i, Content}
-            , Data
-            };
-
-        % }}-
-        % 6         {{- => UNASSIGNED (keep state and data)
-        { {category_menu, Content}, "6" } ->
-            keep_state_and_data;
-
-        % }}-
-        % 7         {{- => Enter FIRST child (category/publication)
-        { {category_menu, Current}, "7" } ->
-            { next_state
-            , {content, content(Current, first)}
-            , Data
-            };
-
-        % }}-
-        % 8         {{- => Jump to content root
-        { {category_menu, _Content}, "8" } ->
-            { next_state
-            , {content, content_root()}
-            , Data
-            };
-
-        % }}-
-        % 9         {{- => Enter LAST child (category/publication)
-        { {category_menu, Current}, "9" } ->
-            { next_state
-            , {content, content(Current, last)}
-            , Data
-            };
-
-        % }}-
-
-        % === PUBLICATION (-> first article, i.e., first child)
-        % *         {{- => back (i.e., up in content hierarchy)
-        { {content, #{ type := publication } = Current}, "*" } ->
-            { next_state
-            , {content, content(Current, parent)}
-            , Data
-            };
-
-        % }}-
-        % #         {{- => NEXT publication (i.e., next sibling)
-        { {content, #{ type := publication } = Current}, "#" } ->
-            { next_state
-            , {content, content(Current, next)}
-            , Data
-            };
-
-        % }}-
-        % 0         {{- => publication_menu
-        { {content, #{ type := publication } = Current}, "0" } ->
-            { next_state
-            , {publication_menu, Current}
-            , Data
-            };
-
-        % }}-
-        % 1         {{- => Play FIRST article
-        { {content, #{ type := publication } = Current}, "1" } ->
-            { next_state
-            , {content, content(Current, first)}
-            , Data
-            };
-
-        % }}-
-        % 2         {{- => List articles
-        { {content, #{ type := publication } = Current}, "2" } ->
-            { next_state
-            , {list_articles, Current}
-            , Data
-            };
-
-        % }}-
-        % 3         {{- => Play LAST article
-        { {content, #{ type := publication } = Current}, "3" } ->
-            { next_state
-            , {content, content(Current, last)}
-            , Data
-            };
-
-        % }}-
-        % 4         {{- => UNASSIGNED (keep state and data)
-        { {content, #{ type := publication } = Current}, "4" } ->
-            keep_state_and_data;
-
-        % }}-
-        % TODO play where_am_i
-        % 5         {{- => Where am I?
-        { {content, #{ type := publication } = Current}, "5" } ->
-            { next_state
-            , {where_am_i, Current}
-            , Data
-            };
-
-        % }}-
-        % 6         {{- => Go to main category
-        { {content, #{ type := publication } = _Current}, "6" } ->
-            { next_state
-            , {content, content_root()}
-            , Data
-            };
-
-        % }}-
-        % 7         {{- => NEXT publication (same as "#")
-        { {content, #{ type := publication } = Current}, "7" } ->
-            { next_state
-            , {content, content(Current, next)}
-            , Data
-            };
-
-        % }}-
-        % 8         {{- => List publications (same as "*")
-        { {content, #{ type := publication } = Current}, "8" } ->
-            { next_state
-            , {content, content(Current, parent)}
-            , Data
-            };
-
-        % }}-
-        % 9         {{- => PREVIOUS publication
-        { {content, #{ type := publication } = Current}, "9" } ->
-            { next_state
-            , {content, content(Current, prev)}
-            , Data
-            };
-
-        % }}-
-
-        % === PUBLICATION_MENU (loop)
-        % *         {{- => back (i.e., up in content hierarchy)
-        { {publication_menu, Current}, "*" } ->
-            {next_state, {content, Current}, Data};
-
-        % }}-
-        % #         {{- => PREVIOUS publication (i.e., previous sibling)
-        { {publication_menu, Current}, "#" } ->
-            { next_state
-            , {content, content(Current, prev)}
-            , Data
-            };
-
-        % }}-
-        % 0         {{- => main_menu
-        { {publication_menu, Content}, "0" } ->
-            { next_state
-            , {main_menu, Content}
-            , Data
-            };
-
-        % }}-
-        % 1         {{- => Play FIRST article
-        { {publication_menu, Current}, "1" } ->
-            { next_state
-            , {content, content(Current, first)}
-            , Data
-            };
-
-        % }}-
-        % 2         {{- => List articles
-        { {publication_menu, Content}, "2" } ->
-            { next_state
-            , {list_articles, Content}
-            , Data
-            };
-
-        % }}-
-        % 3         {{- => Play LAST article
-        { {publication_menu, Current}, "3" } ->
-            { next_state
-            , {content, content(Current, last)}
-            , Data
-            };
-
-        % }}-
-        % 4         {{- => UNASSIGNED (keep state and data)
-        { {publication_menu, _Content}, "4" } ->
-            keep_state_and_data;
-
-        % }}-
-        % TODO play where_am_i
-        % 5         {{- => Where am I?
-        { {publication_menu, Content}, "5" } ->
-            { next_state
-            , {where_am_i, Content}
-            , Data
-            };
-
-        % }}-
-        % 6         {{- => Go to main category
-        { {publication_menu, _Content}, "6" } ->
-            { next_state
-            , {content, content_root()}
-            , Data
-            };
-
-        % }}-
-        % 7         {{- => NEXT publication (same as "#")
-        { {publication_menu, Current}, "7" } ->
-            { next_state
-            , {content, content(Current, next)}
-            , Data
-            };
-
-        % }}-
-        % 8         {{- => List publications (same as "*")
-        { {publication_menu, Current}, "8" } ->
-            { next_state
-            , {content, content(Current, parent)}
-            , Data
-            };
-
-        % }}-
-        % 9         {{- => PREVIOUS publication
-        { {publication_menu, Current}, "9" } ->
-            { next_state
-            , {content, content(Current, prev)}
-            , Data
-            };
-
-        % }}-
-
-        % === {ARTICLE, (HELP|PLAYBACK)} (-> go_to(next) )
-        % *          {{- => back (i.e., up in content hierarchy)
-        { {article, _}, "*" } ->
-            % content(go_to, parent), % => parent publication
-            % content(go_to, parent), % => parent category
-            % next(Data);
-
-        % }}-
-        % #          {{- => next article (i.e., next sibling)
-        { {article, _}, "#" } ->
-            content(go_to, next),
-            next(Data);
-
-        % }}-
-        % TODO stop article playback and save offset
-        % 0          {{- => article_menu
-        { {article, _}, "0" } ->
-            {next_state, article_menu, Data};
-
-        % }}-
-        % TODO implement controls
-        % 1          {{- => rewind (10s)
-        { article, "1" } ->
-
-        % }}-
-        % 2          {{- => pause/start
-        { article, "2" } ->
-
-        % }}-
-        % 3          {{- => forward (10s)
-        { article, "3" } ->
-
-        % }}-
-        % 4          {{- => slower
-        { article, "4" } ->
-
-        % }}-
-        % 5          {{- => volume down
-        { article, "5" } ->
-
-        % }}-
-        % 6          {{- => faster
-        { article, "6" } ->
-
-        % }}-
-        % TODO add to favourites
-        % 7          {{- => UNASSIGNED (keep state and data)
-        { article, "7" } ->
-
-        % }}-
-        % 8          {{- => volume up
-        { article, "8" } ->
-
-        % }}-
-        % 9          {{- => previous article (i.e., previous sibling)
-        { article, "9" } ->
-            go_to(prev, Data);
-
-        % }}-
-
-        % === ARTICLE_MENU (loop)
-        % *          {{- => back (i.e., up in content hierarchy)
-        { article_menu, "*" } ->
-            go_to(current, Data);
-
-        % }}-
-        % #          {{- => previous article (i.e., previous sibling)
-        { article_menu, "#" } ->
-            go_to(prev, Data);
-
-        % }}-
-        % 0          {{- => main_menu
-        { article_menu, "0" } ->
-            {next_state, main_menu, Data};
-
-        % }}-
-        % TODO implement controls
-        % 1          {{- => reset volume
-        { article_menu, "1" } ->
-
-        % }}-
-        % 2          {{- => reset speed
-        { article_menu, "2" } ->
-
-        % }}-
-        % [3-9]      {{- => ignore (keep_state_and_data)
-        { article_menu, Digit } ->
-            keep_state_and_data;
+        % === ARTICLE_HELP (loop) {{-
+        article_help ->
+            case Digit of
+                % *          {{- => back to current_content
+                "*" ->
+                    {next_state, derive_state(Data), Data};
+                % }}-
+                % 0          {{- => main_menu
+                "0" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % #          {{- => next article (i.e., next sibling)
+                "#" ->
+                    next_content(next, Data);
+                % }}-
+                % TODO PROD implement controls
+                % 1          {{- => publication
+                "1" ->
+                    next_content(parent, Data);
+                % }}-
+                % 2          {{- => resume article (same as "*")
+                "2" ->
+                    {next_state, derive_state(Data), Data};
+                % }}-
+                % 3-8        {{- => UNASSIGNED keep_state_and_data
+                "3" -> keep_state_and_data;
+                "4" -> keep_state_and_data;
+                "5" -> keep_state_and_data;
+                "6" -> keep_state_and_data;
+                "7" -> keep_state_and_data;
+                "8" -> keep_state_and_data;
+                % }}-
+                % 9          {{- => previous article
+                "9" ->
+                    next_content(prev, Data)
+                % }}-
+            end;
         % }}-
 
         % === UNINTERRUPTABLE STATES
         % warnings -> current content
         % hangups  -> keep_state_and_data
         % [*#0-9]    {{- => ignore (keep_state_and_data)
-        { {_CompoundStateID, _}, _Digit} ->
+        _ when State =:= invalid_selection;
+               State =:= inactivity_warning;
+               State =:= demo_hangup;
+               State =:= inactivity_hangup
+        ->
             keep_state_and_data;
 
         % }}-
 
         % TODO Nothing should ever end up here, so remove once the basics are done
         % EXCEPT when adding a new state, and forgot to add a clause here to deal with DTMF input (e.g., to ignore them completely, such as with "collect_digits")
-        UnhandledDigit ->
-            logger:emergency(#{ self() => ["UNHANDLED_DIGIT", UnhandledDigit, {state, State}]}),
+        Unhandled ->
+            logger:emergency(#{ self() => ["UNHANDLED_DIGIT", Unhandled, {state, State}]}),
             keep_state_and_data
     end;
 
@@ -1375,10 +1104,44 @@ handle_event(
 %% Timeouts %%
 %%%%%%%%%%%%%%
 
+%% inactivity timers (info) {{-
+% The timers are started with `re_start_inactivity_timer/0` when a call comes in, or restarted when a DTMF signal is received. The purpose of button presses is to change the state, so it is not important to restart the timers on the actual state change, and interdigit timers have a short value compared to the inactivity ones.
+% This way is even better, because on invalid category selection the user will remain in the same state as long as they can't input a correct number, but the timers will get reset on each try.
+handle_event
+  ( info               % EventType
+  , inactivity_warning % EventContent
+  , _State
+  , Data
+  )
+->
+    % Inactive =
+    %     "Please any key if you are still there.",
+
+    % TODO Add notes on how this works.
+    % TODO how is this applicable when in {article, _}?
+    % NewDataP =
+    %     warning(Inactive, Data),
+    { next_state
+    , inactivity_warning
+    , Data
+    };
+
+handle_event(
+  info,
+  inactivity_hangup,
+  _State,
+  Data
+) ->
+    { next_state
+    , inactivity_hangup
+    , Data
+    };
+%% }}-
+
 %% unregistered_timer {{-
 handle_event(
   {timeout, unregistered_timer}, % EventType
-  hang_up,                       % EventContent
+  demo_hangup,                       % EventContent
   State,
   #{ auth_status := AuthStatus } = Data
 ) ->
@@ -1392,11 +1155,7 @@ handle_event(
 
         unregistered ->
             % TODO speak notice that hanging up as demo timer expired, and goodbye (don't forget to add new warning state to HANDLE_DTMF_FOR_ALL_STATES, and HANDLE_CHANNEL_EXECUTE_COMPLETE!)
-            next_menu(
-              #{ menu => {hangup, demo}
-               , data => Data
-               , current_state => State
-               })
+            {next_state, demo_hangup, Data}
     end;
 %% }}-
 
@@ -1412,15 +1171,14 @@ handle_event
 ->
     Selection =
         % ( composeFlipped(
-        pipe(
-          [ ReceivedDigits
-          , [ (f:cflip(fun string:join/2))("")
+        f:pipe
+          ([ ReceivedDigits
+           , (f:cflip(fun string:join/2))("")
             % [ fun (List) -> string:join(List, "") end
             % Will throw on empty list but it should never happen the way collect_digits/2 is called
             % (to elaborate: `collect_digits/2` is only triggered by DTMF digits 1-9, hence it should never be empty. If it is, it means that the menu calling (i.e., DTMF-processing) logic is wrong, and should be corrected)
-          , fun erlang:list_to_integer/1
-          ]
-        ),
+           , fun erlang:list_to_integer/1
+           ]),
           % )
         % )(ReceivedDigits),
 
@@ -1972,7 +1730,7 @@ play({invalid_selection, Content} = State, Data) ->
        , text => WarningPrompt
        });
 
-play({hangup, demo} = State, Data) -> % {{-
+play(demo_hangup = State, Data) -> % {{-
     speak(
       #{ playback_name => State
        , data => Data
@@ -1986,7 +1744,7 @@ play({hangup, demo} = State, Data) -> % {{-
     );
 % }}-
 
-play({hangup, inactivity} = State, Data) -> % {{-
+play(inactivity_hangup = State, Data) -> % {{-
     speak(
       #{ playback_name => State
        , data => Data
@@ -2330,17 +2088,32 @@ next_content(Direction, Data)
        Direction =:= prev;
        Direction =:= content_root
 ->
-    NewData =
-        f:pipe
-          ([ Data
-           , (f:curry(fun get_content/2))(Direction)
-           , (f:cflip(fun set_current/2))(Data)
-           ]),
-    % Not simply pattern-matching `NewData` because if "up" results in the root category then the next state is `content_root` and not `category`
-    NextState =
-        derive_state(NewData),
+    NextContent =
+        get_content(Direction, Data),
 
-    { next_state, NextState, NewData }.
+    case {NextContent, Direction} of
+        % TODO PROD implement states otherwise it will crash
+        {none, next}  -> {next_state, no_next_item, Data};
+        {none, prev}  -> {next_state, no_prev_item, Data};
+        {none, first} -> {next_state, no_children, Data};
+        {none, last}  -> {next_state, no_children, Data};
+        % {none, parent} - this would only be possible if content_root would be the current content, but * is dissabled there (see DTMF processing)
+        _ ->
+            NewData = set_current(NextContent, Data),
+            % Not simply pattern-matching `NewData` because if "up" results in the root category then the next state is `content_root` and not `category`
+            NextState = derive_state(NewData),
+            { next_state, NextState, NewData }
+    end.
+    % NewData =
+    %     f:pipe
+    %       ([ Data
+    %        , (f:curry(fun get_content/2))(Direction)
+    %        , (f:cflip(fun set_current/2))(Data)
+    %        ]),
+    % NextState =
+    %     derive_state(NewData),
+
+    % { next_state, NextState, NewData }.
 
 % NOTE `go_to/1` and `retrieve/1` will crash if used improperly. It is not handled, because these are strictly internal functions not intended to be used from anywhere else, and if they crash then the culprit is an error in the surrounding code
 % next(Data, Content) ->
