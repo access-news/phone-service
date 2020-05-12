@@ -136,18 +136,6 @@ terminate(Reason, State, Data) ->
 % ENTER
 handle_event(enter, OldState, State, Data) -> % {{-
 
-    % HistoryFun =
-    %     fun(D) ->
-    %     % If we repeat the state (because playback stopped naturally, and we want to loop) then it is superfluous to add the state again to history.
-    %         case OldState =:= State of
-    %             true ->
-    %                 Data;
-    %             false ->
-    %                 push_history(Data, OldState)
-    %         end
-    %     end,
-
-    % TODO PROD hang up when hangup timers expire, and their prompt has been read
     NewData =
         % ( composeFlipped(
         f:pipe(
@@ -362,7 +350,9 @@ handle_event(
 %% `internal` clauses %%
 %%%%%%%%%%%%%%%%%%%%%%%%
 
-% Hanging up, so stop processing other `internal` events [..] {{-
+% INTERNAL HANGUP (demo_hangup, inactivity_hangup) {{-
+    % see `demo_hangup` on what happens next or how the call is terminated from the server side
+% Hanging up, so stop processing other `internal` events [..]
 % NOTE `info` (i.e., external) events are still processed, but they are irrelevant at this point. If need to save them for debugging, just modify MOD_ERL_EVENT_MASSAGE, or the DEBUG clause in the "`info` clauses (for FreeSwITCH events)" section above
 handle_event(
   internal, % EventType
@@ -374,8 +364,8 @@ handle_event(
 
     % sending it synchronously to allow the playback to end
     sendmsg_locked(
-        #{ sendmsg_command => hangup
-         , arguments       => ["16"]
+        #{ command => hangup
+         , args       => ["16"]
          }),
     %% Not stopping the  `gen_statem` process here, because
     %% there will be further events related to the `hangup`
@@ -431,9 +421,9 @@ handle_event(
     %% }}-
     put(uuid, UUID),
 
-    sendmsg(
-        #{ sendmsg_command => execute
-         , arguments       => ["answer", []]
+    sendmsg_locked(
+        #{ command => execute
+         , args       => ["answer", []]
          }),
     %% REMINDER (`playback_terminator`) {{-
     %% ====================================================
@@ -724,7 +714,7 @@ handle_event(
                 % }}-
             end;
         % }}-
-        % === PUBLICATION (-> first article, if there's one TODO PROD handle no articles) {{-
+        % === PUBLICATION (loop) {{-
         publication ->
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
@@ -739,6 +729,7 @@ handle_event(
                 "#" ->
                     next_content(next, Data);
                 % }}-
+                % TODO PROD handle no articles
                 % 1         {{- => Play FIRST article
                 "1" ->
                     next_content(first, Data);
@@ -857,10 +848,14 @@ handle_event(
         % warnings -> current content
         % hangups  -> keep_state_and_data
         % [*#0-9]    {{- => ignore (keep_state_and_data)
-        _ when State =:= invalid_selection;
-               State =:= inactivity_warning;
-               State =:= demo_hangup;
-               State =:= inactivity_hangup
+        _ when State =:= invalid_selection
+             ; State =:= inactivity_warning
+             ; State =:= demo_hangup
+             ; State =:= inactivity_hangup
+             ; State =:= no_children
+             ; State =:= no_prev_item
+             % TODO FEATURE add option to jump to the first element
+             ; State =:= no_next_item
         ->
             keep_state_and_data;
 
@@ -919,13 +914,13 @@ handle_event(
   , #{ "Event-Name" := "CHANNEL_EXECUTE_COMPLETE"
        % TODO re-eval on any playback change! (external engine etc)
      , "Application" := "speak"
+     % , "Application" := _Application % because the UUID below should be unique anyway
      , "Application-UUID" := ApplicationUUID
      }                            % | EventContent = MassagedModErlEvent
   } = E,                           % /
   State,
   % #{ prev_state := PrevState } = Data
   #{    playbacks := Playbacks
-   , menu_history := MenuHistory
    } = Data
 ) ->
     % PlaybackName =
@@ -941,7 +936,7 @@ handle_event(
     % } = Playbacks,
     { ApplicationUUID
     , StoppedPlayback
-    , _IsStopped
+    , IsStopped
     } =
         proplists:lookup(ApplicationUUID, Playbacks),
 
@@ -969,14 +964,19 @@ handle_event(
         _ when StoppedPlayback =/= State ->
             {keep_state, NewData};
 
+        _ when StoppedPlayback =:= State
+             , IsStopped =:= true
+        ->
+            {keep_state, NewData};
+
         % `is_stopped` should always be FALSE in this scenario
         % STATES TO BE LOOPED
         _ when StoppedPlayback =:= State
+             , IsStopped =:= false
              , State =:= main_menu
+             ; State =:= content_root
              ; State =:= category
-             ; State =:= category_menu
-             ; State =:= publication_menu
-             ; State =:= article_menu
+             % ; State =:= publication
              ; State =:= article_help
         ->
             {repeat_state, NewData};
@@ -985,31 +985,30 @@ handle_event(
         % but that should not loop
         % --------------------------------------
         greeting ->                     % |
-            next_menu(content_root, content:root(), NewData);
-            % NewerData =
-            %     Data#{ menu_history := [content:root()|MenuHistory],
-            % { next_state                % |
-            % , content_root    % |
-            % , NewerData                   % |
-            % };                          % |
-        % formerly {warning, _}         % | TODO already see a pattern
-        {invalid_selection, Content} -> % |      here
-            { next_state                % |
-            , {content, Content}        % |
-            , NewData                   % |
-            };                          % |
-                                        % |
-        {inactivity_warning, Content} -> % |
-            { next_state                % |
-            , {content, Content}        % |
-            , NewData                   % |
-            };                          % |
+            next_content(content_root, NewData);
 
+        publication ->
+            next_content(first, NewData);
+
+        article ->
+            next_content(next, NewData);
+
+        % UNINTERRUPTABLE states that only play a prompt
+        % formerly {warning, _}         % | TODO already see a pattern
+        _ when State =:= invalid_selection
+             ; State =:= inactivity_warning
+             ; State =:= no_children
+             ; State =:= no_prev_item
+             ; State =:= no_next_item
+        ->
+            {next_state, derive_state(NewData), NewData};
+                                        % |
         % Not really necessary to handle this, but it's here for completeness sake
-        {hangup, _} ->
+        _ when State =:= demo_hangup;
+               State =:= inactivity_hangup
+        ->
             keep_state_and_data;
 
-        {content, #{type := publication} = Current} ->
             % Article =
             %     content(Current, first),
 
@@ -1121,10 +1120,7 @@ handle_event
     % TODO how is this applicable when in {article, _}?
     % NewDataP =
     %     warning(Inactive, Data),
-    { next_state
-    , inactivity_warning
-    , Data
-    };
+    {next_state, inactivity_warning, Data};
 
 handle_event(
   info,
@@ -1132,10 +1128,8 @@ handle_event(
   _State,
   Data
 ) ->
-    { next_state
-    , inactivity_hangup
-    , Data
-    };
+    {next_state, inactivity_hangup, Data};
+    % see `demo_hangup` on what happens next or how the call is terminated from the server side
 %% }}-
 
 %% unregistered_timer {{-
@@ -1156,6 +1150,9 @@ handle_event(
         unregistered ->
             % TODO speak notice that hanging up as demo timer expired, and goodbye (don't forget to add new warning state to HANDLE_DTMF_FOR_ALL_STATES, and HANDLE_CHANNEL_EXECUTE_COMPLETE!)
             {next_state, demo_hangup, Data}
+            % A state_enter callback occurs at this point (i.e., `handle_event(enter, ...` is called; an event does not have to come in to trigger it), that triggers playback stop, starts playing the `demo_hangup` playback. Meanwhile, when an event comes in, it will trigger INTERNAL HANGUP clause, formally issuing a hangup request towards freeswitch (synchronously to let playback finish), and it will ignore any subsequent FS events.
+            % TODO verify the claim below
+            % So any internal event will end up at INTERNAL HANGUP, and when the `call_hangup` event comes in, then will be the gen_statem stopped with `{stop, normal, Data}`
     end;
 %% }}-
 
@@ -1354,8 +1351,8 @@ sendmsg_headers(_SendmsgCommand, _Args, _ApplicationUUID) ->
 
 % `PlaybackName` is to identify the given playback. Menus, such as greeting, main_menu, etc., are also states, so most of the time this will be the state of the `gen_statem` process. But sometimes it just needs a label that it is a warning etc.
 do_sendmsg(
-  #{ sendmsg_command := SendmsgCommand
-   , arguments       := SendmsgArgs
+  #{ command := SendmsgCommand
+   , args       := SendmsgArgs
    , playback_name   := PlaybackName
    , event_lock      := IsLocked
    }
@@ -1382,8 +1379,8 @@ when is_list(SendmsgArgs)
     ApplicationUUID;
 
 do_sendmsg(
-  #{ sendmsg_command := SendmsgCommand
-   , arguments       := SendmsgArgs
+  #{ command := SendmsgCommand
+   , args       := SendmsgArgs
    , event_lock      := IsLocked
    } = Args
 ) ->
@@ -1393,16 +1390,16 @@ do_sendmsg(
     ).
 
 sendmsg(
-  #{ sendmsg_command := _
-   , arguments       := SendmsgArgs
+  #{ command := _
+   , args       := SendmsgArgs
    } = Args
 ) ->
     logger:debug(#{ a => ["SENDMSG", #{args => Args}]}),
     do_sendmsg(Args#{ event_lock => false }).
 
 sendmsg_locked(
-  #{ sendmsg_command := _
-   , arguments       := SendmsgArgs
+  #{ command := _
+   , args       := SendmsgArgs
    } = Args
 ) ->
     do_sendmsg(Args#{ event_lock => true }).
@@ -1516,8 +1513,8 @@ comfort_noise(Milliseconds) -> % {{-
         ++ integer_to_list(Milliseconds)
         ++ ",1400",
     sendmsg_locked(
-        #{ sendmsg_command => execute
-         , arguments       => ["playback", ComfortNoise]
+        #{ command => execute
+         , args       => ["playback", ComfortNoise]
          , playback_name   => comfort_noise
          }).
 % }}-
@@ -1537,11 +1534,11 @@ sign_up() ->
 % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
 % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
 % }}-
-play
+play % greeting {{-
 ( greeting = State
 , #{ auth_status := AuthStatus } = Data
 )
--> % {{-
+->
     % logger:debug("play greeting"),
     Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
     PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
@@ -1786,8 +1783,8 @@ speak
     % return the application UUID string.
     ApplicationUUID =
         sendmsg_locked(
-          #{ sendmsg_command => execute
-           , arguments       => ["speak", "flite|kal|" ++ stitch(Text)]
+          #{ command => execute
+           , args       => ["speak", "flite|kal|" ++ stitch(Text)]
            , playback_name   => PlaybackName
            }),
     Playback =
