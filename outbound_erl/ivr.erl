@@ -760,6 +760,7 @@ handle_event(
         % }}-
         % === ARTICLE (i.e., article playback) -> next article {{-
         % TODO FEATURE article_meta
+        %      see `play % article`
         article ->
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
@@ -1667,7 +1668,10 @@ play % publication {{-
     speak(State, Data, stitch(PromptList));
 
 % }}-
-% TODO FEATURE article_meta
+% TODO FEATURE article_meta {{-
+% At the moment, `article` only plays the audio and ignores any metadata. To play metadata, there will have to be an intermediate state though ...
+% As soon as I wrote the above sentence, realized that multiple playbacks can be synced without interim states. What if `sendmsg_lock` is used to start mulitiple, and just ignore the meta-playback at CHANNEL_EXECUTE_COMPLETE processing?
+% }}-
 play % article {{-
   ( article = State
   , #{ current_content :=
