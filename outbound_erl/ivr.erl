@@ -759,6 +759,7 @@ handle_event(
             end;
         % }}-
         % === ARTICLE (i.e., article playback) -> next article {{-
+        % TODO FEATURE article_meta
         article ->
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
@@ -1163,6 +1164,7 @@ handle_event
   , collect_digits   % State
   % , {collect_digits, Content}   % State
   , #{ received_digits := ReceivedDigits
+     , current_content := CurrentContent
      } = Data
   )
 ->
@@ -1188,7 +1190,7 @@ handle_event
     SelectionResult =
         [  Child
         || Child
-           <- get_content(children, Data)
+           <- get_content(children, CurrentContent)
            ,  maps:find(selection, Child) =:= {ok, Selection}
         ],
 
@@ -1534,6 +1536,24 @@ sign_up() ->
 % sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
 % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
 % }}-
+
+play % content_root {{-
+  ( content_root = State
+  , #{ current_content :=
+       #{title := Title} = CurrentContent
+     } = Data
+  )
+->
+    PromptList =
+        [ Title
+        , "For the main menu, press 0."
+        , "To enter the first category, press pound."
+        ]
+        ++ choice_list(CurrentContent),
+
+    speak(State, Data, stitch(PromptList));
+
+% }}-
 play % greeting {{-
 ( greeting = State
 , #{ auth_status := AuthStatus } = Data
@@ -1565,13 +1585,13 @@ play % greeting {{-
         ],
 
     speak(State, Data, PromptList);
-% }}-
 
-play
-  ( {main_menu, _Content}        = State
+% }}-
+play % main_menu {{-
+  ( main_menu        = State
   , #{auth_status := AuthStatus} = Data
   )
--> % {{-
+->
     Anchor = "Main menu.",
     % Zero = "For quick help, press zero.",
     Star = "To go back, press star.",
@@ -1602,51 +1622,66 @@ play
     speak(State, Data, PromptList);
 
 % }}-
-play
-  ( {content, #{ type := category, title := Title} = Current}
-  , Data
+play % category {{-
+  ( category = State
+  , #{ current_content :=
+       #{title := Title} = CurrentContent
+     } = Data
   )
--> % {{-
-
+->
     PromptList =
         [ Title
         , common_options(State)
-        , choice_list()
-        ],
+        ]
+        ++ choice_list(CurrentContent),
 
-    pipe(
-      [ PromptList
-      , fun lists:flatten/1
-      , fun stitch/1
-      , ((curry(fun speak/3))(State))(Data)
-      ]
-    );
+    speak(State, Data, stitch(PromptList));
+    % f:pipe(
+    %   [ PromptList
+    %   , fun stitch/1
+    %   , ((f:curry(fun speak/3))(State))(Data)
+    %   ]
+    % );
 
 % }}-
-play
-  ( {content, #{ type := publication, title := Title} = Current}
-  , Data
+play % publication {{-
+  ( category = State
+  , #{ current_content :=
+       #{title := Title} = CurrentContent
+     } = Data
   )
--> % {{-
-    % PromptList =
-    %     lists:flatten(
-    %       [ AnchorText
-    %       , common_options(State)
-    %       ]
-    %     ),
-    % speak(State, Data, PromptList);
+->
+    ArticleNumber =
+        length(get_content(children, CurrentContent)),
+
     PromptList =
-        [ AnchorText
+        [ Title
+        , "There are " ++ integer_to_list(ArticleNumber) ++ " articles in this publication."
         , common_options(State)
+        , "To start the first article, press 1."
+        , "To jump to the last article, press 3."
+        , "To go to the previous publication in this category, press 9."
+        , "Starting first article."
         ],
 
-    pipe(
-      [ PromptList
-      , fun lists:flatten/1
-      , fun stitch/1
-      , ((curry(fun speak/3))(State))(Data)
-      ]
-    );
+    speak(State, Data, stitch(PromptList));
+
+% }}-
+% TODO FEATURE article_meta
+play % article {{-
+  ( article = State
+  , #{ current_content :=
+       #{ path := Path} = CurrentContent
+     } = Data
+  )
+->
+    PromptList =
+        [ Title
+        , common_options(State)
+        ]
+        ++ choice_list(CurrentContent),
+
+    speak(State, Data, stitch(PromptList));
 
 % }}-
 % play(article_entry = State, Data) -> % {{-
@@ -2021,41 +2056,35 @@ re_start_inactivity_timer(State) -> % {{-
     put(inactivity_hangup,  ITref).
 % }}-
 
-common_options(#{ type := Type } = Content)
-  when Type =:= category
-     ; Type =:= publication
-     % ; State =:= article
-->
-    ContentType =
-        atom_to_list(State),
+common_options(article_playback) ->
+    common_options(article);
 
+common_options(ContentType)
+  when ContentType =:= category
+     ; ContentType =:= publication
+     ; ContentType =:= article
+->
     Star =
-        "To go back, press star.",
+        "To go up, press star.",
     Pound =
         "To jump to the next "
-        ++ ContentType
+        ++ atom_to_list(ContentType)
         ++ ", press pound.",
     Zero =
-        "For the "
-        ++ ContentType
-        ++ " menu, press 0.",
+        "For the main menu, press 0.",
 
-    [ Zero
-    , Star
-    , Pound
-    ].
+    [Zero, Star, Pound].
 
-choice_list() ->
+choice_list(Content) ->
     [  "Press "
-       ++ atom_to_list(Selection)
+       ++ integer_to_list(Selection)
        ++ " for "
-       ++ AnchorText
+       ++ Title
        ++ "."
-    || { _ContentType
-       , Selection
-       , #{ anchor := AnchorText }
-       }
-       <- content(get, children)
+    || #{ title := Title
+        , selection := Selection
+        }
+       <- get_content(children, Content)
     ].
 
 derive_state(Data) ->
@@ -2073,10 +2102,10 @@ set_current(Content, Data) ->
 get_current(#{ current_content := Content } = _Data) ->
     Content.
 
-get_content(Direction, Data) ->
-    content:pick(Direction, get_current(Data)).
+get_content(Direction, #{ current_content := Content} = _Data) ->
+    content:pick(Direction, Content).
 
-next_content(Direction, Data)
+next_content(Direction, #{ current_content := CurrentContent } = Data)
   % `children` and a bad direction return a list which blow up when saved as current_content (hence the explicit whitelisting, instead of just blacklisting `children`)
   when Direction =:= parent;
        Direction =:= first;
@@ -2086,7 +2115,7 @@ next_content(Direction, Data)
        Direction =:= content_root
 ->
     NextContent =
-        get_content(Direction, Data),
+        get_content(Direction, CurrentContent),
 
     case {NextContent, Direction} of
         % TODO PROD implement states otherwise it will crash
