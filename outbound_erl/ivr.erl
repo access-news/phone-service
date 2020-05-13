@@ -70,6 +70,30 @@ init(_Args) -> % {{-
     % filog:process_handler_filter(?MODULE, Ref),
     %% }}- }}-
 
+    % current /etc/freeswitch/dialplan/default.xml {{-
+    % to start the gen_statem process on incoming calls
+
+    % <?xml version="1.0" encoding="utf-8"?>                                                                                                                                                                                                                                          <include>                                                                                                                                                                                                                                                                         <context name="default">
+
+    %     <extension name="SignalWire CONNECTORS incoming call">
+    %     <!-- the number you assigned in your dashboard -->
+    %     <condition field="destination_number" expression="^(\+19162510217)$">
+
+    %         <!-- <action application="set" data="outside_call=true"/> -->
+    %         <!-- <action application="export" data="RFC2822_DATE=${strftime(%a, %d %b %Y %T %z)}"/> -->
+    %         <!-- <action application="answer"/> -->
+    %         <!-- <action application="lua" data="main.lua"/> -->
+    %         <!-- <action application="erlang" data="call_control:start access_news@tr2"/> -->
+
+    %         <action application="set" data="playback_terminators=none"/>
+    %         <action application="erlang" data="ivr:start access_news@tr2"/>
+
+    %     </condition>
+    %     </extension>
+    % </context>
+    % </include>
+    % }}-
+
     % TODO launch content.erl gen_server
     %      AND GET RID OF FILOG LOGGING there!
     %      AND IT CANNOT HAVE content AS REGISTERED NAME ANYMORE!
@@ -1037,7 +1061,7 @@ handle_event(
                     , NewData
                     };
                 % #{ offset := 1 } - article playback finished without interruptions
-                % #{ offset := Offset } when Offset >= 1 - article playback was interrupted at one point 
+                % #{ offset := Offset } when Offset >= 1 - article playback was interrupted at one point
                 #{ offset := Offset }
                 % `when Offset > 0` would have sufficed but this documents it better
                   when Offset =:= 1 % article playback finished without interruptions
@@ -1675,17 +1699,33 @@ play % publication {{-
 play % article {{-
   ( article = State
   , #{ current_content :=
-       #{ path := Path} = CurrentContent
+       #{ path := Path, title := Title } = CurrentContent
      } = Data
   )
 ->
-    PromptList =
-        [ Title
-        , common_options(State)
-        ]
-        ++ choice_list(CurrentContent),
+    % TODO FEATURE read article meta and figure out how to store these
+    % Saving this snippet to demonstrate {{-
+    %
+    %   1. that multiple heterogeneous playbacks (e.g., Application="speak" &  Application="playback") can be queued
+    %      TODO Figure out how to handle CHANNEL_EXECUTE_COMPLETEs
+    %
+    %   2. how to play audio from cloud blob storage
+    %
+    % sendmsg_locked(
+    %     #{ sendmsg_command => execute
+    %     , arguments       => ["speak", "flite|kal|" ++ "Testing! Testing! 27."]
+    %     , playback_name   => testrun
+    %     }),
 
-    speak(State, Data, stitch(PromptList));
+    % sendmsg_locked(
+    %     #{ sendmsg_command => execute
+    %     , arguments       => ["playback",  "shout://accessnews.blob.core.windows.net/safeway/ro.mp3"]
+    %     , playback_name   => lofa
+    %     });
+    % }}-
+    % speak(article_meta, Data, Title);
+
+
 
 % }}-
 % play(article_entry = State, Data) -> % {{-
