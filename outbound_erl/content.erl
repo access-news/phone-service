@@ -314,7 +314,7 @@ add_meta_to_path(ContentType, Dir, Path) ->
             publication ->
                 #{ type => article
                  , path => FullPath
-                 , title => "article" % formerly known as "anchortext"
+                 , title => "" % formerly known as "anchortext"
                  % FORGET ABOUT MUTABLE STATE IN VERTEX!
                  % , offset => -1 
                  }
