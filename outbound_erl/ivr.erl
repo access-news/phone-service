@@ -762,10 +762,6 @@ handle_event(
                     next_content(next, Data);
                 % }}-
                 % [1-9]      {{- => collect digits
-                { {content, #{ type := category } = Current}, Digit} ->
-                    collect_digits(Current, Data, Digit)
-                % }}-
-                % [1-9]      {{- => collect digits
                 _ when Digit =:= "1"
                      ; Digit =:= "2"
                      ; Digit =:= "3"
@@ -796,7 +792,8 @@ handle_event(
                 "#" ->
                     next_content(next, Data);
                 % }}-
-                % TODO PROD handle no articles DONE? test
+                % TODO PROD handle no articles
+                % DONE? test
                 % 1         {{- => Play FIRST article
                 "1" ->
                     next_content(first, Data);
@@ -882,6 +879,7 @@ handle_event(
                     next_content(next, Data);
                 % }}-
                 % TODO PROD in_progress implement controls
+                % DONE? test
                 % NOTE using `api` for now instead of `bgapi`
                 % 1          {{- => rewind (10s)
                 "1" ->
@@ -1096,7 +1094,7 @@ when Application =:= "speak"
              , StoppedPlayback =/= State
         ->
             % TODO BUG? Is there a possibility that this never gets saved?
-            {keep_state, NewData#{playback_offset := LastOffset};
+            {keep_state, NewData#{playback_offset := LastOffset}};
 
         % 1
         % `is_stopped` should always be TRUE in this scenario
@@ -1146,64 +1144,67 @@ when Application =:= "speak"
              ; State =:= no_next_item
              ; State =:= article_intro
         ->
-            {next_state, derive_state(NewData), NewData};
-                                        % |
-        % Not really necessary to handle this, but it's here for completeness sake
-        _ when State =:= demo_hangup;
-               State =:= inactivity_hangup
-        ->
-            keep_state_and_data;
+            {next_state, derive_state(NewData), NewData}
 
-            % Article =
-            %     content(Current, first),
+        % % TODO clean up {{-
+        %                                 % |
+        % % Not really necessary to handle this, but it's here for completeness sake
+        % _ when State =:= demo_hangup;
+        %        State =:= inactivity_hangup
+        % ->
+        %     keep_state_and_data;
 
-            % Article =
-            %     #{ path := ArticlePath
-            %      , offset := 0
-            %      },
+        %     % Article =
+        %     %     content(Current, first),
 
-            { next_state
-            , {content, content(Current, first)} % i.e., article
-            % TODO checking the offset is done at play
-            % -1 -> read article title and meta
-            % other -> keep playing from given offset
-            % NOTE: not touching `offset`; it is -1 when coming from publication (either because it played or because option 1 or 3 is selected)
-            , NewData
-            };
+        %     % Article =
+        %     %     #{ path := ArticlePath
+        %     %      , offset := 0
+        %     %      },
 
-        {content, #{type := article} = Current} ->
-            case NewData of
-                % article meta played (aka, `article_entry`)
-                #{ offset := 0 } ->
-                    { next_state
-                    , State
-                    , NewData
-                    };
-                % #{ offset := 1 } - article playback finished without interruptions
-                % #{ offset := Offset } when Offset >= 1 - article playback was interrupted at one point
-                #{ offset := Offset }
-                % `when Offset > 0` would have sufficed but this documents it better
-                  when Offset =:= 1 % article playback finished without interruptions
-                     ; Offset > 1   % article playback was interrupted at one point (to go to a menu, etc.)
-                ->
-                    { next_state
-                    , content(Current, next)
-                    , NewData#{ offset := -1 }
-                    }
-            end,
+        %     { next_state
+        %     , {content, content(Current, first)} % i.e., article
+        %     % TODO checking the offset is done at play
+        %     % -1 -> read article title and meta
+        %     % other -> keep playing from given offset
+        %     % NOTE: not touching `offset`; it is -1 when coming from publication (either because it played or because option 1 or 3 is selected)
+        %     , NewData
+        %     };
 
-            { next_state
-            , NextMenu
-            , NewData
-            }
+        % {content, #{type := article} = Current} ->
+        %     case NewData of
+        %         % article meta played (aka, `article_entry`)
+        %         #{ offset := 0 } ->
+        %             { next_state
+        %             , State
+        %             , NewData
+        %             };
+        %         % #{ offset := 1 } - article playback finished without interruptions
+        %         % #{ offset := Offset } when Offset >= 1 - article playback was interrupted at one point
+        %         #{ offset := Offset }
+        %         % `when Offset > 0` would have sufficed but this documents it better
+        %           when Offset =:= 1 % article playback finished without interruptions
+        %              ; Offset > 1   % article playback was interrupted at one point (to go to a menu, etc.)
+        %         ->
+        %             { next_state
+        %             , content(Current, next)
+        %             , NewData#{ offset := -1 }
+        %             }
+        %     end,
 
-        % article_entry ->
-        %     {next_state, article_playback, NewData};
+        %     { next_state
+        %     , NextMenu
+        %     , NewData
+        %     }
 
-        % `collect_digits` has no menu playback (via `speak/3`), hence no clause here
+        % % article_entry ->
+        % %     {next_state, article_playback, NewData};
 
-        % TODO do a playback CEC clause
-        % `article_playback` does have a `play/2` clause but it uses dptools:playback instead of speak
+        % % `collect_digits` has no menu playback (via `speak/3`), hence no clause here
+
+        % % TODO do a playback CEC clause
+        % % `article_playback` does have a `play/2` clause but it uses dptools:playback instead of speak
+        %     % }}-
     end;
 %% }}-
 
@@ -1316,7 +1317,7 @@ handle_event
         % ( composeFlipped(
         f:pipe
           ([ ReceivedDigits
-           , fun lists;reverse/1
+           , fun lists:reverse/1
            , (f:cflip(fun string:join/2))("")
             % [ fun (List) -> string:join(List, "") end
             % Will throw on empty list but it should never happen the way collect_digits/2 is called
@@ -1537,7 +1538,7 @@ when is_list(SendmsgArgs)
             not_used;
         [{"Event-UUID", AppUUID}] ->
             AppUUID % same as ApplicationUUID above
-    end.
+    end;
 
 do_sendmsg(
   #{ command := SendmsgCommand
@@ -2427,6 +2428,7 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
 
     case {NextContent, Direction} of
         % TODO PROD implement states otherwise it will crash
+        % DONE? test
         {none, next}  -> {next_state, no_next_item, Data};
         {none, prev}  -> {next_state, no_prev_item, Data};
         {none, first} -> {next_state, no_children, Data};
