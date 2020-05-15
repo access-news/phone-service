@@ -848,7 +848,9 @@ handle_event(
             end;
         % }}-
         % === ARTICLE_HELP (loop) {{-
-        article_help ->
+        _ when State =:= article_help
+             ; State =:= article_intro
+        ->
             case Digit of
                 % *          {{- => back to publication
                 "*" ->
@@ -863,6 +865,7 @@ handle_event(
                     next_content(next, Data);
                 % }}-
                 % TODO FEATURE reset volume/speed
+                % TODO FEATURE this part will be slightly different, because in article_intro this will skip the prompt and meta and start the article, while article_help will resume from the playback offset and reset offset when navigating away from this article
                 % 1-8        {{- => resume article
                 _ when Digit =:= "1"
                      ; Digit =:= "2"
@@ -881,7 +884,6 @@ handle_event(
                 % }}-
             end;
         % }}-
-
         % === UNINTERRUPTABLE STATES
         % warnings -> current content
         % hangups  -> keep_state_and_data
@@ -1001,18 +1003,25 @@ when Application =:= "speak"
 
         % TODO list_articles (and lots others)
 
-        _ when StoppedPlayback =:= collect_digits ->
-            {keep_state, NewData};
+        % The `play/2` function of this state just reads back the pressed digits;
+        % if this clause had not been here, triggering the collectoin would simply end up in clause 1 below but it has the same outcome so OK
+        % if digit readback gets stopped by a new digit, it would be clause 2 below, but it has the same outcome so OK
+        % if digit readback runs its course, it stops here, but without this clause it would end up
+        % collect_digits ->
+        %     {keep_state, NewData};
 
+        % 1
         % `is_stopped` should always be TRUE in this scenario
         _ when StoppedPlayback =/= State ->
             {keep_state, NewData};
 
+        % 2
         _ when StoppedPlayback =:= State
              , IsStopped =:= true
         ->
             {keep_state, NewData};
 
+        % 3
         % `is_stopped` should always be FALSE in this scenario
         % STATES TO BE LOOPED
         _ when StoppedPlayback =:= State
@@ -1037,6 +1046,9 @@ when Application =:= "speak"
         article ->
             next_content(next, NewData);
 
+        collect_digits ->
+            {keep_state, NewData};
+
         % UNINTERRUPTABLE states that only play a prompt
         % formerly {warning, _}         % | TODO already see a pattern
         _ when State =:= invalid_selection
@@ -1044,6 +1056,7 @@ when Application =:= "speak"
              ; State =:= no_children
              ; State =:= no_prev_item
              ; State =:= no_next_item
+             ; State =:= article_intro
         ->
             {next_state, derive_state(NewData), NewData};
                                         % |
@@ -1287,7 +1300,9 @@ when Digit =:= "1";
         },
 
     % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
-    { next_state
+    % (using `repeat_state` so that state enter clause would get triggered, and with that the entered DTMF digit would get read back (via `collect_digits` `play/2` function))
+    { repeat_state
+    % { next_state
     , collect_digits
     , NewData
     , [ InterDigitTimer ]
@@ -1607,6 +1622,7 @@ play % COLLECT_DIGITS {{-
 , #{ received_digits := [Digit|_] } = Data
 )
 ->
+    % TODO DOCUMENTATION explain why this works even though this special looping is only allowed to play this prompt once (some of it is already written down in CHANNEL_EXECUTE_COMPLETE clause)
     speak(State, Data, Digit);
     % This hack is to 
     % comfort_noise(?INTERDIGIT_TIMEOUT);
@@ -2219,10 +2235,13 @@ choice_list(Content) ->
        <- get_content(children, Content)
     ].
 
-derive_state(Data) ->
-    case maps:get(current_content, Data) of
+derive_state(#{ current_content := Content } = _Data) ->
+    % case maps:get(current_content, Data) of
+    case Content of
         #{ selection := 0 } ->
             content_root;
+        #{ type := article } ->
+            article_intro;
         #{ type := ContentType } ->
             ContentType
     end.
