@@ -1706,6 +1706,8 @@ sign_up() ->
 % sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
 % }}-
 
+play(init, Data) -> Data;
+play(incoming_call, Data) -> Data;
 play % COLLECT_DIGITS {{-
 ( collect_digits = State
 , #{ received_digits := [Digit|_] } = Data
