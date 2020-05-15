@@ -117,7 +117,7 @@ init(_Args) -> % {{-
         #{ received_digits => []
          % ,       anchor => ""
          % , current_content => {}
-         ,  offset => -1
+         ,  playback_offset => -1
          ,  auth_status => unregistered % | registered
          % , menu_history => [] % used as a stack
          , current_content => none
@@ -625,9 +625,9 @@ handle_event(
         % { collect_digits, Digit } ->
         collect_digits ->
             collect_digits(Digit, Data);
+
         % }}-
         % === GREETING (-> content_root) {{-
-        % { greeting, Digit }
         greeting ->
             % Set `current_content` (it is `none` at this point)
             % QUESTION Should this be set in `init/1` instead?
@@ -650,6 +650,7 @@ handle_event(
                     collect_digits(Digit, NewData)
                 % }}-
             end;
+
         % }}-
         % === MAIN_MENU (loop) {{-
         main_menu ->
@@ -661,49 +662,62 @@ handle_event(
                     , Data
                     };
                 % }}-
+                % TODO PROD sign_in
                 % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
                 "#" ->
-                    NextMenu =
-                        case AuthStatus of
-                            registered   -> favourites;
-                            unregistered -> sign_in
-                        end,
+                    % TODO FEATURE add favorites
+                    % NextMenu =
+                    %     case AuthStatus of
+                    %         registered   -> favourites;
+                    %         unregistered -> sign_in
+                    %     end,
 
-                    {next_state, NextMenu, Data};
+                    {next_state, sign_in, Data};
                 % }}-
                 % 0         {{- => content_root
                 "0" ->
                     next_content(content_root, Data);
                 % }}-
+                % TODO FEATURE tutorial
                 % 1         {{- => tutorial
                 "1" ->
-                    {next_state, tutorial, Data};
+                    % {next_state, tutorial, Data};
+                    keep_state_and_data;
                 % }}-
+                % TODO FEATURE leave_message
                 % 2         {{- => leave_message
                 "2" ->
-                    {next_state, leave_message, Data};
+                    % {next_state, leave_message, Data};
+                    keep_state_and_data;
                 % }}-
+                % TODO FEATURE settings
                 % 3         {{- => settings
                 "3" ->
-                    {next_state, settings, Data};
+                    % {next_state, settings, Data};
+                    keep_state_and_data;
                 % }}-
+                % TODO PROD blindness_services
                 % 4         {{- => blindness_services
                 "4" ->
-                    {next_state, blindness_services, Data};
+                    % {next_state, blindness_services, Data};
+                    keep_state_and_data;
                 % }}-
                 % 5-9       {{- => UNASSIGNED (keep state and data)
+                % TODO FEATURE random_play
                 "5" -> keep_state_and_data;
                 "6" -> keep_state_and_data;
                 "7" -> keep_state_and_data;
+                % TODO FEATURE where_am_i
                 "8" -> keep_state_and_data;
                 "9" -> keep_state_and_data
                 % }}-
             end;
+
         % }}-
         % === CONTENT_ROOT (loop) {{-
         content_root ->
             case Digit of
-                % TODO implement content history
+                % TODO FEATURE implement content history so this will bring back to a previuos content
                 % *          {{- => ignore
                 "*" ->
                     keep_state_and_data;
@@ -717,10 +731,20 @@ handle_event(
                     next_content(first, Data);
                 % }}-
                 % [1-9]      {{- => collect digits
-                _ ->
+                _ when Digit =:= "1"
+                     ; Digit =:= "2"
+                     ; Digit =:= "3"
+                     ; Digit =:= "4"
+                     ; Digit =:= "5"
+                     ; Digit =:= "6"
+                     ; Digit =:= "7"
+                     ; Digit =:= "8"
+                     ; Digit =:= "9"
+                ->
                     collect_digits(Digit, Data)
                 % }}-
             end;
+
         % }}-
         % === CATEGORY (loop) {{-
         category ->
@@ -741,7 +765,21 @@ handle_event(
                 { {content, #{ type := category } = Current}, Digit} ->
                     collect_digits(Current, Data, Digit)
                 % }}-
+                % [1-9]      {{- => collect digits
+                _ when Digit =:= "1"
+                     ; Digit =:= "2"
+                     ; Digit =:= "3"
+                     ; Digit =:= "4"
+                     ; Digit =:= "5"
+                     ; Digit =:= "6"
+                     ; Digit =:= "7"
+                     ; Digit =:= "8"
+                     ; Digit =:= "9"
+                ->
+                    collect_digits(Digit, Data)
+                % }}-
             end;
+
         % }}-
         % === PUBLICATION (loop) {{-
         publication ->
@@ -758,7 +796,7 @@ handle_event(
                 "#" ->
                     next_content(next, Data);
                 % }}-
-                % TODO PROD handle no articles
+                % TODO PROD handle no articles DONE? test
                 % 1         {{- => Play FIRST article
                 "1" ->
                     next_content(first, Data);
@@ -786,9 +824,48 @@ handle_event(
                     next_content(prev, Data)
                 % }}-
             end;
+
+        % }}-
+        % === ARTICLE_INTRO (-> article) {{-
+        article_intro ->
+            case Digit of
+                % *          {{- => back to publication
+                "*" ->
+                    next_content(parent, Data);
+                % }}-
+                % 0          {{- => main_menu
+                "0" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % #          {{- => next article (i.e., next sibling)
+                "#" ->
+                    next_content(next, Data);
+                % }}-
+                % TODO FEATURE reset volume/speed
+                % NOTE Difference between this and the same clause in ARTICLE_HELP is that this will always start the article from the beginning (offset =:= 0), while ARTICLE_HELP should resume the playback from last saved position
+                % 1-8        {{- => start article
+                _ when Digit =:= "1"
+                     ; Digit =:= "2"
+                     ; Digit =:= "3"
+                     ; Digit =:= "4"
+                     ; Digit =:= "5"
+                     ; Digit =:= "6"
+                     ; Digit =:= "7"
+                     ; Digit =:= "8"
+                ->
+                    { next_state
+                    , derive_state(Data)
+                    , Data#{ playback_offset := 0 }
+                    };
+                % }}-
+                % 9          {{- => previous article
+                "9" ->
+                    next_content(prev, Data)
+                % }}-
+            end;
+
         % }}-
         % === ARTICLE (i.e., article playback) -> next article {{-
-        % TODO FEATURE article_meta
         %      see `play % article`
         article ->
             case Digit of
@@ -846,6 +923,7 @@ handle_event(
                     next_content(prev, Data)
                 % }}-
             end;
+
         % }}-
         % === ARTICLE_HELP (loop) {{-
         _ when State =:= article_help
@@ -865,7 +943,9 @@ handle_event(
                     next_content(next, Data);
                 % }}-
                 % TODO FEATURE reset volume/speed
-                % TODO FEATURE this part will be slightly different, because in article_intro this will skip the prompt and meta and start the article, while article_help will resume from the playback offset and reset offset when navigating away from this article
+                % TODO FEATURE listen to article meta
+
+                % Almost the same here as in ARTICLE_INTRO; see note there
                 % 1-8        {{- => resume article
                 _ when Digit =:= "1"
                      ; Digit =:= "2"
@@ -883,6 +963,7 @@ handle_event(
                     next_content(prev, Data)
                 % }}-
             end;
+
         % }}-
         % === UNINTERRUPTABLE STATES
         % warnings -> current content
@@ -956,6 +1037,7 @@ handle_event(
      , "Application" := Application
      % , "Application" := "speak"
      , "Application-UUID" := ApplicationUUID
+     , "variable_playback_last_offset_pos" := LastOffset
      }                            % | EventContent = MassagedModErlEvent
   } = E,                           % /
   State,
@@ -1009,6 +1091,12 @@ when Application =:= "speak"
         % if digit readback runs its course, it stops here, but without this clause it would end up
         % collect_digits ->
         %     {keep_state, NewData};
+
+        _ when StoppedPlayback =:= article
+             , StoppedPlayback =/= State
+        ->
+            % TODO BUG? Is there a possibility that this never gets saved?
+            {keep_state, NewData#{playback_offset := LastOffset};
 
         % 1
         % `is_stopped` should always be TRUE in this scenario
@@ -1258,7 +1346,7 @@ handle_event
         [SelectedContent] ->
             { next_state
             % `content_root` will never be possible here so pattern matching would have sufficed but this is more uniform
-            , derive_state(NewData)
+            , derive_state(SelectedContent)
             , set_current(SelectedContent, NewData)
             }
     end.
@@ -1622,10 +1710,13 @@ play % COLLECT_DIGITS {{-
 , #{ received_digits := [Digit|_] } = Data
 )
 ->
-    % TODO DOCUMENTATION explain why this works even though this special looping is only allowed to play this prompt once (some of it is already written down in CHANNEL_EXECUTE_COMPLETE clause)
+    % QUESTION Why does this work (theoretically) even though this special looping is only allowed to play this prompt once? {{-
+    % ANSWER
+    % a_state -> collect_digits transition (that is when collection is triggered) will end up in CHANNEL_EXECUTE_COMPLETE clause 1 while reading back the most recent DTMF digit already started
+    % readback finishes uninterrupted: there is still time ahead probably for the ?INTERDIGIT_TIMEOUT to run out, and playback shouldn't be repeated. The CHANNEL_EXECUTE_COMPLETE event falls through all the clauses (the transition is collect_digits -> collect_digits, and IsStopped false) to its own collect_digits clause
+    % readback is interrupted by a new digit (this case `collect_digits/2` is invoked that ends with `repeat_state`, so state enter will invoke a playback on the new digit) or the ?INTERDIGIT_TIMEOUT (that does not stay in collect_digits state): in this case it ends up in clause 2, which is no action
+    % }}-
     speak(State, Data, Digit);
-    % This hack is to 
-    % comfort_noise(?INTERDIGIT_TIMEOUT);
 
 % }}-
 play % GREETING {{-
@@ -1645,23 +1736,63 @@ play % GREETING {{-
                 ++ sign_up()
                 ++ "To leave a message with your contact details, dial zero two."
         end,
-    GoToTutorial = "To listen to the tutorial, dial zero one.",
-    GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
-    LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial zero two to leave a message.",
+    MainMenu =
+        "For the main menu, press 0.",
+    % TODO FEATUREs
+    % GoToTutorial = "To listen to the tutorial, dial zero one.",
+    % GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
+    % LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial zero two to leave a message.",
 
     PromptList =
         [ Anchor
         , Unregistered
         , PoundOrStar
-        , GoToTutorial
-        , GoToBlindnessServices
-        , LeaveMessage
+        , MainMenu
+        % , GoToTutorial
+        % , GoToBlindnessServices
+        % , LeaveMessage
         ],
 
     speak(State, Data, PromptList);
 
 % }}-
-play % content_root {{-
+play % MAIN_MENU {{-
+  ( main_menu        = State
+  , #{auth_status := AuthStatus} = Data
+  )
+->
+    Anchor = "Main menu.",
+    Star = "To go back, press star.",
+    DevComment = "Comment: All the options following this are still not implemented. The only ones slated to make it into production for now are the login and blindness resources.",
+    Pound =
+        case AuthStatus of
+              registered -> "For your Favourites, ";
+            unregistered -> "To log in, "
+        end
+        ++ "press pound.",
+    % Zero = history listing
+    One = "To start the tutorial, press one.",
+    Two = "To leave a message, press two.",
+    Three = "For settings, press three.",
+    Four = "To learn about other blindness resources, press four.",
+    Five = "randomize playback",
+
+    PromptList =
+        [ Anchor
+        , Star
+        , DevComment
+        , Pound
+        , One
+        , Two
+        , Three
+        , Four
+        , Five
+        ],
+
+    speak(State, Data, PromptList);
+
+% }}-
+play % CONTENT_ROOT {{-
   ( content_root = State
   , #{ current_content :=
        #{title := Title} = CurrentContent
@@ -1675,45 +1806,10 @@ play % content_root {{-
         ]
         ++ choice_list(CurrentContent),
 
-    speak(State, Data, stitch(PromptList));
-
-% }}-
-play % main_menu {{-
-  ( main_menu        = State
-  , #{auth_status := AuthStatus} = Data
-  )
-->
-    Anchor = "Main menu.",
-    % Zero = "For quick help, press zero.",
-    Star = "To go back, press star.",
-    Pound =
-        case AuthStatus of
-              registered -> "For your Favourites, ";
-            unregistered -> "To log in, "
-        end
-        ++ "press pound.",
-    % Zero = history listing
-    One = "To start the tutorial, press one.",
-    Two = "To leave a message, press two.",
-    % Three = "For settings, press three.",
-    Four = "To learn about other blindness resources, press four.",
-    % Five = randomize playback.
-
-    PromptList =
-        [ Anchor
-        % , Zero
-        , Star
-        , Pound
-        , One
-        , Two
-        % , Three
-        , Four
-        ],
-
     speak(State, Data, PromptList);
 
 % }}-
-play % category {{-
+play % CATEGORY {{-
   ( category = State
   , #{ current_content :=
        #{title := Title} = CurrentContent
@@ -1726,7 +1822,7 @@ play % category {{-
         ]
         ++ choice_list(CurrentContent),
 
-    speak(State, Data, stitch(PromptList));
+    speak(State, Data, PromptList);
     % f:pipe(
     %   [ PromptList
     %   , fun stitch/1
@@ -1735,7 +1831,7 @@ play % category {{-
     % );
 
 % }}-
-play % publication {{-
+play % PUBLICATION {{-
   ( publication = State
   , #{ current_content :=
        #{title := Title} = CurrentContent
@@ -1743,11 +1839,12 @@ play % publication {{-
   )
 ->
     NumberOfArticles =
+        % (length . get_content(children)) CurrentContent
         length(get_content(children, CurrentContent)),
 
     PromptList =
         [ Title
-        , "There are " ++ integer_to_list(NumberOfArticles) ++ " articles in this publication."
+        , "There are " ++ integer_to_list(NumberOfArticles) ++ " articles in this publication. The first article will start automatically when playback of this menu is finished."
         , common_options(State)
         , "To start the first article, press 1."
         , "To jump to the last article, press 3."
@@ -1755,53 +1852,20 @@ play % publication {{-
         , "Starting first article."
         ],
 
-    speak(State, Data, stitch(PromptList));
+    speak(State, Data, PromptList);
 
 % }}-
-play % article_help {{-
-  ( article_help = State
-  , Data
-  )
+% TODO FEATURE article metadata
+% PROGRESS it is called `article_intro`; test it
+play % ARTICLE_INTRO {{-
+( article_intro = State
+, Data
+)
 ->
-    PromptList =
-        [ "Article paused."
-        , "To resume current article, press any button between 1 and 8."
-        , "During playback, you have the following controls available:"
-        , "For the publication menu, press *."
-        , "For the main menu, press 0."
-        , "To play the next article, press pound."
-        , "For the previous article, press 9."
-        , "To pause playback, press 2."
-        , "To restart the article, press 7."
-        , "To go back 10 seconds, press 1."
-        , "To go forward 10 seconds, press 3."
-        , "To slow down the recording, press 4."
-        , "To speed up, press 6."
-        , "To turn down the volume, press 5."
-        , "To turn it up, press 8."
-        ],
-
-    speak(State, Data, stitch(PromptList));
-
-% }}-
-% TODO FEATURE article_meta {{-
-% At the moment, `article` only plays the audio and ignores any metadata. To play metadata, there will have to be an intermediate state though ...
-% As soon as I wrote the above sentence, realized that multiple playbacks can be synced without interim states. What if `sendmsg_lock` is used to start mulitiple, and just ignore the meta-playback at CHANNEL_EXECUTE_COMPLETE processing?
-% }}-
-play % article {{-
-  ( article = State
-  , #{ current_content :=
-       #{ path := Path
-        % , title := Title % ignoring metadata for now
-        }
-       = CurrentContent
-     } = Data
-  )
-->
-    speak(article_intro, Data, "Press 2 at any time to pause the article and listen to the help menu."),
-    % TODO FEATURE resume playback from last position (see offset in `init/1`)
-    playback(State, Data, Path);
+    speak(article_intro, Data, ["Press 2 at any time to pause the article and listen to the help menu."]);
+    % playback(State, Data, Path);
     % TODO FEATURE read article meta and figure out how to store the latter
+    %      (also, should article_meta be a separate state?)
     % Saving this snippet to demonstrate a solution {{-
     %
     %   1. that multiple heterogeneous playbacks (e.g., Application="speak" &  Application="playback") can be queued
@@ -1821,7 +1885,138 @@ play % article {{-
     %     , app_uuid_prefix   => lofa
     %     });
     % }}-
-    % speak(article_meta, Data, Title);
+
+% }}-
+play % ARTICLE {{-
+  ( article = State
+  , #{ current_content :=
+       #{ path := Path
+        , playback_offset := Offset
+        } = CurrentContent
+     } = Data
+  )
+->
+    % NOTE Why ARTICLE_INTRO had to split out into its own state {{-
+    % speak(article_intro, Data, ...),
+    % The CHANNEL_EXECUTE_COMPLETE clause could have been twisted into compliance, but it would have been more complex. As it stands this is still not a piece of cake.
+    % }}-
+
+    % TODO FEATURE resume playback from last position (see offset in `init/1`)
+    playback(State, Data, Path ++ "@@" ++ Offset );
+
+% }}-
+play % ARTICLE_HELP {{-
+  ( article_help = State
+  , Data
+  )
+->
+    % TODO FEATURE resume playback from last position (see offset in `init/1`)
+    PromptList =
+        [ "Article paused."
+        , "To resume, press any button between 1 and 8."
+        , "During playback, you have the following controls available:"
+        , "For the publication menu, press star."
+        , "For the main menu, press 0."
+        , "To play the next article, press pound."
+        , "For the previous article, press 9."
+        , "To pause playback, press 2."
+        , "To restart the article, press 7."
+        , "To go back 10 seconds, press 1."
+        , "To go forward 10 seconds, press 3."
+        , "To slow down the recording, press 4."
+        , "To speed up, press 6."
+        , "To turn down the volume, press 5."
+        , "To turn it up, press 8."
+        ],
+
+    speak(State, Data, PromptList);
+
+% }}-
+play % INVALID_SELECTION % {{-
+( invalid_selection = State
+, Data
+)
+->
+    speak(State, Data, ["Invalid selection."]);
+
+% }}-
+play % INACTIVITY_WARNING {{-
+( inactivity_warning = State
+, Data
+)
+->
+    speak
+      ( State
+      , Data
+      , ["Please press any key if you are still there."]
+      );
+
+% }}-
+play % DEMO_HANGUP {{-
+( demo_hangup = State
+, Data
+)
+->
+    TextList =
+        [ "End of demo session."
+        , sign_up()
+        , "Thank you for trying out the service!"
+        ],
+
+    speak(State, Data, TextList);
+
+% }}-
+play % INACTIVITY_HANGUP {{-
+( inactivity_hangup = State
+, Data
+)
+->
+    speak(State, Data, ["Goodbye."]);
+
+% }}-
+play % NO_CHILDREN {{-
+( no_children = State
+, Data
+)
+->
+    CurrentContentType =
+        derive_state(Data),
+    Prompt =
+        "This "
+        ++ atom_to_list(CurrentContentType)
+        ++ " is empty.",
+
+    speak(State, Data, Prompt);
+
+% }}-
+play % NO_PREV_ITEM {{-
+( no_prev_item = State
+, Data
+)
+->
+    CurrentContentType =
+        derive_state(Data),
+    Prompt =
+        "This is the first "
+        ++ atom_to_list(CurrentContentType)
+        ++ ".",
+
+    speak(State, Data, Prompt);
+
+% }}-
+play % NO_NEXT_ITEM {{-
+( no_next_item = State
+, Data
+)
+->
+    CurrentContentType =
+        derive_state(Data),
+    Prompt =
+        "This is the last "
+        ++ atom_to_list(CurrentContentType)
+        ++ ".",
+
+    speak(State, Data, Prompt).
 
 % }}-
 
@@ -1867,46 +2062,6 @@ play % article {{-
 
 % play(article_menu, Data) ->
 %     done;
-% }}-
-
-play({inactivity_warning, Content} = State, Data) ->
-    WarningPrompt =
-        "Please press any key if you are still there.",
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text => WarningPrompt
-       });
-
-play({invalid_selection, Content} = State, Data) ->
-    WarningPrompt =
-        "Invalid selection. Please try again.",
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text => WarningPrompt
-       });
-
-play(demo_hangup = State, Data) -> % {{-
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text =>
-           stitch(
-             [ "End of demo session."
-             , sign_up()
-             , "Thank you for trying out the service!"
-             ])
-       }
-    );
-% }}-
-
-play(inactivity_hangup = State, Data) -> % {{-
-    speak(
-      #{ playback_name => State
-       , data => Data
-       , text => "Goodbye."
-       }).
 % }}-
 
 % http://erlang.org/pipermail/erlang-questions/2005-April/015279.html
@@ -1957,14 +2112,14 @@ regurgitate
 speak % {{-
 ( PlaybackName
 , Data
-, Text
+, TextList
 )
 ->
     % return the application UUID string.
     ApplicationUUID =
         sendmsg_locked(
           #{ command => execute
-           , args       => ["speak", "flite|kal|" ++ stitch(Text)]
+           , args       => ["speak", "flite|kal|" ++ stitch(TextList)]
            , app_uuid_prefix   => PlaybackName
            }),
 
@@ -1992,7 +2147,6 @@ stitch([Utterance]) ->
     Utterance;
 stitch([Utterance|Rest]) ->
     Utterance ++ " " ++ stitch(Rest).
-%% }}-
 
 % TODO ok to delete this section? {{-
 %% Push/pop history {{-
@@ -2204,10 +2358,7 @@ re_start_inactivity_timer(State) -> % {{-
     put(inactivity_hangup,  ITref).
 % }}-
 
-common_options(article_playback) -> % {{-
-    common_options(article);
-
-common_options(ContentType)
+common_options(ContentType) % {{-
   when ContentType =:= category
      ; ContentType =:= publication
      ; ContentType =:= article
@@ -2223,6 +2374,7 @@ common_options(ContentType)
 
     [Zero, Star, Pound].
 
+% TODO What if there are no choices?
 choice_list(Content) ->
     [  "Press "
        ++ integer_to_list(Selection)
@@ -2236,11 +2388,15 @@ choice_list(Content) ->
     ].
 
 derive_state(#{ current_content := Content } = _Data) ->
+    derive_state(Content);
+
+derive_state(#{ selection := _, type := _ } = Content) ->
     % case maps:get(current_content, Data) of
     case Content of
         #{ selection := 0 } ->
             content_root;
         #{ type := article } ->
+            % Implies that ARTICLE_INTRO is always played (even if article is resumed)
             article_intro;
         #{ type := ContentType } ->
             ContentType
@@ -2277,10 +2433,13 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
         {none, last}  -> {next_state, no_children, Data};
         % {none, parent} - this would only be possible if content_root would be the current content, but * is dissabled there (see DTMF processing)
         _ ->
-            NewData = set_current(NextContent, Data),
+            % NewData = set_current(NextContent, Data),
             % Not simply pattern-matching `NewData` because if "up" results in the root category then the next state is `content_root` and not `category`
-            NextState = derive_state(NewData),
-            { next_state, NextState, NewData }
+            % NextState = derive_state(NewData),
+            { next_state
+            , derive_state(NextContent)
+            , set_current(NextContent, Data)
+            }
     end.
     % NewData =
     %     f:pipe

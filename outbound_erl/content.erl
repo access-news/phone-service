@@ -327,6 +327,12 @@ do_make(Graph, Dir) ->
         {error, _} ->
             done;
         {ok, List} ->
+            % TODO order articles by date, newest first
+            % Current workaround: add datetime to filename and sort
+            % https://erlang-questions.erlang.narkive.com/j5wggu6l/external-sorting-for-large-files-in-erlang
+            % NOTE rationale {{-
+            % When new recordings are added to a publication, the graph is either re-created from scratch (`refresh_content_graph/2`), or new recordings are copied in the publication directory and added by hand. This is going to change fundamentally once Access News Core is up and running so too much effort is a waste of time.
+            % }}-
             OrderedDirList =
                 ordsets:from_list(List),
             % If ContentType =:= publication then DirList will consist entirely of files (meta.erl + audio files)
