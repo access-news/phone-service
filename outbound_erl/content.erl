@@ -167,7 +167,7 @@ pick(Direction, CurrentVertex) -> % List Content | []
     % } =
     Result =
         gen_server:call
-          ( content
+          ( ?MODULE
           , {Direction, CurrentVertex}
           ),
     case Result of
