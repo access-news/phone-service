@@ -18,7 +18,7 @@
     , root/0
 
     % private functions
-    , make_content_graph/0
+    , load_content_graph/1
     , refresh_content_graph/1
     , realize/0
 
@@ -42,7 +42,25 @@ start() ->
     Pid.
 
 init(_Args) ->
-    Graph = make_content_graph(),
+    % 1> c("outbound_erl/content").
+    % 2> content:start().
+    % 3> R = content:pick(content_root, 27).
+    % 4> [C|_] = content:pick(children, R). 
+    % 5> R = content:pick(parent, C).       
+    % TODO PROD How to set up the graph? ("do not overthink" notes below) {{-
+    % It `realize/0`s the dir structure at the moment if it does not exit, but in subsequent phases the graph will be based on a remote cloud storage - it is cheap to redraw the entire graph by reading local files, but that will not cut it later. The graph will need to be de-serialized and kept up to date via messages, then saved to disk on startup.
+    % }}-
+    ContentRootDir =
+        filename:join(?CONTENT_ROOT_DIR, "0"),
+
+    case file:list_dir(ContentRootDir) of
+        {error, enoent} ->
+            realize();
+        {ok, _} ->
+            noop
+    end,
+
+    Graph = load_content_graph({from_dir, ContentRootDir}),
     % digraph:add_vertex(Graph, history, []),
     % Necessary because ?CONTENT_ROOT gets written to the metafile, but that tuple is going to be changed when building the graph (and reading back from the file system).
     % ContentRoot =
@@ -243,12 +261,7 @@ root() ->
 
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
-make_content_graph() ->
-    make_content_graph(
-      filename:join(?CONTENT_ROOT_DIR, "0")
-    ).
-
-make_content_graph(ContentRootDir) -> % {{-
+load_content_graph({from_dir, ContentRootDir}) -> % {{-
     Graph =
         digraph:new([cyclic, protected]), % default values made explicit
     RootMeta =
@@ -271,7 +284,7 @@ make_content_graph(ContentRootDir) -> % {{-
 
 refresh_content_graph(Graph) ->
     digraph:delete(Graph),
-    make_content_graph().
+    init(ignore).
 
 % `EdgeNote` and not `EdgeLabel` because that is already taken for `digraph:add_edge/5`
 add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
