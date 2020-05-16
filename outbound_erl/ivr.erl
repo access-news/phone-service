@@ -117,7 +117,8 @@ init(_Args) -> % {{-
         #{ received_digits => []
          % ,       anchor => ""
          % , current_content => {}
-         ,  playback_offset => -1
+         ,  playback_offset => 0
+         % ,  playback_offset => -1
          ,  auth_status => unregistered % | registered
          % , menu_history => [] % used as a stack
          , current_content => none
@@ -321,7 +322,7 @@ handle_event(
 
     {_, _, E} = MassagedModErlEvent,
     #{ "Event-Name" := EventName } = E,
-    logger:emergency(#{ event => { EventName, MassagedModErlEvent}}),
+    % logger:emergency(#{ event => { EventName, MassagedModErlEvent}}),
 
     %% Keeping  state  and  data,  because  the  FreeSWITCH
     %% `info` messages  can come any time,  and this clause
@@ -371,7 +372,7 @@ handle_event(
   State, % State
   _Data  % Data
 ) ->
-    logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
+    % logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 %% }}-
 
@@ -540,7 +541,7 @@ handle_event(
   internal,                    % EventType
   { _UUID                      % \
   , call_event                 % |
-  , #{ "DTMF-Digit" := Digit}  % | EventContent = MassagedModErlEvent
+  , #{ "DTMF-Digit" := Digit} = EventName % | EventContent = MassagedModErlEvent
   },                           % /
   State,
    % if `ReceivedDigits =/= []`, we are collecting digits
@@ -759,6 +760,11 @@ handle_event(
                 % }}-
                 % #          {{- => next category (i.e., next sibling)
                 "#" ->
+                    logger:debug(#{ self() => [ "content_root->first(debug)"
+                                              , #{ event_name => EventName
+                                                 , state => State
+                                                 % , fs_event => FSEvent
+                                                 }]}),
                     next_content(next, Data);
                 % }}-
                 % [1-9]      {{- => collect digits
@@ -1049,8 +1055,6 @@ when Application =:= "speak"
     % PlaybackName =
     %     extract_playback_name(ApplicationUUID),
 
-    logger:debug(#{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE", bapp_id => ApplicationUUID, state => State}),
-
     % This dancing around is because functions in `maps` never fail, and this `handle_event/4` clause should crash if an `ApplicationUUID` is not in `Playbacks` as it would mean that a playback has been started without saving its ID in the `gen_statem` data, which should not happen. All menus use only `speak` (for now), so anything that gets in here is a playback that has been stopped (one way or another).
     % #{ ApplicationUUID :=
     %     #{ playback_name := PlaybackName
@@ -1067,6 +1071,14 @@ when Application =:= "speak"
         proplists:delete(ApplicationUUID, Playbacks),
     NewData =
         Data#{ playbacks := NewPlaybacks },
+
+    logger:debug(
+        #{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE"
+         , app_uuid => ApplicationUUID
+         , state => State
+         , prev_state => StoppedPlayback
+         }),
+
     % NewData =
     %     ( composeFlipped(
     %         [ (curry(fun proplists:delete/2))(ApplicationUUID)
@@ -1220,9 +1232,7 @@ handle_event(
   _Data                               % Data
 )
 ->
-    % logger:debug(#{event => E}),
-    % logger:debug(#{ self() => ["OTHER_INTERNAL_CALL_EVENT", #{ event_name => EventName, fs_event_data => FSEvent,  state => State}]}),
-    logger:debug(#{ self() => ["UNKNOWN_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State}]}),
+    % logger:debug(#{ self() => ["UNKNOWN_INTERNAL_CALL_EVENT", #{ event_name => EventName, state => State, fs_event => FSEvent}]}),
     % logger:debug(""),
     keep_state_and_data;
 
@@ -1232,7 +1242,7 @@ handle_event(
   State,
   _Data                               % Data
 ) ->
-    logger:emergency(#{ self() => ["UNKNOWN_INTERNAL", #{ unknown_msg => Msg, state => State}]}),
+    % logger:emergency(#{ self() => ["UNKNOWN_INTERNAL", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 
 % handle_event(
@@ -1336,10 +1346,16 @@ handle_event
     SelectionResult =
         [  Child
         || Child
-           <- get_content(children, CurrentContent)
+           <- content:pick(children, CurrentContent)
            ,  maps:find(selection, Child) =:= {ok, Selection}
         ],
 
+                    logger:debug(#{ self() => [ "interdigit_timeout"
+                                              , #{ selection => Selection
+                                                 % , state => State
+                                                 , selection_result => SelectionResult
+                                                 % , fs_event => FSEvent
+                                                 }]}),
     % case lists:keyfind(Selection, 2, SubCategories) of
     case SelectionResult of
         [] ->
@@ -1390,8 +1406,7 @@ when Digit =:= "1";
 
     % Keeping state because this is only a utility function collecting the DTMF signals. State only changes when the `interdigit_timer` times out.
     % (using `repeat_state` so that state enter clause would get triggered, and with that the entered DTMF digit would get read back (via `collect_digits` `play/2` function))
-    { repeat_state
-    % { next_state
+    { next_state
     , collect_digits
     , NewData
     , [ InterDigitTimer ]
@@ -1682,6 +1697,11 @@ comfort_noise(Milliseconds, Data) -> % {{-
         ++ integer_to_list(Milliseconds)
         ++ ",1400",
 
+    logger:debug(
+        #{ a => "COMFORT_NOISE"
+         , data => Data
+         }),
+
     playback(comfort_noise, Data, ComfortNoise).
     % sendmsg_locked(
     %     #{ command => execute
@@ -1708,20 +1728,22 @@ sign_up() ->
 
 play(init, Data) -> Data;
 play(incoming_call, Data) -> Data;
-play % COLLECT_DIGITS {{-
-( collect_digits = State
-, #{ received_digits := [Digit|_] } = Data
-)
-->
-    % QUESTION Why does this work (theoretically) even though this special looping is only allowed to play this prompt once? {{-
-    % ANSWER
-    % a_state -> collect_digits transition (that is when collection is triggered) will end up in CHANNEL_EXECUTE_COMPLETE clause 1 while reading back the most recent DTMF digit already started
-    % readback finishes uninterrupted: there is still time ahead probably for the ?INTERDIGIT_TIMEOUT to run out, and playback shouldn't be repeated. The CHANNEL_EXECUTE_COMPLETE event falls through all the clauses (the transition is collect_digits -> collect_digits, and IsStopped false) to its own collect_digits clause
-    % readback is interrupted by a new digit (this case `collect_digits/2` is invoked that ends with `repeat_state`, so state enter will invoke a playback on the new digit) or the ?INTERDIGIT_TIMEOUT (that does not stay in collect_digits state): in this case it ends up in clause 2, which is no action
-    % }}-
-    speak(State, Data, Digit);
+play(collect_digits, Data) -> Data;
 
-% }}-
+% play % COLLECT_DIGITS {{-
+% ( collect_digits = State
+% , #{ received_digits := [Digit|_] } = Data
+% )
+% ->
+%     % QUESTION Why does this work (theoretically) even though this special looping is only allowed to play this prompt once? {{-
+%     % ANSWER
+%     % a_state -> collect_digits transition (that is when collection is triggered) will end up in CHANNEL_EXECUTE_COMPLETE clause 1 while reading back the most recent DTMF digit already started
+%     % readback finishes uninterrupted: there is still time ahead probably for the ?INTERDIGIT_TIMEOUT to run out, and playback shouldn't be repeated. The CHANNEL_EXECUTE_COMPLETE event falls through all the clauses (the transition is collect_digits -> collect_digits, and IsStopped false) to its own collect_digits clause
+%     % readback is interrupted by a new digit (this case `collect_digits/2` is invoked that ends with `repeat_state`, so state enter will invoke a playback on the new digit) or the ?INTERDIGIT_TIMEOUT (that does not stay in collect_digits state): in this case it ends up in clause 2, which is no action
+%     % }}-
+%     speak(State, Data, Digit);
+
+% % }}-
 play % GREETING {{-
 ( greeting = State
 , #{ auth_status := AuthStatus } = Data
@@ -1820,10 +1842,16 @@ play % CATEGORY {{-
   )
 ->
     PromptList =
-        [ Title
-        , common_options(State)
-        ]
+        [ Title ]
+        ++ common_options(State)
         ++ choice_list(CurrentContent),
+
+    logger:debug(
+        #{ a => "PLAY_CATEGORY"
+         , current_content => CurrentContent
+         , data => Data
+         , prompt => PromptList
+         }),
 
     speak(State, Data, PromptList);
     % f:pipe(
@@ -1842,8 +1870,8 @@ play % PUBLICATION {{-
   )
 ->
     NumberOfArticles =
-        % (length . get_content(children)) CurrentContent
-        length(get_content(children, CurrentContent)),
+        % (length . content:pick(children)) CurrentContent
+        length(content:pick(children, CurrentContent)),
 
     PromptList =
         [ Title
@@ -2126,6 +2154,13 @@ speak % {{-
            , app_uuid_prefix   => PlaybackName
            }),
 
+    logger:debug(
+        #{ a => "SPEAK"
+         , "state|playbackname" => PlaybackName
+         , data => Data
+         , text_list => TextList
+         }),
+
     regurgitate(ApplicationUUID, PlaybackName, Data).
 % }}-
 
@@ -2142,6 +2177,13 @@ playback % {{-
            , args       => ["playback", Path]
            , app_uuid_prefix   => PlaybackName
            }),
+
+    logger:debug(
+        #{ a => "PLAYBACK"
+         , "state|playbackname" => PlaybackName
+         , data => Data
+         , path => Path
+         }),
 
     regurgitate(ApplicationUUID, PlaybackName, Data).
 % }}-
@@ -2387,7 +2429,7 @@ choice_list(Content) ->
     || #{ title := Title
         , selection := Selection
         }
-       <- get_content(children, Content)
+       <- content:pick(children, Content)
     ].
 
 derive_state(#{ current_content := Content } = _Data) ->
@@ -2413,9 +2455,6 @@ set_current(Content, Data) ->
 get_current(#{ current_content := Content } = _Data) ->
     Content.
 
-get_content(Direction, #{ current_content := Content} = _Data) ->
-    content:pick(Direction, Content).
-
 next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
   % `children` and a bad direction return a list which blow up when saved as current_content (hence the explicit whitelisting, instead of just blacklisting `children`)
   when Direction =:= parent;
@@ -2426,7 +2465,7 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
        Direction =:= content_root
 ->
     NextContent =
-        get_content(Direction, CurrentContent),
+        content:pick(Direction, CurrentContent),
 
     case {NextContent, Direction} of
         % TODO PROD implement states otherwise it will crash
