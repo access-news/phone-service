@@ -121,7 +121,7 @@ init(_Args) -> % {{-
          % ,  playback_offset => -1
          ,  auth_status => unregistered % | registered
          % , menu_history => [] % used as a stack
-         , current_content => none
+         , current_content => content:root()
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
          % Could have used a proplist instead as a stack but (1) lookup is less convenient (more on that below), (2) less explicit (see below).
          ,    playbacks => []
@@ -163,7 +163,7 @@ terminate(Reason, State, Data) ->
 % ->
 %     {keep_state, Data};
 
-handle_event(enter, OldState, State, Data) -> %
+handle_event(enter, _OldState, State, Data) -> %
 
     NewData =
         % ( composeFlipped(
@@ -301,8 +301,8 @@ handle_event(
   info,
   {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = _ModErlEventMsg,
   % {ModErlEventCallStatus, {event, [UUID | FSEventHeaders]}} = ModErlEventMsg,
-  State,
-  Data
+  _State,
+  _Data
 ) ->
     %% As this  clause preceeds **every**  state transition
     %% (not   just  state   changes!)   AND  always   keeps
@@ -320,8 +320,8 @@ handle_event(
         [ {next_event, internal, MassagedModErlEvent}
         ],
 
-    {_, _, E} = MassagedModErlEvent,
-    #{ "Event-Name" := EventName } = E,
+    % {_, _, E} = MassagedModErlEvent,
+    % #{ "Event-Name" := EventName } = E,
     % logger:emergency(#{ event => { EventName, MassagedModErlEvent}}),
 
     %% Keeping  state  and  data,  because  the  FreeSWITCH
@@ -340,7 +340,7 @@ handle_event(
 handle_event(
   info,                 % EventType
   {call_hangup, _UUID}, % EventContent = ModErlEventMsg
-  State,                % State
+  _State,                % State
   Data                  % Data
 ) ->
     % logger:debug(#{ self() => ["CALL_HANGUP", #{ data => Data, state => State }]}),
@@ -356,23 +356,12 @@ handle_event(
 %% SENDMSG_CONFIRMATION (info) {{-
 handle_event(
   info,                          % EventType
-  ok = Msg,
-  State,
+  % ok = Msg,
+  ok,
+  _State,
   _Data                               % Data
 ) ->
     % logger:debug(#{ self() => ["SENDMSG_CONFIRMATION", #{ message => Msg, state => State}]}),
-    keep_state_and_data;
-%% }}-
-
-%% DEBUG (info) {{-
-%% Catch-all clause to see unhandled `info` events.
-handle_event(
-  info,  % EventType
-  Msg,   % EventContent
-  State, % State
-  _Data  % Data
-) ->
-    % logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
     keep_state_and_data;
 %% }}-
 
@@ -386,9 +375,9 @@ handle_event(
 % NOTE `info` (i.e., external) events are still processed, but they are irrelevant at this point. If need to save them for debugging, just modify MOD_ERL_EVENT_MASSAGE, or the DEBUG clause in the "`info` clauses (for FreeSwITCH events)" section above
 handle_event(
   internal, % EventType
-  EC, % EventContent
+  _EventContent,
   {hangup, _},                % State
-  Data                  % Data
+  _Data                  % Data
 ) ->
     % logger:debug(#{ self() => ["in HANGUP state", #{ data => Data, state => hangup, event_content => EC }]}),
 
@@ -427,7 +416,7 @@ handle_event(
   , #{ "Channel-ANI" := CallerNumber % | EventContent = MassagedModErlEvent
      }                               % |
   },                                 % /
-  init = State,
+  init, % State,
   #{ auth_status := unregistered }   = Data
 ) ->
     % logger:debug(#{ self() => ["INCOMING_CALL", #{ data => Data, state => State }]}),
@@ -517,7 +506,7 @@ handle_event(
   , call_event                            % |
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
   },                                      % /
-  incoming_call = State,                       % State
+  incoming_call, % = State,                       % State
   % #{ auth_status  := _AuthStatus           % \         Made  explicit  all  values  that  are  known,
   %  % , menu_history := []                   % | Data    because the only state change to this state is
   %  % , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
@@ -541,13 +530,13 @@ handle_event(
   internal,                    % EventType
   { _UUID                      % \
   , call_event                 % |
-  , #{ "DTMF-Digit" := Digit} = EventName % | EventContent = MassagedModErlEvent
+  , #{ "DTMF-Digit" := Digit} % = EventName % | EventContent = MassagedModErlEvent
   },                           % /
   State,
    % if `ReceivedDigits =/= []`, we are collecting digits
   #{
       received_digits := ReceivedDigits
-   ,  auth_status := AuthStatus
+   % ,  auth_status := AuthStatus
    % ,  menu_history := MenuHistory
    } = Data
 ) ->
@@ -633,22 +622,23 @@ handle_event(
             % Set `current_content` (it is `none` at this point)
             % QUESTION Should this be set in `init/1` instead?
             %          I think it is easier to understand it this way.
-            NewData = set_current(content:root(), Data),
+            % NewData = set_current(content:root(), Data),
+            % NOTE set in init because of `next_content/2` complications
 
             case Digit of
                 % [*#]       {{- => content root
                 _ when Digit =:= "*"
                      ; Digit =:= "#"
                 ->
-                    {next_state, content_root, NewData};
+                    {next_state, content_root, Data};
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
-                    {next_state, main_menu, NewData};
+                    {next_state, main_menu, Data};
                 % }}-
                 % [1-9]      {{- => collect digits
                 _ ->
-                    collect_digits(Digit, NewData)
+                    collect_digits(Digit, Data)
                 % }}-
             end;
 
@@ -760,11 +750,9 @@ handle_event(
                 % }}-
                 % #          {{- => next category (i.e., next sibling)
                 "#" ->
-                    logger:debug(#{ self() => [ "content_root->first(debug)"
-                                              , #{ event_name => EventName
-                                                 , state => State
-                                                 % , fs_event => FSEvent
-                                                 }]}),
+                    logger:debug(#{ a => "HANDLE_DTMF:CATEGORY"
+                                  , state => State
+                                  }),
                     next_content(next, Data);
                 % }}-
                 % [1-9]      {{- => collect digits
@@ -930,9 +918,9 @@ handle_event(
 
         % }}-
         % === ARTICLE_HELP (loop) {{-
-        _ when State =:= article_help
-             ; State =:= article_intro
-        ->
+        % _ when State =:= article_help
+        %      ; State =:= article_intro
+        article_help ->
             case Digit of
                 % *          {{- => back to publication
                 "*" ->
@@ -1063,7 +1051,7 @@ when Application =:= "speak"
     % } = Playbacks,
     { ApplicationUUID
     , StoppedPlayback
-    , IsStopped
+    , {stopped, IsStopped}
     } =
         proplists:lookup(ApplicationUUID, Playbacks),
 
@@ -1076,7 +1064,7 @@ when Application =:= "speak"
         #{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE"
          , app_uuid => ApplicationUUID
          , state => State
-         , prev_state => StoppedPlayback
+         , stopped_playback => {StoppedPlayback, IsStopped}
          }),
 
     % NewData =
@@ -1130,13 +1118,20 @@ when Application =:= "speak"
              % ; State =:= publication
              ; State =:= article_help
         ->
+            logger:debug(
+                #{ a => "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                , app_uuid => ApplicationUUID
+                , state => State
+                , stopped_playback => {StoppedPlayback, IsStopped}
+                }),
             {repeat_state, NewData};
 
         % States where playback ended naturally,
         % but that should not loop
         % --------------------------------------
         greeting ->                     % |
-            next_content(content_root, NewData);
+            % next_content(content_root, NewData);
+            {next_state, content_root, NewData};
 
         publication ->
             next_content(first, NewData);
@@ -1287,6 +1282,18 @@ handle_event(
     {next_state, inactivity_hangup, Data};
     % see `demo_hangup` on what happens next or how the call is terminated from the server side
 %% }}-
+
+% DEBUG (info) {{-
+% Catch-all clause to see unhandled `info` events.
+handle_event(
+  info,  % EventType
+  Msg,   % EventContent
+  State, % State
+  _Data  % Data
+) ->
+    % logger:emergency(#{ self() => ["UNHANDLED_INFO_EVENTS", #{ unknown_msg => Msg, state => State}]}),
+    keep_state_and_data;
+% }}-
 
 %% unregistered_timer {{-
 handle_event(
@@ -1814,7 +1821,8 @@ play % MAIN_MENU {{-
         , Five
         ],
 
-    speak(State, Data, PromptList);
+    speak(State, Data, [Anchor, "Loop test."]);
+    % speak(State, Data, PromptList);
 
 % }}-
 play % CONTENT_ROOT {{-
@@ -1831,7 +1839,8 @@ play % CONTENT_ROOT {{-
         ]
         ++ choice_list(CurrentContent),
 
-    speak(State, Data, PromptList);
+    speak(State, Data, [Title, "Loop test."]);
+    % speak(State, Data, PromptList);
 
 % }}-
 play % CATEGORY {{-
@@ -1853,7 +1862,8 @@ play % CATEGORY {{-
          , prompt => PromptList
          }),
 
-    speak(State, Data, PromptList);
+    speak(State, Data, [Title, "Loop test."]);
+    % speak(State, Data, PromptList);
     % f:pipe(
     %   [ PromptList
     %   , fun stitch/1
@@ -2017,7 +2027,7 @@ play % NO_CHILDREN {{-
         ++ atom_to_list(CurrentContentType)
         ++ " is empty.",
 
-    speak(State, Data, Prompt);
+    speak(State, Data, [Prompt]);
 
 % }}-
 play % NO_PREV_ITEM {{-
@@ -2032,7 +2042,7 @@ play % NO_PREV_ITEM {{-
         ++ atom_to_list(CurrentContentType)
         ++ ".",
 
-    speak(State, Data, Prompt);
+    speak(State, Data, [Prompt]);
 
 % }}-
 play % NO_NEXT_ITEM {{-
@@ -2047,7 +2057,7 @@ play % NO_NEXT_ITEM {{-
         ++ atom_to_list(CurrentContentType)
         ++ ".",
 
-    speak(State, Data, Prompt).
+    speak(State, Data, [Prompt]).
 
 % }}-
 
@@ -2452,8 +2462,8 @@ derive_state(#{ selection := _, type := _ } = Content) ->
 set_current(Content, Data) ->
     Data#{ current_content := Content }.
 
-get_current(#{ current_content := Content } = _Data) ->
-    Content.
+% get_current(#{ current_content := Content } = _Data) ->
+%     Content.
 
 next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
   % `children` and a bad direction return a list which blow up when saved as current_content (hence the explicit whitelisting, instead of just blacklisting `children`)
@@ -2464,25 +2474,46 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
        Direction =:= prev;
        Direction =:= content_root
 ->
+    % uuid_fileman("pause"),
+
     NextContent =
         content:pick(Direction, CurrentContent),
+    NewData =
+        set_current(NextContent, Data),
+    PrevState =
+        derive_state(CurrentContent),
+    NextState =
+        % When there is no vertex in a given direction `content:pick/2` will return `none`, and it means that control will be redirected to special uninterruptable warning states in the next case clause, hence `ignore`
+        case NextContent =:= none of
+            false ->
+                derive_state(NextContent);
+            true ->
+                ignore
+        end,
 
     case {NextContent, Direction} of
         % TODO PROD implement states otherwise it will crash
         % DONE? test
-        {none, next}  -> {next_state, no_next_item, Data};
-        {none, prev}  -> {next_state, no_prev_item, Data};
-        {none, first} -> {next_state, no_children, Data};
-        {none, last}  -> {next_state, no_children, Data};
+        {none, next}  -> {next_state, no_next_item, Data}; % \
+        {none, prev}  -> {next_state, no_prev_item, Data}; % | Not `NewData`, because
+        {none, first} -> {next_state, no_children, Data};  % | that direction is empty.
+        {none, last}  -> {next_state, no_children, Data};  % /
         % {none, parent} - this would only be possible if content_root would be the current content, but * is dissabled there (see DTMF processing)
-        _ ->
+        _ when PrevState =:= NextState
+             , CurrentContent =/= NextContent
+        ->
+            {repeat_state, NewData};
+
+        _ when PrevState =:= NextState
+             , CurrentContent =:= NextContent
+        ->
             % NewData = set_current(NextContent, Data),
             % Not simply pattern-matching `NewData` because if "up" results in the root category then the next state is `content_root` and not `category`
             % NextState = derive_state(NewData),
-            { next_state
-            , derive_state(NextContent)
-            , set_current(NextContent, Data)
-            }
+            {keep_state, NewData};
+            % {next_state, NextContent, NewData}
+        _ when PrevState =/= NextState ->
+            {next_state, NextState, NewData}
     end.
     % NewData =
     %     f:pipe
