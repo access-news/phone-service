@@ -118,6 +118,7 @@ init(_Args) -> % {{-
          % ,       anchor => ""
          % , current_content => {}
          ,  playback_offset => "0"
+         ,  playback_speed  => "0"
          % ,  playback_offset => -1
          ,  auth_status => unregistered % | registered
          % , menu_history => [] % used as a stack
@@ -877,7 +878,8 @@ handle_event(
                 % NOTE using `api` for now instead of `bgapi`
                 % 1          {{- => rewind (10s)
                 "1" ->
-                    uuid_fileman("seek:-10000");
+                    uuid_fileman("seek:-10000"),
+                    keep_state_and_data;
                 % }}-
                 % 2          {{- => pause (stop) article
                 "2" ->
@@ -885,30 +887,33 @@ handle_event(
                 % }}-
                 % 3          {{- => forward (10s)
                 "3" ->
-                    uuid_fileman("seek:+10000");
+                    uuid_fileman("seek:+10000"),
+                    keep_state_and_data;
                 % }}-
                 % 4          {{- => slower
                 "4" ->
-                    % TODO PROD figure out the right amount
-                    uuid_fileman("speed:-10");
+                    change_speed("-", Data);
                 % }}-
                 % 5          {{- => volume down
                 "5" ->
                     % TODO PROD figure out the right amount
-                    uuid_fileman("volume:-2");
+                    uuid_fileman("volume:-2"),
+                    keep_state_and_data;
                 % }}-
                 % 6          {{- => faster
                 "6" ->
-                    uuid_fileman("speed:+10");
+                    change_speed("+", Data);
                 % }}-
                 % TODO FEATURE add to favourites
                 % 7          {{- => restart article
                 "7" ->
-                    uuid_fileman("restart");
+                    uuid_fileman("restart"),
+                    keep_state_and_data;
                 % }}-
                 % 8          {{- => volume up
                 "8" ->
-                    uuid_fileman("volumeu:+2");
+                    uuid_fileman("volume:+2"),
+                    keep_state_and_data;
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
@@ -1901,15 +1906,16 @@ play % PUBLICATION {{-
     PromptList =
         [ Title
         , "There are " ++ integer_to_list(NumberOfArticles) ++ " articles in this publication. The first article will start automatically when playback of this menu is finished."
-        , common_options(State)
-        , "To start the first article, press 1."
+        ]
+        ++ common_options(State) ++
+        [ "To start the first article, press 1."
         , "To jump to the last article, press 3."
         , "To go to the previous publication in this category, press 9."
         , "Starting first article."
         ],
 
-    speak(State, Data, [Title, "loop test."]);
-    % speak(State, Data, PromptList);
+    % speak(State, Data, [Title, Title, Title,  "loop test."]);
+    speak(State, Data, PromptList);
 
 % }}-
 % TODO FEATURE article metadata
@@ -2589,6 +2595,23 @@ stringify(Term) ->
     R = io_lib:format("~p",[Term]),
     lists:flatten(R).
 
+change_speed(Direction, Data) ->
+    #{ playback_speed := Speed } = Data,
+    NewSpeed =
+        f:pipe
+            ([ Speed
+             , fun erlang:list_to_integer/1
+             , fun(X) ->
+                   case Direction of
+                       "-" -> X - 1;
+                       "+" -> X + 1
+                   end
+               end
+             , fun erlang:integer_to_list/1
+             ]),
+    uuid_fileman("speed:" ++ NewSpeed),
+    NewData = Data#{ playback_speed := NewSpeed },
+    {keep_state, NewData}.
 % }}-
 % }}-
 
