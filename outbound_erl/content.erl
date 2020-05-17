@@ -188,16 +188,16 @@ pick(Direction, CurrentVertex) -> % List Content | []
     % , _Selection
     % , #{ anchor := AnchorText }
     % } =
-    Result =
-        gen_server:call
-          ( ?MODULE
-          , {Direction, CurrentVertex}
-          ),
-    case Result of
-        [Vertex] -> Vertex; % all except `children`
-        [_|_] -> Result;    % `children`
-        [] -> none       % Vertex has no specified direction (i.e., it is the last item without a `next` edge, content root was called with parent/next/etc and so on)
-    end.
+    % Result =
+    gen_server:call
+        ( ?MODULE
+        , {Direction, CurrentVertex}
+        ).
+    % case Result of
+    %     [Vertex] -> Vertex; % all except `children`
+    %     [_|_] -> Result;    % `children`
+    %     [] -> none       % Vertex has no specified direction (i.e., it is the last item without a `next` edge, content root was called with parent/next/etc and so on)
+    % end.
     % content:process_action
       % ( get(content_graph)
       % ( content

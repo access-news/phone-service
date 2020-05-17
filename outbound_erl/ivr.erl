@@ -117,11 +117,11 @@ init(_Args) -> % {{-
         #{ received_digits => []
          % ,       anchor => ""
          % , current_content => {}
-         ,  playback_offset => 0
+         ,  playback_offset => "0"
          % ,  playback_offset => -1
          ,  auth_status => unregistered % | registered
          % , menu_history => [] % used as a stack
-         , current_content => content:root()
+         , current_content => hd(content:root())
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
          % Could have used a proplist instead as a stack but (1) lookup is less convenient (more on that below), (2) less explicit (see below).
          ,    playbacks => []
@@ -845,8 +845,8 @@ handle_event(
                      ; Digit =:= "8"
                 ->
                     { next_state
-                    , derive_state(Data)
-                    , Data#{ playback_offset := 0 }
+                    , article
+                    , Data#{ playback_offset := "0" }
                     };
                 % }}-
                 % 9          {{- => previous article
@@ -1142,6 +1142,16 @@ when Application =:= "speak"
         collect_digits ->
             {keep_state, NewData};
 
+        article_intro ->
+            logger:debug(
+                #{ a => "!!!ARTICLE_INTRO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                , app_uuid => ApplicationUUID
+                , state => State
+                , stopped_playback => {StoppedPlayback, IsStopped}
+                , next_state => derive_state(NewData)
+                }),
+            {next_state, article, NewData};
+
         % UNINTERRUPTABLE states that only play a prompt
         % formerly {warning, _}         % | TODO already see a pattern
         _ when State =:= invalid_selection
@@ -1149,7 +1159,7 @@ when Application =:= "speak"
              ; State =:= no_children
              ; State =:= no_prev_item
              ; State =:= no_next_item
-             ; State =:= article_intro
+             % ; State =:= article_intro
         ->
             {next_state, derive_state(NewData), NewData}
 
@@ -1882,10 +1892,11 @@ play % PUBLICATION {{-
 ->
     NumberOfArticles =
         % (length . content:pick(children)) CurrentContent
-       case content:pick(children, CurrentContent) of
-           none -> 0;
-           [_|_] = Children -> length(Children)
-       end,
+        length(content:pick(children, CurrentContent)),
+       % case content:pick(children, CurrentContent) of
+       %     none -> 0;
+       %     [_|_] = Children -> length(Children)
+       % end,
 
     PromptList =
         [ Title
@@ -1897,7 +1908,7 @@ play % PUBLICATION {{-
         , "Starting first article."
         ],
 
-    speak(State, Data, ["publication"]);
+    speak(State, Data, [Title, "loop test."]);
     % speak(State, Data, PromptList);
 
 % }}-
@@ -1937,8 +1948,8 @@ play % ARTICLE {{-
   ( article = State
   , #{ current_content :=
        #{ path := Path
-        , playback_offset := Offset
         } = CurrentContent
+     , playback_offset := Offset
      } = Data
   )
 ->
@@ -2450,7 +2461,7 @@ choice_list(Content) ->
 derive_state(#{ current_content := Content } = _Data) ->
     derive_state(Content);
 
-derive_state(#{ selection := _, type := _ } = Content) ->
+derive_state(#{ type := _ } = Content) ->
     % case maps:get(current_content, Data) of
     case Content of
         #{ selection := 0 } ->
@@ -2471,7 +2482,7 @@ set_current(Content, Data) ->
 %     Content.
 
 next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
-  % `children` and a bad direction return a list which blow up when saved as current_content (hence the explicit whitelisting, instead of just blacklisting `children`)
+  % The `children` direction is different from the rest; aside from [] and [_], it can also return lists with more than one element ([_,_|_]). It also does not make sense semantically, because we only need one element to determine the next state.
   when Direction =:= parent;
        Direction =:= first;
        Direction =:= last;
@@ -2482,7 +2493,10 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
     % uuid_fileman("pause"),
 
     NextContent =
-        content:pick(Direction, CurrentContent),
+        case content:pick(Direction, CurrentContent) of
+            [] -> none;
+            [Content] -> Content
+        end,
     NewData =
         set_current(NextContent, Data),
     PrevState =
