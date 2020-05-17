@@ -1357,12 +1357,13 @@ handle_event
            ,  maps:find(selection, Child) =:= {ok, Selection}
         ],
 
-                    logger:debug(#{ self() => [ "interdigit_timeout"
-                                              , #{ selection => Selection
-                                                 % , state => State
-                                                 , selection_result => SelectionResult
-                                                 % , fs_event => FSEvent
-                                                 }]}),
+    logger:debug(
+        #{ a => "INTERDIGIT_TIMEOUT"
+         , current_content => CurrentContent
+         , selection_result => SelectionResult
+         , selection => Selection
+         }),
+
     % case lists:keyfind(Selection, 2, SubCategories) of
     case SelectionResult of
         [] ->
@@ -1881,7 +1882,10 @@ play % PUBLICATION {{-
 ->
     NumberOfArticles =
         % (length . content:pick(children)) CurrentContent
-        length(content:pick(children, CurrentContent)),
+       case content:pick(children, CurrentContent) of
+           none -> 0;
+           [_|_] = Children -> length(Children)
+       end,
 
     PromptList =
         [ Title
@@ -1893,7 +1897,8 @@ play % PUBLICATION {{-
         , "Starting first article."
         ],
 
-    speak(State, Data, PromptList);
+    speak(State, Data, ["publication"]);
+    % speak(State, Data, PromptList);
 
 % }}-
 % TODO FEATURE article metadata
