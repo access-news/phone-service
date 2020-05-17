@@ -10,12 +10,13 @@
     % gen_server callbacks
     , init/1
     , handle_call/3
-    % , handle_cast/2
+    , handle_cast/2
     % , terminate/2
 
     % public API
     , pick/2
     , root/0
+    , refresh/0
 
     % private functions
     , load_content_graph/1
@@ -51,7 +52,7 @@ init(_Args) ->
     % It `realize/0`s the dir structure at the moment if it does not exit, but in subsequent phases the graph will be based on a remote cloud storage - it is cheap to redraw the entire graph by reading local files, but that will not cut it later. The graph will need to be de-serialized and kept up to date via messages, then saved to disk on startup.
     % }}-
     ContentRootDir =
-        filename:join(?CONTENT_ROOT_DIR, "0"),
+        filename:join(?CONTENT_ROOT_DIR, "00"),
 
     case file:list_dir(ContentRootDir) of
         {error, enoent} ->
@@ -95,6 +96,10 @@ handle_call({Direction, Vertex}, _From, Graph)
 
 handle_call(_Command, _From, Graph) ->
     {reply, invalid_command, Graph}.
+
+handle_cast(regraph, Graph) ->
+    {ok, NewGraph} = refresh_content_graph(Graph),
+    {noreply, NewGraph}.
 
 % HOW TO SERIALIZE A DIGRAPH {{-
 % Serialization is implemented in ivr.erl (probably also commented out)
@@ -204,6 +209,9 @@ pick(Direction, CurrentVertex) -> % List Content | []
 
 root() ->
     pick(content_root, ignore).
+
+refresh() ->
+    gen_server:cast(?MODULE, regraph).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions                                                  %%
@@ -347,6 +355,9 @@ do_make(Graph, Dir) ->
             % When new recordings are added to a publication, the graph is either re-created from scratch (`refresh_content_graph/2`), or new recordings are copied in the publication directory and added by hand. This is going to change fundamentally once Access News Core is up and running so too much effort is a waste of time.
             % }}-
             OrderedDirList =
+                % The issue with this is that it is ordering strings, and long dirlists will have order of ["1", "10"]. Could have done an elaborate sorting scheme, but this is temporary anyway, and it is just easier to rename one digit selection strings in the publication guide to absolute 2 digit ones.
+               % EEEE WRONG: the publication_guide has integer values, the directories (made with `realize/[0,1]`) will have to conform to the absolute values
+               % COROLLARY TODO when adding recordings to publications, make sure to name them in a way that the below function orders them the way we want it (and thus will get linked with prev/next edges properly).
                 ordsets:from_list(List),
             % If ContentType =:= publication then DirList will consist entirely of files (meta.erl + audio files)
             % {ContentType, _, _} = Meta =
@@ -390,8 +401,8 @@ do_make(Graph, Dir) ->
 do_dirlist(_Graph, _ParentMeta, []) ->
     done;
 
-do_dirlist(Graph, ParentMeta, [{_, "meta.erl"}|Rest]) ->
-    do_dirlist(Graph, ParentMeta, Rest);
+% do_dirlist(Graph, ParentMeta, [{_, "meta.erl"}|Rest]) ->
+%     do_dirlist(Graph, ParentMeta, Rest);
 
 do_dirlist(_Graph, _ParentMeta, [first]) ->
     empty_dir;
@@ -404,7 +415,7 @@ do_dirlist( % {{-
   | Rest
   ]
 ) ->
-    logger:notice(#{ first => MetaPath }),
+    % logger:notice(#{ first => MetaPath }),
     % add_vertex_and_parent_edge(Graph, ParentMeta, Meta, first),
     % digraph:add_vertex(Graph, Meta, first),
     digraph:add_vertex(Graph, Meta),
@@ -430,7 +441,7 @@ do_dirlist( % {{-
   | Rest
   ]
 ) ->
-    logger:notice(#{ metapath_a => M, metapath_b => MetaPath}),
+    % logger:notice(#{ metapath_a => M, metapath_b => MetaPath}),
     % { NewDirList
     % , VertexBLabel
     % } =
@@ -1078,10 +1089,17 @@ list_category_entries(CategoryDir) -> % {{-
 % }}-
 
 make_dir_and_meta_file({_, N, _} = Category, Path) -> % {{-
+    SubDir =
+        case integer_to_list(N) of
+            S when length(S) =:= 1 ->
+                "0" ++ S;
+            S ->
+                S
+        end,
     Dir =
         filename:join(
           Path,
-          integer_to_list(N)
+          SubDir
         ),
     file:make_dir(Dir),
     write_meta_file(Category, Dir).
