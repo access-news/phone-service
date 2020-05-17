@@ -123,6 +123,7 @@ init(_Args) -> % {{-
          ,  auth_status => unregistered % | registered
          % , menu_history => [] % used as a stack
          , current_content => hd(content:root())
+         , prev_state => content_root
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
          % Could have used a proplist instead as a stack but (1) lookup is less convenient (more on that below), (2) less explicit (see below).
          ,    playbacks => []
@@ -668,7 +669,11 @@ handle_event(
                 % }}-
                 % 0         {{- => content_root
                 "0" ->
-                    next_content(content_root, Data);
+                    NewData =
+                        Data#{ playback_offset := "0"
+                             % , prev_state := State
+                             },
+                    next_content(content_root, NewData#{ prev_state := State });
                 % }}-
                 % TODO FEATURE tutorial
                 % 1         {{- => tutorial
@@ -720,7 +725,8 @@ handle_event(
                 % }}-
                 % #          {{- => enter first child category
                 "#" ->
-                    next_content(first, Data);
+                    % next_content(first, Data);
+                    next_content(first, Data#{ prev_state := State });
                 % }}-
                 % [1-9]      {{- => collect digits
                 _ when Digit =:= "1"
@@ -743,7 +749,8 @@ handle_event(
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
                 "*" ->
-                    next_content(parent, Data);
+                    % next_content(parent, Data);
+                    next_content(parent, Data#{ prev_state := State });
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -754,7 +761,8 @@ handle_event(
                     logger:debug(#{ a => "HANDLE_DTMF:CATEGORY"
                                   , state => State
                                   }),
-                    next_content(next, Data);
+                    % next_content(next, Data);
+                    next_content(next, Data#{ prev_state := State });
                 % }}-
                 % [1-9]      {{- => collect digits
                 _ when Digit =:= "1"
@@ -777,7 +785,8 @@ handle_event(
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
                 "*" ->
-                    next_content(parent, Data);
+                    % next_content(parent, Data);
+                    next_content(parent, Data#{ prev_state := State });
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -785,13 +794,15 @@ handle_event(
                 % }}-
                 % #          {{- => next publication (i.e., next sibling)
                 "#" ->
-                    next_content(next, Data);
+                    % next_content(next, Data);
+                    next_content(next, Data#{ prev_state := State });
                 % }}-
                 % TODO PROD handle no articles
                 % DONE? test
                 % 1         {{- => Play FIRST article
                 "1" ->
-                    next_content(first, Data);
+                    % next_content(first, Data);
+                    next_content(first, Data#{ prev_state := State });
                 % }}-
                 % TODO FEATURE list articles
                 % 2         {{- => UNASSIGNED (keep_state_and_data)
@@ -799,7 +810,8 @@ handle_event(
                 % }}-
                 % 3         {{- => Play LAST article
                 "3" ->
-                    next_content(last, Data);
+                    % next_content(last, Data);
+                    next_content(last, Data#{ prev_state := State });
                 % }}-
                 % 4-8       {{- => UNASSIGNED (keep_state_and_data)
                 "4" -> keep_state_and_data;
@@ -813,7 +825,8 @@ handle_event(
                 % }}-
                 % 9         {{- => PREVIOUS publication
                 "9" ->
-                    next_content(prev, Data)
+                    % next_content(prev, Data)
+                    next_content(prev, Data#{ prev_state := State })
                 % }}-
             end;
 
@@ -823,7 +836,8 @@ handle_event(
             case Digit of
                 % *          {{- => back to publication
                 "*" ->
-                    next_content(parent, Data);
+                    % next_content(parent, Data);
+                    next_content(parent, Data#{ prev_state := State });
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -831,7 +845,8 @@ handle_event(
                 % }}-
                 % #          {{- => next article (i.e., next sibling)
                 "#" ->
-                    next_content(next, Data);
+                    % next_content(next, Data);
+                    next_content(next, Data#{ prev_state := State });
                 % }}-
                 % TODO FEATURE reset volume/speed
                 % NOTE Difference between this and the same clause in ARTICLE_HELP is that this will always start the article from the beginning (offset =:= 0), while ARTICLE_HELP should resume the playback from last saved position
@@ -852,7 +867,8 @@ handle_event(
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
-                    next_content(prev, Data)
+                    % next_content(prev, Data)
+                    next_content(prev, Data#{ prev_state := State })
                 % }}-
             end;
 
@@ -863,7 +879,9 @@ handle_event(
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
                 "*" ->
-                    next_content(parent, Data);
+                    NewData = Data#{ playback_offset := "0" },
+                    % next_content(parent, NewData);
+                    next_content(parent, NewData#{ prev_state := State });
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -871,7 +889,9 @@ handle_event(
                 % }}-
                 % #          {{- => next article (i.e., next sibling)
                 "#" ->
-                    next_content(next, Data);
+                    NewData = Data#{ playback_offset := "0" },
+                    % next_content(next, NewData);
+                    next_content(next, NewData#{ prev_state := State });
                 % }}-
                 % TODO PROD in_progress implement controls
                 % DONE? test
@@ -917,7 +937,9 @@ handle_event(
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
-                    next_content(prev, Data)
+                    NewData = Data#{ playback_offset := "0" },
+                    % next_content(prev, NewData)
+                    next_content(prev, NewData#{ prev_state := State })
                 % }}-
             end;
 
@@ -929,7 +951,8 @@ handle_event(
             case Digit of
                 % *          {{- => back to publication
                 "*" ->
-                    next_content(parent, Data);
+                    % next_content(parent, Data);
+                    next_content(parent, Data#{ prev_state := State });
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -937,7 +960,8 @@ handle_event(
                 % }}-
                 % #          {{- => next article (i.e., next sibling)
                 "#" ->
-                    next_content(next, Data);
+                    % next_content(next, Data);
+                    next_content(next, Data#{ prev_state := State });
                 % }}-
                 % TODO FEATURE reset volume/speed
                 % TODO FEATURE listen to article meta
@@ -957,7 +981,8 @@ handle_event(
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
-                    next_content(prev, Data)
+                    % next_content(prev, Data)
+                    next_content(prev, Data#{ prev_state := State })
                 % }}-
             end;
 
@@ -1110,6 +1135,12 @@ when Application =:= "speak"
         _ when StoppedPlayback =:= State
              , IsStopped =:= true
         ->
+            % logger:debug(
+            %     #{ a => "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            %     , app_uuid => ApplicationUUID
+            %     , state => State
+            %     , stopped_playback => {StoppedPlayback, IsStopped}
+            %     }),
             {keep_state, NewData};
 
         % 3
@@ -1123,12 +1154,12 @@ when Application =:= "speak"
              % ; State =:= publication
              ; State =:= article_help
         ->
-            logger:debug(
-                #{ a => "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                , app_uuid => ApplicationUUID
-                , state => State
-                , stopped_playback => {StoppedPlayback, IsStopped}
-                }),
+            % logger:debug(
+            %     #{ a => "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            %     , app_uuid => ApplicationUUID
+            %     , state => State
+            %     , stopped_playback => {StoppedPlayback, IsStopped}
+            %     }),
             {repeat_state, NewData};
 
         % States where playback ended naturally,
@@ -1139,22 +1170,24 @@ when Application =:= "speak"
             {next_state, content_root, NewData};
 
         publication ->
-            next_content(first, NewData);
+            % next_content(first, NewData);
+            next_content(first, NewData#{ prev_state := State });
 
         article ->
-            next_content(next, NewData);
+            % next_content(next, NewData);
+            next_content(next, NewData#{ prev_state := State });
 
         collect_digits ->
             {keep_state, NewData};
 
         article_intro ->
-            logger:debug(
-                #{ a => "!!!ARTICLE_INTRO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                , app_uuid => ApplicationUUID
-                , state => State
-                , stopped_playback => {StoppedPlayback, IsStopped}
-                , next_state => derive_state(NewData)
-                }),
+            % logger:debug(
+            %     #{ a => "!!!ARTICLE_INTRO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            %     , app_uuid => ApplicationUUID
+            %     , state => State
+            %     , stopped_playback => {StoppedPlayback, IsStopped}
+            %     , next_state => derive_state(NewData)
+            %     }),
             {next_state, article, NewData};
 
         % UNINTERRUPTABLE states that only play a prompt
@@ -1811,6 +1844,7 @@ play % MAIN_MENU {{-
 ->
     Anchor = "Main menu.",
     Star = "To go back, press star.",
+    Zero = "To jump to the main category, press 0.",
     DevComment = "Comment: All the options following this are still not implemented. The only ones slated to make it into production for now are the login and blindness resources.",
     Pound =
         case AuthStatus of
@@ -1818,27 +1852,27 @@ play % MAIN_MENU {{-
             unregistered -> "To log in, "
         end
         ++ "press pound.",
-    % Zero = history listing
     One = "To start the tutorial, press one.",
     Two = "To leave a message, press two.",
     Three = "For settings, press three.",
     Four = "To learn about other blindness resources, press four.",
-    Five = "randomize playback",
+    % Five = "randomize playback",
 
     PromptList =
         [ Anchor
         , Star
+        , Zero
         , DevComment
         , Pound
         , One
         , Two
         , Three
         , Four
-        , Five
+        % , Five
         ],
 
-    speak(State, Data, [Anchor, "Loop test."]);
-    % speak(State, Data, PromptList);
+    % speak(State, Data, [Anchor, "Loop test."]);
+    speak(State, Data, PromptList);
 
 % }}-
 play % CONTENT_ROOT {{-
@@ -1855,8 +1889,8 @@ play % CONTENT_ROOT {{-
         ]
         ++ choice_list(CurrentContent),
 
-    speak(State, Data, [Title, "Loop test."]);
-    % speak(State, Data, PromptList);
+    % speak(State, Data, [Title, "Loop test."]);
+    speak(State, Data, PromptList);
 
 % }}-
 play % CATEGORY {{-
@@ -1878,8 +1912,8 @@ play % CATEGORY {{-
          , prompt => PromptList
          }),
 
-    speak(State, Data, [Title, "Loop test."]);
-    % speak(State, Data, PromptList);
+    % speak(State, Data, [Title, "Loop test."]);
+    speak(State, Data, PromptList);
     % f:pipe(
     %   [ PromptList
     %   , fun stitch/1
@@ -2039,14 +2073,12 @@ play % INACTIVITY_HANGUP {{-
 % }}-
 play % NO_CHILDREN {{-
 ( no_children = State
-, Data
+, #{current_content := #{ type := ContentType }} = Data
 )
 ->
-    CurrentContentType =
-        derive_state(Data),
     Prompt =
         "This "
-        ++ atom_to_list(CurrentContentType)
+        ++ atom_to_list(ContentType)
         ++ " is empty.",
 
     speak(State, Data, [Prompt]);
@@ -2054,14 +2086,12 @@ play % NO_CHILDREN {{-
 % }}-
 play % NO_PREV_ITEM {{-
 ( no_prev_item = State
-, Data
+, #{current_content := #{ type := ContentType }} = Data
 )
 ->
-    CurrentContentType =
-        derive_state(Data),
     Prompt =
         "This is the first "
-        ++ atom_to_list(CurrentContentType)
+        ++ atom_to_list(ContentType)
         ++ ".",
 
     speak(State, Data, [Prompt]);
@@ -2069,14 +2099,12 @@ play % NO_PREV_ITEM {{-
 % }}-
 play % NO_NEXT_ITEM {{-
 ( no_next_item = State
-, Data
+, #{current_content := #{ type := ContentType }} = Data
 )
 ->
-    CurrentContentType =
-        derive_state(Data),
     Prompt =
         "This is the last "
-        ++ atom_to_list(CurrentContentType)
+        ++ atom_to_list(ContentType)
         ++ ".",
 
     speak(State, Data, [Prompt]).
@@ -2487,7 +2515,12 @@ set_current(Content, Data) ->
 % get_current(#{ current_content := Content } = _Data) ->
 %     Content.
 
-next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
+next_content % {{-
+( Direction
+, #{ current_content := CurrentContent
+   , prev_state := PrevState
+   } = Data
+)
   % The `children` direction is different from the rest; aside from [] and [_], it can also return lists with more than one element ([_,_|_]). It also does not make sense semantically, because we only need one element to determine the next state.
   when Direction =:= parent;
        Direction =:= first;
@@ -2505,8 +2538,6 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
         end,
     NewData =
         set_current(NextContent, Data),
-    PrevState =
-        derive_state(CurrentContent),
     NextState =
         % When there is no vertex in a given direction `content:pick/2` will return `none`, and it means that control will be redirected to special uninterruptable warning states in the next case clause, hence `ignore`
         case NextContent =:= none of
@@ -2516,6 +2547,12 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
                 ignore
         end,
 
+            logger:debug(
+                #{ a => "!!!!!!NEXT_CONTENT!!!!!!!!!!!!!!!"
+                , current_content => CurrentContent
+                , next_state => NextState
+                , prev_state => PrevState
+                }),
     case {NextContent, Direction} of
         % TODO PROD implement states otherwise it will crash
         % DONE? test
@@ -2529,15 +2566,14 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
         ->
             {repeat_state, NewData};
 
-        _ when PrevState =:= NextState
-             , CurrentContent =:= NextContent
+        _ when PrevState =/= NextState
         ->
             % NewData = set_current(NextContent, Data),
             % Not simply pattern-matching `NewData` because if "up" results in the root category then the next state is `content_root` and not `category`
             % NextState = derive_state(NewData),
-            {keep_state, NewData};
-            % {next_state, NextContent, NewData}
-        _ when PrevState =/= NextState ->
+            % {keep_state, NewData};
+            % % {next_state, NextContent, NewData}
+        % _ when CurrentContent =/= NextContent ->
             {next_state, NextState, NewData}
     end.
     % NewData =
@@ -2594,6 +2630,7 @@ next_content(Direction, #{ current_content := CurrentContent } = Data) % {{-
 stringify(Term) ->
     R = io_lib:format("~p",[Term]),
     lists:flatten(R).
+% }}-
 
 change_speed(Direction, Data) ->
     #{ playback_speed := Speed } = Data,
@@ -2612,7 +2649,6 @@ change_speed(Direction, Data) ->
     uuid_fileman("speed:" ++ NewSpeed),
     NewData = Data#{ playback_speed := NewSpeed },
     {keep_state, NewData}.
-% }}-
 % }}-
 
 % vim: set fdm=marker:
