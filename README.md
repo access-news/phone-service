@@ -1,5 +1,11 @@
 # Phone service to reach Access News content
 
+## Scratch notes
+
+```erlang
+erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -run content -sname access_news -setcookie OldTimeRadio
+```
+
 ## 0. Layout
 
 ```text
