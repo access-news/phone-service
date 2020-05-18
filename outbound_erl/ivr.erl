@@ -670,7 +670,7 @@ handle_event(
                 % 0         {{- => content_root
                 "0" ->
                     NewData =
-                        Data#{ playback_offset := "0"
+                        Data#{ playback_offset := "-1"
                              % , prev_state := State
                              },
                     next_content(content_root, NewData#{ prev_state := State });
@@ -848,22 +848,25 @@ handle_event(
                     % next_content(next, Data);
                     next_content(next, Data#{ prev_state := State });
                 % }}-
+                % 1          {{- => skip rest of intro and start article
+                "1" ->
+                    {next_state, article, Data};
+                % }}-
+                % 2          {{- => ARTICLE_HELP
+                "2" ->
+                    {next_state, article_help, Data};
+                % }}-
                 % TODO FEATURE reset volume/speed
                 % NOTE Difference between this and the same clause in ARTICLE_HELP is that this will always start the article from the beginning (offset =:= 0), while ARTICLE_HELP should resume the playback from last saved position
-                % 1-8        {{- => start article
-                _ when Digit =:= "1"
-                     ; Digit =:= "2"
-                     ; Digit =:= "3"
+                % 1-8        {{- => skip rest of intro and start article
+                _ when Digit =:= "3"
                      ; Digit =:= "4"
                      ; Digit =:= "5"
                      ; Digit =:= "6"
                      ; Digit =:= "7"
                      ; Digit =:= "8"
                 ->
-                    { next_state
-                    , article
-                    , Data#{ playback_offset := "0" }
-                    };
+                    {next_state, article, Data};
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
@@ -879,22 +882,21 @@ handle_event(
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
                 "*" ->
-                    NewData = Data#{ playback_offset := "0" },
+                    NewData = Data#{ playback_offset := "-1" },
                     % next_content(parent, NewData);
                     next_content(parent, NewData#{ prev_state := State });
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
+                    % `playback_offset` is saved at CHANNEL_EXECUTE_COMPLETE clause in {article, is_stopped: true}
                     {next_state, main_menu, Data};
                 % }}-
                 % #          {{- => next article (i.e., next sibling)
                 "#" ->
-                    NewData = Data#{ playback_offset := "0" },
+                    NewData = Data#{ playback_offset := "-1" },
                     % next_content(next, NewData);
                     next_content(next, NewData#{ prev_state := State });
                 % }}-
-                % TODO PROD in_progress implement controls
-                % DONE? test
                 % NOTE using `api` for now instead of `bgapi`
                 % 1          {{- => rewind (10s)
                 "1" ->
@@ -903,6 +905,7 @@ handle_event(
                 % }}-
                 % 2          {{- => pause (stop) article
                 "2" ->
+                    % `playback_offset` is saved at CHANNEL_EXECUTE_COMPLETE clause in {article, is_stopped: true}
                     {next_state, article_help, Data};
                 % }}-
                 % 3          {{- => forward (10s)
@@ -928,7 +931,8 @@ handle_event(
                 % 7          {{- => restart article
                 "7" ->
                     uuid_fileman("restart"),
-                    keep_state_and_data;
+                    NewData = Data#{ playback_offset := "-1" },
+                    {keep_state, NewData};
                 % }}-
                 % 8          {{- => volume up
                 "8" ->
@@ -937,7 +941,7 @@ handle_event(
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
-                    NewData = Data#{ playback_offset := "0" },
+                    NewData = Data#{ playback_offset := "-1" },
                     % next_content(prev, NewData)
                     next_content(prev, NewData#{ prev_state := State })
                 % }}-
@@ -952,7 +956,12 @@ handle_event(
                 % *          {{- => back to publication
                 "*" ->
                     % next_content(parent, Data);
-                    next_content(parent, Data#{ prev_state := State });
+                    next_content
+                      ( parent
+                      , Data#{ prev_state := State
+                             , playback_offset := "-1"
+                             }
+                      );
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -961,11 +970,14 @@ handle_event(
                 % #          {{- => next article (i.e., next sibling)
                 "#" ->
                     % next_content(next, Data);
-                    next_content(next, Data#{ prev_state := State });
+                    next_content
+                      ( next
+                      , Data#{ prev_state := State
+                             , playback_offset := "-1"
+                             }
+                      );
                 % }}-
                 % TODO FEATURE reset volume/speed
-                % TODO FEATURE listen to article meta
-
                 % Almost the same here as in ARTICLE_INTRO; see note there
                 % 1-8        {{- => resume article
                 _ when Digit =:= "1"
@@ -977,12 +989,17 @@ handle_event(
                      ; Digit =:= "7"
                      ; Digit =:= "8"
                 ->
-                    {next_state, derive_state(Data), Data};
+                    {next_state, article, Data};
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
                     % next_content(prev, Data)
-                    next_content(prev, Data#{ prev_state := State })
+                    next_content
+                      ( prev
+                      , Data#{ prev_state := State
+                             , playback_offset := "-1"
+                             }
+                      )
                 % }}-
             end;
 
@@ -1065,6 +1082,7 @@ handle_event(
   State,
   % #{ prev_state := PrevState } = Data
   #{    playbacks := Playbacks
+   ,    playback_offset := SavedOffset
    } = Data
 )
 when Application =:= "speak"
@@ -1121,10 +1139,17 @@ when Application =:= "speak"
         %     {keep_state, NewData};
 
         _ when StoppedPlayback =:= article
-             , StoppedPlayback =/= State
+             % TODO would not `IsStopped =:= true` be better?
+             % , StoppedPlayback =/= State
+             , IsStopped =:= true
         ->
             % TODO BUG? Is there a possibility that this never gets saved?
-            {keep_state, NewData#{playback_offset := LastOffset}};
+            case SavedOffset =:= "-1" of
+                true ->
+                    {keep_state, NewData#{playback_offset := "0"}};
+                false ->
+                    {keep_state, NewData#{playback_offset := LastOffset}}
+            end;
 
         % 1
         % `is_stopped` should always be TRUE in this scenario
@@ -1175,7 +1200,12 @@ when Application =:= "speak"
 
         article ->
             % next_content(next, NewData);
-            next_content(next, NewData#{ prev_state := State });
+            next_content
+              ( next
+              , NewData#{ prev_state := State
+                        , playback_offset := "0" % because moving to the next article
+                        }
+              );
 
         collect_digits ->
             {keep_state, NewData};
