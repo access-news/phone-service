@@ -1816,20 +1816,6 @@ play(init, Data) -> Data;
 play(incoming_call, Data) -> Data;
 play(collect_digits, Data) -> Data;
 
-% play % COLLECT_DIGITS {{-
-% ( collect_digits = State
-% , #{ received_digits := [Digit|_] } = Data
-% )
-% ->
-%     % QUESTION Why does this work (theoretically) even though this special looping is only allowed to play this prompt once? {{-
-%     % ANSWER
-%     % a_state -> collect_digits transition (that is when collection is triggered) will end up in CHANNEL_EXECUTE_COMPLETE clause 1 while reading back the most recent DTMF digit already started
-%     % readback finishes uninterrupted: there is still time ahead probably for the ?INTERDIGIT_TIMEOUT to run out, and playback shouldn't be repeated. The CHANNEL_EXECUTE_COMPLETE event falls through all the clauses (the transition is collect_digits -> collect_digits, and IsStopped false) to its own collect_digits clause
-%     % readback is interrupted by a new digit (this case `collect_digits/2` is invoked that ends with `repeat_state`, so state enter will invoke a playback on the new digit) or the ?INTERDIGIT_TIMEOUT (that does not stay in collect_digits state): in this case it ends up in clause 2, which is no action
-%     % }}-
-%     speak(State, Data, Digit);
-
-% % }}-
 play % GREETING {{-
 ( greeting = State
 , #{ auth_status := AuthStatus } = Data
@@ -1845,7 +1831,7 @@ play % GREETING {{-
             unregistered ->
                 "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial zero pound, followed by your code."
                 ++ sign_up()
-                ++ "To leave a message with your contact details, dial zero two."
+                % ++ "To leave a message with your contact details, dial zero two."
         end,
     MainMenu =
         "For the main menu, press 0.",
@@ -1872,33 +1858,21 @@ play % MAIN_MENU {{-
   , #{auth_status := AuthStatus} = Data
   )
 ->
-    Anchor = "Main menu.",
-    Star = "To go back, press star.",
-    Zero = "To jump to the main category, press 0.",
-    DevComment = "Comment: All the options following this are still not implemented. The only ones slated to make it into production for now are the login and blindness resources.",
-    Pound =
-        case AuthStatus of
-              registered -> "For your Favourites, ";
-            unregistered -> "To log in, "
-        end
-        ++ "press pound.",
-    One = "To start the tutorial, press one.",
-    Two = "To leave a message, press two.",
-    Three = "For settings, press three.",
-    Four = "To learn about other blindness resources, press four.",
-    % Five = "randomize playback",
-
     PromptList =
-        [ Anchor
-        , Star
-        , Zero
-        , DevComment
-        , Pound
-        , One
-        , Two
-        , Three
-        , Four
-        % , Five
+        [ "Main menu."
+        , "Press star to go back."
+        , "Press zero to jump to the main category."
+        , "NOTE! The following options are still not implemented."
+        % , case AuthStatus of
+        %       registered -> "For your Favourites, ";
+        %       unregistered -> "To log in, "
+        %   end
+        %   ++ "press pound."
+        , "Press one to start the tutorial."
+        , "Press two to leave a message."
+        % , "For settings, press three."
+        , "Press three to learn about other blindness resources."
+        % , "randomize playback",
         ],
 
     % speak(State, Data, [Anchor, "Loop test."]);
@@ -1913,11 +1887,13 @@ play % CONTENT_ROOT {{-
   )
 ->
     PromptList =
-        [ Title
-        , "For the main menu, press 0."
+        [ Title ]
+        ++
+        choice_list(CurrentContent)
+        ++
+        [ "For the main menu, press 0."
         , "To enter the first category, press pound."
-        ]
-        ++ choice_list(CurrentContent),
+        ],
 
     % speak(State, Data, [Title, "Loop test."]);
     speak(State, Data, PromptList);
@@ -1932,15 +1908,15 @@ play % CATEGORY {{-
 ->
     PromptList =
         [ Title ]
-        ++ common_options(State)
-        ++ choice_list(CurrentContent),
+        ++ choice_list(CurrentContent)
+        ++ common_options(State),
 
-    logger:debug(
-        #{ a => "PLAY_CATEGORY"
-         , current_content => CurrentContent
-         , data => Data
-         , prompt => PromptList
-         }),
+    % logger:debug(
+    %     #{ a => "PLAY_CATEGORY"
+    %      , current_content => CurrentContent
+    %      , data => Data
+    %      , prompt => PromptList
+    %      }),
 
     % speak(State, Data, [Title, "Loop test."]);
     speak(State, Data, PromptList);
@@ -1972,9 +1948,9 @@ play % PUBLICATION {{-
         , "There are " ++ integer_to_list(NumberOfArticles) ++ " articles in this publication. The first article will start automatically when playback of this menu is finished."
         ]
         ++ common_options(State) ++
-        [ "To start the first article, press 1."
-        , "To jump to the last article, press 3."
-        , "To go to the previous publication in this category, press 9."
+        [ "Press one to start the first article."
+        , "Press three to jump to the last article."
+        , "Press nine to go to the previous publication in this category."
         , "Starting first article."
         ],
 
@@ -1989,7 +1965,8 @@ play % ARTICLE_INTRO {{-
 , Data
 )
 ->
-    speak(article_intro, Data, ["Press 2 at any time to pause the article and listen to the help menu."]);
+    % speak(article_intro, Data, ["Press 2 at any time to pause the article and listen to the help menu."]);
+    speak(article_intro, Data, ["Press 2 for help at any time."]);
     % playback(State, Data, Path);
     % TODO FEATURE read article meta and figure out how to store the latter
     %      (also, should article_meta be a separate state?)
@@ -2043,17 +2020,17 @@ play % ARTICLE_HELP {{-
         , "To resume, press any button between 1 and 8."
         , "During playback, you have the following controls available:"
         , "For the publication menu, press star."
-        , "For the main menu, press 0."
-        , "To play the next article, press pound."
-        , "For the previous article, press 9."
-        , "To pause playback, press 2."
-        , "To restart the article, press 7."
-        , "To go back 10 seconds, press 1."
-        , "To go forward 10 seconds, press 3."
-        , "To slow down the recording, press 4."
-        , "To speed up, press 6."
-        , "To turn down the volume, press 5."
-        , "To turn it up, press 8."
+        , "For the main menu, press zero."
+        , "To jump to the next article, press pound."
+        , "To listen to the previous article, press nine."
+        , "To pause the article and for this help menu, press two."
+        , "To restart the article, press seven."
+        , "To go back 10 seconds, press one."
+        , "To go forward 10 seconds, press three."
+        , "To slow down the recording, press four."
+        , "To speed up, press six."
+        , "To turn down the volume, press five."
+        , "To turn it up, press eight."
         ],
 
     speak(State, Data, PromptList);
@@ -2101,6 +2078,7 @@ play % INACTIVITY_HANGUP {{-
     speak(State, Data, ["Goodbye."]);
 
 % }}-
+% TODO PROD Is this even used?
 play % NO_CHILDREN {{-
 ( no_children = State
 , #{current_content := #{ type := ContentType }} = Data
@@ -2499,13 +2477,13 @@ common_options(ContentType) % {{-
      ; ContentType =:= article
 ->
     Star =
-        "To go up, press star.",
+        "Press star to go up a level.",
     Pound =
-        "To jump to the next "
+        "Press pound to jump to the next "
         ++ atom_to_list(ContentType)
-        ++ ", press pound.",
+        ++ ".",
     Zero =
-        "For the main menu, press 0.",
+        "For the main menu, press zero.",
 
     [Zero, Star, Pound].
 
