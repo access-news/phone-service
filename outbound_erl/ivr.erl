@@ -1978,13 +1978,19 @@ play % PUBLICATION {{-
 
     PromptList =
         [ Title
-        , "There are " ++ integer_to_list(NumberOfArticles) ++ " articles in this publication. The first article will start automatically when playback of this menu is finished."
+        , "There are "
+          ++ integer_to_list(NumberOfArticles)
+          ++ " articles in this publication. The first article will start automatically when playback of this menu is finished."
         ]
-        ++ common_options(State) ++
+        ++ common_options(State)
+        ++
         [ "Press one to start the first article."
         , "Press three to jump to the last article."
         , "Press nine to go to the previous publication in this category."
-        , "Starting first article."
+        , case NumberOfArticles =:= 0 of
+              true  -> "Starting first article.";
+              false -> ""
+          end
         ],
 
     % speak(State, Data, [Title, Title, Title,  "loop test."]);
