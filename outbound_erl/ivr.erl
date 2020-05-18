@@ -13,19 +13,32 @@
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
-
-% Replaced this with a `main_category()` function at one point but had to revert because needed to use this in guards when handling DTMFs, and that will not work.
--define(CONTENT_ROOT, "/home/toraritte/clones/phone-service/content-root/").
-% -define(CATEGORIES, {category, 0, ?CONTENT_ROOT}).
--define(CATEGORIES, {category, 0, "Main category"}).
+% TODO goes to README
 % erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -sname access_news -setcookie OldTimeRadio
-% a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
+
+% NOTE On timeouts {{-
+% According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out):
+% > When a time-out is  started, any running time-out of
+% > the same type (`state_timeout`, `{timeout, Name}` or
+% > `timeout`), is  cancelled, that is, the  time-out is
+% > restarted with the new time.
+% The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer:
+% > Setting a [generic] timer with the same `Name` while
+% > it is running will restart  it with the new time-out
+% > value. Therefore it is possible to cancel a specific
+% > time-out by setting it to infinity.
+% }}-
 -define(DEMO_TIMEOUT, 300000). % 5 min
 -define(INTERDIGIT_TIMEOUT, 2000).
-% -define(INACTIVITY_WARNING_TIMEOUT, 600000). % 10 min
-% -define(INACTIVITY_TIMEOUT, 720000). % 12 min
 
-% -define(DTMF_DIGIT_TIMEOUT, 5000). % TODO ???
+% NOTE Inactivity warnings and timeouts {{-
+% are not  defined here,  becasue they  have different
+% values  whether one  is listening  to an  article or
+% somewhere in the menu system.
+%
+% See `re_start_inactivity_timer/1`  (which is invoked
+% for every incoming DTMF digit).
+% }}-
 
 start_link(Ref) ->
     {ok, Pid} = gen_statem:start_link(?MODULE, [], []),
@@ -127,6 +140,8 @@ init(_Args) -> % {{-
          % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
          % Could have used a proplist instead as a stack but (1) lookup is less convenient (more on that below), (2) less explicit (see below).
          ,    playbacks => []
+         % not necessary; inactivity_warning will say its piece, and when they press a button it will clear inactivity timers
+         % , inactivity => ok
          % ,   prev_state => init
          % There should be only one playback running at any time, and, a corollary, each state should only have one active playback associated in this map. T
          % , playback_stopped => false
@@ -165,7 +180,15 @@ terminate(Reason, State, Data) ->
 % ->
 %     {keep_state, Data};
 
-handle_event(enter, _OldState, State, Data) -> %
+handle_event(enter, OldState, State, Data) -> %
+
+    OffsetReset =
+        fun(GenStatemData) ->
+            case lists:member(OldState, [publication, category, content_root]) of
+                true  -> GenStatemData#{ playback_offset := "0" };
+                false -> GenStatemData
+            end
+        end,
 
     NewData =
         % ( composeFlipped(
@@ -175,6 +198,8 @@ handle_event(enter, _OldState, State, Data) -> %
           % , fun(Data) -> comfort_noise(), Data end
           , fun comfort_noise/1
           % , fun(GenData) -> play(State, GenData) end
+          , OffsetReset
+          , fun(Data) -> logger:debug(#{ aaa => {State, OldState, Data} }), Data end
           , (f:curry(fun play/2))(State)
           ]
         ),
@@ -515,16 +540,7 @@ handle_event(
   %  } =
   Data                               % /         set there must also be true.
 ) ->
-    % logger:debug(#{ self() => ["CALL_ANSWERED", #{ state => State}]}),
-
-    % NOTE No need for this, because greeting transitions to the main category never to be revisited again in the same session, and the timer will started there.
-    % re_start_inactivity_timer(State),
-
-    { next_state
-    % , {greeting, content_root()}
-    , greeting
-    , Data
-    };
+    {next_state, greeting, Data};
 %% }}-
 
 %% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
@@ -669,11 +685,7 @@ handle_event(
                 % }}-
                 % 0         {{- => content_root
                 "0" ->
-                    NewData =
-                        Data#{ playback_offset := "-1"
-                             % , prev_state := State
-                             },
-                    next_content(content_root, NewData#{ prev_state := State });
+                    next_content(content_root, Data#{ prev_state := State });
                 % }}-
                 % TODO FEATURE tutorial
                 % 1         {{- => tutorial
@@ -758,9 +770,9 @@ handle_event(
                 % }}-
                 % #          {{- => next category (i.e., next sibling)
                 "#" ->
-                    logger:debug(#{ a => "HANDLE_DTMF:CATEGORY"
-                                  , state => State
-                                  }),
+                    % logger:debug(#{ a => "HANDLE_DTMF:CATEGORY"
+                    %               , state => State
+                    %               }),
                     % next_content(next, Data);
                     next_content(next, Data#{ prev_state := State });
                 % }}-
@@ -780,7 +792,7 @@ handle_event(
             end;
 
         % }}-
-        % === PUBLICATION (loop) {{-
+        % === PUBLICATION (-> first article) {{-
         publication ->
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
@@ -882,9 +894,8 @@ handle_event(
             case Digit of
                 % *          {{- => back (i.e., up in content hierarchy)
                 "*" ->
-                    NewData = Data#{ playback_offset := "-1" },
                     % next_content(parent, NewData);
-                    next_content(parent, NewData#{ prev_state := State });
+                    next_content(parent, Data#{ prev_state := State });
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -893,9 +904,8 @@ handle_event(
                 % }}-
                 % #          {{- => next article (i.e., next sibling)
                 "#" ->
-                    NewData = Data#{ playback_offset := "-1" },
                     % next_content(next, NewData);
-                    next_content(next, NewData#{ prev_state := State });
+                    next_content(next, Data#{ prev_state := State });
                 % }}-
                 % NOTE using `api` for now instead of `bgapi`
                 % 1          {{- => rewind (10s)
@@ -931,8 +941,7 @@ handle_event(
                 % 7          {{- => restart article
                 "7" ->
                     uuid_fileman("restart"),
-                    NewData = Data#{ playback_offset := "-1" },
-                    {keep_state, NewData};
+                    {keep_state, Data};
                 % }}-
                 % 8          {{- => volume up
                 "8" ->
@@ -941,9 +950,8 @@ handle_event(
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
-                    NewData = Data#{ playback_offset := "-1" },
                     % next_content(prev, NewData)
-                    next_content(prev, NewData#{ prev_state := State })
+                    next_content(prev, Data#{ prev_state := State })
                 % }}-
             end;
 
@@ -959,7 +967,6 @@ handle_event(
                     next_content
                       ( parent
                       , Data#{ prev_state := State
-                             , playback_offset := "-1"
                              }
                       );
                 % }}-
@@ -973,7 +980,6 @@ handle_event(
                     next_content
                       ( next
                       , Data#{ prev_state := State
-                             , playback_offset := "-1"
                              }
                       );
                 % }}-
@@ -989,7 +995,7 @@ handle_event(
                      ; Digit =:= "7"
                      ; Digit =:= "8"
                 ->
-                    {next_state, article, Data};
+                    {next_state, derive_state(Data), Data};
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
@@ -997,11 +1003,21 @@ handle_event(
                     next_content
                       ( prev
                       , Data#{ prev_state := State
-                             , playback_offset := "-1"
                              }
                       )
                 % }}-
             end;
+
+        % }}-
+        % === ARTICLE_HELP (loop) {{-
+        % Not checking  for digits because their  only meaning
+        % here  is  to  skip   this  prompt,  and  cancel  the
+        % inactivity timers.
+        inactivity_warning ->
+            { next_state
+            , derive_state(Data)
+            , Data
+            };
 
         % }}-
         % === UNINTERRUPTABLE STATES
@@ -1009,7 +1025,7 @@ handle_event(
         % hangups  -> keep_state_and_data
         % [*#0-9]    {{- => ignore (keep_state_and_data)
         _ when State =:= invalid_selection
-             ; State =:= inactivity_warning
+             % ; State =:= inactivity_warning
              ; State =:= demo_hangup
              ; State =:= inactivity_hangup
              ; State =:= no_children
@@ -1108,12 +1124,12 @@ when Application =:= "speak"
     NewData =
         Data#{ playbacks := NewPlaybacks },
 
-    logger:debug(
-        #{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE"
-         , app_uuid => ApplicationUUID
-         , state => State
-         , stopped_playback => {StoppedPlayback, IsStopped}
-         }),
+    % logger:debug(
+    %     #{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE"
+    %      , app_uuid => ApplicationUUID
+    %      , state => State
+    %      , stopped_playback => {StoppedPlayback, IsStopped}
+    %      }),
 
     % NewData =
     %     ( composeFlipped(
@@ -1144,12 +1160,20 @@ when Application =:= "speak"
              , IsStopped =:= true
         ->
             % TODO BUG? Is there a possibility that this never gets saved?
-            case SavedOffset =:= "-1" of
-                true ->
-                    {keep_state, NewData#{playback_offset := "0"}};
-                false ->
-                    {keep_state, NewData#{playback_offset := LastOffset}}
-            end;
+            % case SavedOffset =:= "-1" of
+            % case {SavedOffset, IsStopped} of
+            %     {-1, true} ->
+                    % {keep_state, NewData#{playback_offset := "0"}};
+            %     {_, true} ->
+                    {keep_state, NewData#{playback_offset := LastOffset}};
+            %     _ ->
+            %         next_content
+            %         ( next
+            %         , NewData#{ prev_state := State
+            %                   , playback_offset := "0" % because moving to the next article
+            %                   }
+            %         );
+            % end;
 
         % 1
         % `is_stopped` should always be TRUE in this scenario
@@ -1198,32 +1222,47 @@ when Application =:= "speak"
             % next_content(first, NewData);
             next_content(first, NewData#{ prev_state := State });
 
-        article ->
-            % next_content(next, NewData);
-            next_content
-              ( next
-              , NewData#{ prev_state := State
-                        , playback_offset := "0" % because moving to the next article
-                        }
-              );
+        article -> % that is, playback hasn't been stopped and the state loops but in a special kind of way (offset needs to be reset)
+            {repeat_state, NewData#{ playback_offset := "0"}};
+        %     % next_content(next, NewData);
+
+        %     logger:debug(
+        %         #{ a => "!!!article, false -> CULPRIT?!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        %         , app_uuid => ApplicationUUID
+        %         , state => State
+        %         , stopped_playback => {StoppedPlayback, IsStopped}
+        %         % , next_state => derive_state(NewData)
+        %         }),
+
+        %     next_content
+        %       ( next
+        %       , NewData#{ prev_state := State
+        %                 , playback_offset := "0" % because moving to the next article
+        %                 }
+        %       );
 
         collect_digits ->
             {keep_state, NewData};
 
         article_intro ->
-            % logger:debug(
-            %     #{ a => "!!!ARTICLE_INTRO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-            %     , app_uuid => ApplicationUUID
-            %     , state => State
-            %     , stopped_playback => {StoppedPlayback, IsStopped}
-            %     , next_state => derive_state(NewData)
-            %     }),
+
+            logger:debug(
+                #{ a => "!!!ARTICLE_INTRO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                , app_uuid => ApplicationUUID
+                , state => State
+                , stopped_playback => {StoppedPlayback, IsStopped}
+                % , next_state => derive_state(NewData)
+                }),
+
             {next_state, article, NewData};
+
+        inactivity_warning ->
+            {next_state, derive_state(NewData), NewData};
 
         % UNINTERRUPTABLE states that only play a prompt
         % formerly {warning, _}         % | TODO already see a pattern
         _ when State =:= invalid_selection
-             ; State =:= inactivity_warning
+             % ; State =:= inactivity_warning
              ; State =:= no_children
              ; State =:= no_prev_item
              ; State =:= no_next_item
@@ -1342,13 +1381,7 @@ handle_event
   , Data
   )
 ->
-    % Inactive =
-    %     "Please any key if you are still there.",
-
-    % TODO Add notes on how this works.
-    % TODO how is this applicable when in {article, _}?
-    % NewDataP =
-    %     warning(Inactive, Data),
+    % TODO Add notes on how this works. See `init/1` also for Data#inactivity
     {next_state, inactivity_warning, Data};
 
 handle_event(
@@ -1657,7 +1690,7 @@ sendmsg(
    , args       := SendmsgArgs
    } = Args
 ) ->
-    logger:debug(#{ a => ["SENDMSG", #{args => Args}]}),
+    % logger:debug(#{ a => ["SENDMSG", #{args => Args}]}),
     do_sendmsg(Args#{ event_lock => false }).
 
 sendmsg_locked(
@@ -1783,10 +1816,10 @@ comfort_noise(Milliseconds, Data) -> % {{-
         ++ integer_to_list(Milliseconds)
         ++ ",1400",
 
-    logger:debug(
-        #{ a => "COMFORT_NOISE"
-         , data => Data
-         }),
+    % logger:debug(
+    %     #{ a => "COMFORT_NOISE"
+    %      , data => Data
+    %      }),
 
     playback(comfort_noise, Data, ComfortNoise).
     % sendmsg_locked(
@@ -2052,7 +2085,7 @@ play % INACTIVITY_WARNING {{-
     speak
       ( State
       , Data
-      , ["Please press any key if you are still there."]
+      , ["Please note that we haven't registered any activity from you for some time now. Please press any buttons if you are still there."]
       );
 
 % }}-
@@ -2222,12 +2255,12 @@ speak % {{-
            , app_uuid_prefix   => PlaybackName
            }),
 
-    logger:debug(
-        #{ a => "SPEAK"
-         , "state|playbackname" => PlaybackName
-         , data => Data
-         , text_list => TextList
-         }),
+    % logger:debug(
+    %     #{ a => "SPEAK"
+    %      , "state|playbackname" => PlaybackName
+    %      , data => Data
+    %      , text_list => TextList
+    %      }),
 
     regurgitate(ApplicationUUID, PlaybackName, Data).
 % }}-
@@ -2444,25 +2477,32 @@ stitch([Utterance|Rest]) ->
 % start,   when call is answered
 % restart, when a DTMF signal comes in
 % NOTE: impossible to time out while collecting digits, because a DTMF signal restarts the timers, and the interdigit timeout is a couple seconds
+
+
+% Only triggered when  a new DTMF event  comes in, and
+% not  affected by  state transition/change  (as those
+% are mostly automatic).
 re_start_inactivity_timer(State) -> % {{-
+% TODO PROD test this (with corresponding handle clause); amended after the re-write, but no clue if it will blow up or not
 
     timer:cancel( get(inactivity_warning) ),
     timer:cancel( get(inactivity_hangup ) ),
 
-    TimeoutsInMinutes =
+    Timeouts = % in minutes
         case State of
-            % TODO this should be variable; there can be long articles, but after e.g., 3 hours of no activity they may be asleep (nudge: "if you are still there, please press 0 (that will pause and they can always start from the same place)
-            {article, _} ->
-                {90, 100};
+            % TODO Should this be a varible depending on article length?  there can be long articles, but after e.g., 3 hours of no activity they may be asleep (nudge: "if you are still there, please press 0 (that will pause and they can always start from the same place)
+            article ->
+                #{ warning => 90
+                 , timeout => 100
+                 };
             _ ->
-                {10, 12}
+                #{ warning => 10
+                 , timeout => 12
+                 }
         end,
-    % TODO Handle `article` state!
-    % For example, once a recording finished playing, there is a state change jumping to the next. (TODO: {article, ArticleID} as state?).
-    % BUT,
-    %   if no DTMF events received in an hour (?) the do the prompt, 10 minutes later kick out
-    WarningTimeout    = element(1, TimeoutsInMinutes) * 60 * 1000,
-    InactivityTimeout = element(2, TimeoutsInMinutes) * 60 * 1000,
+
+    WarningTimeout    = maps:get(warning, Timeouts) * 60 * 1000,
+    InactivityTimeout = maps:get(timeout, Timeouts) * 60 * 1000,
 
     {ok, IWref} = timer:send_after(WarningTimeout,    inactivity_warning),
     {ok, ITref} = timer:send_after(InactivityTimeout, inactivity_hangup),
@@ -2526,7 +2566,8 @@ set_current(Content, Data) ->
 next_content % {{-
 ( Direction
 , #{ current_content := CurrentContent
-   , prev_state := PrevState
+     % #{ type := ContentType } = CurrentContent
+   , prev_state := PrevState % TODO this could have been deduced from CurrentContent above...
    } = Data
 )
   % The `children` direction is different from the rest; aside from [] and [_], it can also return lists with more than one element ([_,_|_]). It also does not make sense semantically, because we only need one element to determine the next state.
@@ -2550,7 +2591,11 @@ next_content % {{-
         % When there is no vertex in a given direction `content:pick/2` will return `none`, and it means that control will be redirected to special uninterruptable warning states in the next case clause, hence `ignore`
         case NextContent =:= none of
             false ->
-                derive_state(NextContent);
+                % case PrevState =:= article of
+                case {PrevState, NextContent} of
+                    {article, #{ type := article }} -> article;
+                    _ -> derive_state(NextContent)
+                end;
             true ->
                 ignore
         end,
@@ -2558,8 +2603,10 @@ next_content % {{-
             logger:debug(
                 #{ a => "!!!!!!NEXT_CONTENT!!!!!!!!!!!!!!!"
                 , current_content => CurrentContent
-                , next_state => NextState
+                , direction => Direction
+                , next_content => NextContent
                 , prev_state => PrevState
+                , next_state => NextState
                 }),
     case {NextContent, Direction} of
         % TODO PROD implement states otherwise it will crash
@@ -2572,7 +2619,10 @@ next_content % {{-
         _ when PrevState =:= NextState
              , CurrentContent =/= NextContent
         ->
-            {repeat_state, NewData};
+            case PrevState =:= article of
+                true  -> {repeat_state, NewData#{ playback_offset := "0" }};
+                false -> {repeat_state, NewData}
+            end;
 
         _ when PrevState =/= NextState
         ->
