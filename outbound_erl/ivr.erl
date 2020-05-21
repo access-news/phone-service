@@ -1268,16 +1268,14 @@ when Application =:= "speak"
              ; State =:= no_next_item
              % ; State =:= article_intro
         ->
-            {next_state, derive_state(NewData), NewData}
+            {next_state, derive_state(NewData), NewData};
+
+        _ when State =:= demo_hangup;
+               State =:= inactivity_hangup
+        ->
+            keep_state_and_data
 
         % % TODO clean up {{-
-        %                                 % |
-        % % Not really necessary to handle this, but it's here for completeness sake
-        % _ when State =:= demo_hangup;
-        %        State =:= inactivity_hangup
-        % ->
-        %     keep_state_and_data;
-
         %     % Article =
         %     %     content(Current, first),
 

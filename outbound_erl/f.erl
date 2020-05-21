@@ -4,6 +4,7 @@
     [ pipe/1
     , composeFlipped/1
     , cflip/1
+    , flip/3
     , curry/1
     ]).
 
