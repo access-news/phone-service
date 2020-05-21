@@ -1,5 +1,7 @@
 -module(f).
 
+% Take a look at https://github.com/fenollp/fancyflow
+% Already reinvented the wheel but would not hurt
 -export(
     [ pipe/1
     , composeFlipped/1
