@@ -30,6 +30,7 @@
 % }}-
 -define(DEMO_TIMEOUT, 300000). % 5 min
 -define(INTERDIGIT_TIMEOUT, 2000).
+-define(PROMPT_DIR, "/home/toraritte/clones/phone-service/prompts/").
 
 % NOTE Inactivity warnings and timeouts {{-
 % are not  defined here,  becasue they  have different
@@ -170,7 +171,7 @@ callback_mode() ->
     % handle_event_function.
 
 terminate(Reason, State, Data) ->
-    logger:debug(#{ self() => ["TERMINATE (normal-ish)", #{ data => Data, reason => Reason, state => State }]}).
+    logger:debug(#{ self() => ["TERMINATE (normal-ish)"]}). %, #{ data => Data, reason => Reason, state => State }]}).
      % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
      % filog:remove_process_handler(?MODULE).
 
@@ -493,6 +494,8 @@ handle_event(
     %% everything related to the same call in one place.
     %% }}-
     fsend({api, uuid_setvar, UUID ++ " playback_terminators none"}),
+
+    logger:debug(#{ self() => ["INCOMING_CALL", CallerNumber]}),
 
     { NewAuthStatus
     , TransitionActions
@@ -1853,35 +1856,55 @@ play % GREETING {{-
 )
 ->
     % logger:debug("play greeting"),
-    Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
-    PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
-    Unregistered =
-        case AuthStatus of
-            registered ->
-                "";
-            unregistered ->
-                "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial zero pound, followed by your code."
-                ++ sign_up()
-                % ++ "To leave a message with your contact details, dial zero two."
-        end,
-    MainMenu =
-        "For the main menu, press 0.",
+    % Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
+    % PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
+    % Unregistered =
+    %     case AuthStatus of
+    %         registered ->
+    %             "";
+    %         unregistered ->
+    %             "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial zero pound, followed by your code."
+    %             ++ sign_up()
+    %             % ++ "To leave a message with your contact details, dial zero two."
+    %     end,
+    % MainMenu =
+    %     "For the main menu, press 0.",
     % TODO FEATUREs
     % GoToTutorial = "To listen to the tutorial, dial zero one.",
     % GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
     % LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial zero two to leave a message.",
 
-    PromptList =
-        [ Anchor
-        , Unregistered
-        , PoundOrStar
-        , MainMenu
+    % PromptList =
+    %     [ Anchor
+    %     , Unregistered
+    %     , PoundOrStar
+    %     , MainMenu
         % , GoToTutorial
         % , GoToBlindnessServices
         % , LeaveMessage
-        ],
+        % ],
 
-    speak(State, Data, PromptList);
+    % speak(State, Data, PromptList);
+
+    % Welcome  to Access  News, a  service of  Society For
+    % The  Blind  in  Sacramento, California,  for  blind,
+    % low-vision, and  print-impaired individuals.  If you
+    % know your selection,  you may enter it  at any time,
+    % or press star or pound to skip to listen to the main
+    % categories. You are currently in demo mode, and have
+    % approximately 5 minutes to try out the system before
+    % getting disconnected.  To log  in, dial  zero pound,
+    % followed by your  code. For the main  menu, press 0.
+    % If you have any questions, comments, or suggestions,
+    % please call 916 889 7519,  or dial zero two to leave
+    % a message.
+    NewData = comfort_noise(250, Data),
+    Prompt =
+        case AuthStatus of
+            registered -> "registered-greeting.wav";
+            unregistered -> "unregistered-greeting.wav"
+        end,
+    playback(State, NewData, ?PROMPT_DIR ++ Prompt);
 
 % }}-
 play % MAIN_MENU {{-
@@ -1889,26 +1912,29 @@ play % MAIN_MENU {{-
   , #{auth_status := AuthStatus} = Data
   )
 ->
-    PromptList =
-        [ "Main menu."
-        , "Press star to go back."
-        , "Press zero to jump to the main category."
-        , "NOTE! The following options are still not implemented."
-        % , case AuthStatus of
-        %       registered -> "For your Favourites, ";
-        %       unregistered -> "To log in, "
-        %   end
-        %   ++ "press pound."
-        , "Press one to start the tutorial."
-        , "Press two to leave a message."
-        % , "For settings, press three."
-        , "Press three to learn about other blindness resources."
-        % , "randomize playback",
-        ],
+    % PromptList =
+    %     [ "Main menu."
+    %     , "Press star to go back."
+    %     , "Press zero to jump to the main category."
+    %     , "NOTE! The following options are still not implemented."
+    %     % , case AuthStatus of
+    %     %       registered -> "For your Favourites, ";
+    %     %       unregistered -> "To log in, "
+    %     %   end
+    %     %   ++ "press pound."
+    %     , "Press one to start the tutorial."
+    %     , "Press two to leave a message."
+    %     % , "For settings, press three."
+    %     , "Press three to learn about other blindness resources."
+    %     % , "randomize playback",
+    %     ],
 
-    % speak(State, Data, [Anchor, "Loop test."]);
-    speak(State, Data, PromptList);
+    % % speak(State, Data, [Anchor, "Loop test."]);
+    % speak(State, Data, PromptList);
 
+    % Main menu. Press star to go back. Press zero to jump
+    % to the main category.
+    playback(State, NewData, ?PROMPT_DIR ++ "main-menu.wav");
 % }}-
 play % CONTENT_ROOT {{-
   ( content_root = State
