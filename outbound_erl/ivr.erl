@@ -10,6 +10,9 @@
     , callback_mode/0
     , handle_event/4
     , terminate/3
+
+    % miscellaneous
+    , vertex_to_filename/1
     ]).
 
 -define(FS_NODE, 'freeswitch@tr2').
@@ -1855,6 +1858,7 @@ play % GREETING {{-
 , #{ auth_status := AuthStatus } = Data
 )
 ->
+    % TTS pariahs {{-
     % logger:debug("play greeting"),
     % Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
     % PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
@@ -1885,26 +1889,43 @@ play % GREETING {{-
         % ],
 
     % speak(State, Data, PromptList);
+    % }}-
 
-    % Welcome  to Access  News, a  service of  Society For
-    % The  Blind  in  Sacramento, California,  for  blind,
-    % low-vision, and  print-impaired individuals.  If you
-    % know your selection,  you may enter it  at any time,
-    % or press star or pound to skip to listen to the main
-    % categories. You are currently in demo mode, and have
-    % approximately 5 minutes to try out the system before
-    % getting disconnected.  To log  in, dial  zero pound,
-    % followed by your  code. For the main  menu, press 0.
-    % If you have any questions, comments, or suggestions,
-    % please call 916 889 7519,  or dial zero two to leave
-    % a message.
+    % ./google-tts-wav.sh "Welcome  to Access  News, a  service of  Society For The  Blind  in  Sacramento, California,  for  blind, low-vision, and  print-impaired individuals.  If you know your selection,  you may enter it  at any time, or press pound to skip to the main categories." 0.87 > prompts/greeting-welcome.wav;
+    % ./google-tts-wav.sh "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected." 0.87 > prompts/greeting-unregistered.wav;
+    % ./google-tts-wav.sh "For the main  menu, press 0.  If you have any questions, please call 916 889 7519." 0.87 > prompts/greeting-options.wav;
+
     NewData = comfort_noise(250, Data),
-    Prompt =
-        case AuthStatus of
-            registered -> "registered-greeting.wav";
-            unregistered -> "unregistered-greeting.wav"
-        end,
-    playback(State, NewData, ?PROMPT_DIR ++ Prompt);
+    % Prompt =
+    %     case AuthStatus of
+    %         registered -> "registered-greeting.wav";
+    %         unregistered -> "unregistered-greeting.wav"
+    %     end,
+    % playback(greeting_welcome, NewData, ?PROMPT_DIR ++ "greeting-welcome.wav"),
+    % case AuthStatus of
+    %     registered ->
+    %         playback
+    %           ( greeting_unregistered
+    %           , NewData
+    %           , ?PROMPT_DIR ++ "greeting-unregistered.wav"
+    %           );
+    %     unregistered ->
+    %         noop
+    % end,
+    % playback(State, NewData, ?PROMPT_DIR ++ "greeting-options.wav");
+    f:pipe
+      ([ NewData
+       , (cp(greeting_welcome))("greeting-welcome.wav")
+       , fun(D) ->
+            case AuthStatus of
+                registered ->
+                    D;
+                unregistered ->
+                    ((cp(greeting_unregistered))("greeting-unregistered.wav"))(D)
+            end
+         end
+       , (cp(State))("greeting-options.wav")
+       ]);
 
 % }}-
 play % MAIN_MENU {{-
@@ -1912,6 +1933,7 @@ play % MAIN_MENU {{-
   , #{auth_status := AuthStatus} = Data
   )
 ->
+    % TTS pariahs {{-
     % PromptList =
     %     [ "Main menu."
     %     , "Press star to go back."
@@ -1931,10 +1953,11 @@ play % MAIN_MENU {{-
 
     % % speak(State, Data, [Anchor, "Loop test."]);
     % speak(State, Data, PromptList);
+    % }}-
 
-    % Main menu. Press star to go back. Press zero to jump
-    % to the main category.
-    playback(State, NewData, ?PROMPT_DIR ++ "main-menu.wav");
+    % ./google-tts-wav.sh "Main menu. Press star to go back. Press zero to jump to the main category." 0.87 > prompts/main-menu.wav;
+    playback(State, Data, ?PROMPT_DIR ++ "main-menu.wav");
+
 % }}-
 play % CONTENT_ROOT {{-
   ( content_root = State
@@ -1943,17 +1966,20 @@ play % CONTENT_ROOT {{-
      } = Data
   )
 ->
-    PromptList =
-        [ Title ]
-        ++
-        choice_list(CurrentContent)
-        ++
-        [ "For the main menu, press 0."
-        , "To enter the first category, press pound."
-        ],
+    % TTS pariahs {{-
+    % PromptList =
+    %     [ Title ]
+    %     ++
+    %     choice_list(CurrentContent)
+    %     ++
+    %     [ "For the main menu, press 0."
+    %     , "To enter the first category, press pound."
+    %     ],
 
-    % speak(State, Data, [Title, "Loop test."]);
-    speak(State, Data, PromptList);
+    speak(State, Data, [Title, "Loop test."]);
+    % speak(State, Data, PromptList);
+    % }}-
+    % playback(State, Data, ?PROMPT_DIR ++ "main-menu.wav");
 
 % }}-
 play % CATEGORY {{-
@@ -2246,7 +2272,7 @@ play % NO_NEXT_ITEM {{-
 %       }
 %     ).
 
-regurgitate
+regurgitate % {{-
 ( ApplicationUUID
 , PlaybackName
 , #{ playbacks := Playbacks } = Data
@@ -2270,6 +2296,7 @@ regurgitate
         % Playbacks#{ ApplicationUUID => Playback },
 
     Data#{ playbacks := NewPlaybacks }.
+% }}-
 
 speak % {{-
 ( PlaybackName
@@ -2738,6 +2765,27 @@ change_speed(Direction, Data) ->
     NewData = Data#{ playback_speed := NewSpeed },
     {keep_state, NewData}.
 % }}-
+
+vertex_to_filename(Vertex) ->
+    Pred =
+        fun(Char) when Char >= 65, Char =< 90;
+                       Char >= 97, Char =< 122
+           ->
+                true;
+           (_) ->
+                false
+        end,
+    lists:filter(Pred, Vertex).
+
+cp % time with Roy Wood Jr.
+(PlaybackName) ->
+
+    PlaybackWithReorderedArgs =
+        fun(Name, Path, Data) ->
+            playback(Name, Data, ?PROMPT_DIR ++ Path)
+        end,
+
+    (f:curry(PlaybackWithReorderedArgs))(PlaybackName).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
