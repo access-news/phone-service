@@ -17,6 +17,8 @@
     , pick/2
     , root/0
     , refresh/0
+    , add_label/2
+    , get_label/1
 
     % private functions
     , load_content_graph/1
@@ -42,7 +44,7 @@ start() ->
     {ok, Pid} = gen_server:start({local, ?MODULE}, ?MODULE, [], []),
     Pid.
 
-init(_Args) ->
+init(_Args) -> % {{-
     % 1> c("outbound_erl/content").
     % 2> content:start().
     % 3> R = content:pick(content_root, 27).
@@ -75,9 +77,10 @@ init(_Args) ->
     %     ),
 
     {ok, Graph}.
+% }}-
 
 %           request,      from,        state
-handle_call({Direction, Vertex}, _From, Graph)
+handle_call({pick, Direction, Vertex}, _From, Graph)
 % handle_call({Action, Direction}, _From, Graph)
   when Direction =:= parent       % \
      ; Direction =:= first        % |
@@ -94,8 +97,16 @@ handle_call({Direction, Vertex}, _From, Graph)
     , Graph
     };
 
-handle_call(_Command, _From, Graph) ->
-    {reply, invalid_command, Graph}.
+handle_call({get_label, Vertex}, _From, Graph) ->
+    {Vertex, Label} = digraph:vertex(Graph, Vertex),
+    {reply, Label, Graph}.
+
+% handle_call(_Command, _From, Graph) ->
+%     {reply, invalid_command, Graph}.
+
+handle_cast({add_label, Vertex, Label}, Graph) ->
+    digraph:add_vertex(Graph, Vertex, Label),
+    {noreply, Graph};
 
 handle_cast(regraph, Graph) ->
     {ok, NewGraph} = refresh_content_graph(Graph),
@@ -191,7 +202,7 @@ pick(Direction, CurrentVertex) -> % List Content | []
     % Result =
     gen_server:call
         ( ?MODULE
-        , {Direction, CurrentVertex}
+        , {pick, Direction, CurrentVertex}
         ).
     % case Result of
     %     [Vertex] -> Vertex; % all except `children`
@@ -212,6 +223,18 @@ root() ->
 
 refresh() ->
     gen_server:cast(?MODULE, regraph).
+
+add_label(Vertex, Label) ->
+    gen_server:cast
+        ( ?MODULE
+        , {add_label, Vertex, Label}
+        ).
+
+get_label(Vertex) ->
+    gen_server:call
+        ( ?MODULE
+        , {get_label, Vertex}
+        ).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions                                                  %%
