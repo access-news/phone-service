@@ -21,8 +21,9 @@
     , get_label/1
 
     % private functions
-    , load_content_graph/1
-    , refresh_content_graph/1
+    % , load_content_graph/1
+    % , refresh_content_graph/1
+    % TODO Make this part of the public API
     , realize/0
 
     , get_vertex/3
@@ -97,14 +98,29 @@ handle_call({pick, Direction, Vertex}, _From, Graph)
     , Graph
     };
 
-handle_call({get_label, Vertex}, _From, Graph) ->
+% No  error handling  if  Vertex is  not  a map;  this
+% should only be used from `ivr`, and it should use it
+% properly.
+handle_call({get_label, Vertex}, _From, Graph) when is_map(Vertex) ->
+    % NOTE  This  was  a   pretty  good  accidental  error {{-
+    % checking  code,  love  pattern  matching.  Was  only
+    % interested in Label, but  when called it manually in
+    % the ERL shell,  it blew up: simply  piped the result
+    % of   `content:root/0`  into   `content:get_label/1`,
+    % but  `content:pick/2`  always  returns  a  list.  So
+    % forgetting to ignore Vertex in the resulting 2-tuple
+    % below saved the day.  As Gorduin would say, "WooHoo"
+    % \o/ }}-
     {Vertex, Label} = digraph:vertex(Graph, Vertex),
     {reply, Label, Graph}.
 
 % handle_call(_Command, _From, Graph) ->
 %     {reply, invalid_command, Graph}.
 
-handle_cast({add_label, Vertex, Label}, Graph) ->
+% No  error handling  if  Vertex is  not  a map;  this
+% should only be used from `ivr`, and it should use it
+% properly.
+handle_cast({add_label, Vertex, Label}, Graph) when is_map(Vertex) ->
     digraph:add_vertex(Graph, Vertex, Label),
     {noreply, Graph};
 
