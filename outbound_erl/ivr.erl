@@ -1896,6 +1896,7 @@ play % GREETING {{-
     % ./google-tts-wav.sh "For the main  menu, press 0.  If you have any questions, please call 916 889 7519." 0.87 > prompts/greeting-options.wav;
 
     NewData = comfort_noise(250, Data),
+    % TODO delete % {{-
     % Prompt =
     %     case AuthStatus of
     %         registered -> "registered-greeting.wav";
@@ -1913,6 +1914,8 @@ play % GREETING {{-
     %         noop
     % end,
     % playback(State, NewData, ?PROMPT_DIR ++ "greeting-options.wav");
+    % }}-
+
     f:pipe
       ([ NewData
        , (cp(greeting_welcome))("greeting-welcome.wav")
@@ -1924,6 +1927,7 @@ play % GREETING {{-
                     ((cp(greeting_unregistered))("greeting-unregistered.wav"))(D)
             end
          end
+       % TODO split up to add `main_menu_file/0`
        , (cp(State))("greeting-options.wav")
        ]);
 
@@ -1976,10 +1980,20 @@ play % CONTENT_ROOT {{-
     %     , "To enter the first category, press pound."
     %     ],
 
-    speak(State, Data, [Title, "Loop test."]);
+    % speak(State, Data, [Title, "Loop test."]);
     % speak(State, Data, PromptList);
     % }}-
     % playback(State, Data, ?PROMPT_DIR ++ "main-menu.wav");
+
+    % PrompFiletList =
+    %        [ title_file(CurrentContent) ]
+    %     ++ choice_list(CurrentContent)
+    %     ++ [ to_main_menu_file() ],
+    %     % , "To enter the first category, press pound."
+    %     % ],
+
+    NewData = playback(some, Data, title_file(CurrentContent)),
+    speak(State, NewData, [Title, "Loop test."]);
 
 % }}-
 play % CATEGORY {{-
@@ -2047,8 +2061,17 @@ play % PUBLICATION {{-
     speak(State, Data, PromptList);
 
 % }}-
-% TODO FEATURE article metadata
-% PROGRESS it is called `article_intro`; test it
+% NOTE - DO NOT TOUCH {{-
+% Yes, this could have  been included in ARTICLE state
+% as  an  extra  playback  (and as  long  as  it  does
+% not  have  the  same  playback name,  it  would  not
+% have interfered  with state progression laid  out in
+% CHANNEL_EXECUTE_COMPLETE  `handle_event/4`  clause),
+% but  all  the  controls defined  for  ARTICLE  would
+% also  apply  to  it,  and as  soon  as  the  article
+% starts,  everything would  have  been reset,  making
+% this probably confusing for the listener.
+% }}-
 play % ARTICLE_INTRO {{-
 ( article_intro = State
 , Data
@@ -2346,6 +2369,8 @@ playback % {{-
     regurgitate(ApplicationUUID, PlaybackName, Data).
 % }}-
 
+% The only  difference from `lists:flatten/1`  is that
+% it adds an extra space between elements.
 stitch([Utterance]) ->
     Utterance;
 stitch([Utterance|Rest]) ->
@@ -2585,7 +2610,9 @@ common_options(ContentType) % {{-
     [Zero, Star, Pound].
 
 % TODO What if there are no choices?
-choice_list(Content) ->
+% TODO rename to "selections"
+% Good for a dynamic TTS solution with `stitch/1`
+choice_list(Vertex) -> % returns [String] to be read by a TTS engine
     [  "Press "
        ++ integer_to_list(Selection)
        ++ " for "
@@ -2594,8 +2621,76 @@ choice_list(Content) ->
     || #{ title := Title
         , selection := Selection
         }
-       <- content:pick(children, Content)
+       <- content:pick(children, Vertex)
     ].
+
+selection_files(Vertex) -> % returns [AudioFilename] to be `playback/3`-ed
+    [ do_selection(Child)
+    || Child
+       <- content:pick(children, Vertex)
+    ].
+
+do_selection
+(#{ title := Title
+  , selection := Selection
+  } = Vertex
+)
+->
+    SelectionText = 
+           "Press "
+        ++ integer_to_list(Selection)
+        ++ " for "
+        ++ Title
+        ++ ".",
+
+    do_check(SelectionText, Vertex, "selection").
+
+title_file(#{ title := Title } = Vertex) -> % !!!
+    do_check(Title ++ ".", Vertex, "title").
+
+%        String -> Map -> String
+do_check(Text, Vertex, LabelKey) ->
+
+    Label =
+        content:get_label(Vertex),
+
+    {SavedText, LabelMap} =
+        case Label =:= [] of
+            true ->
+                {"", #{}};
+            false ->
+                { maps:get(LabelKey, Label, "")
+                , Label
+                }
+        end,
+
+    AudioFilename =
+           ?PROMPT_DIR
+        ++ vertex_to_filename(Vertex)
+        ++ "-"
+        ++ LabelKey
+        ++ ".wav",
+
+    case Text =:= SavedText of
+        true ->
+            noop;
+        false ->
+            % 1. call the google tts script (and save the audio to ?PROMPT_DIR)
+            os:cmd(
+                "./google-tts-wav.sh \""
+              ++ Text
+              ++ "\" 0.87 > "
+              ++ AudioFilename
+            ),
+            % 2. save the text to vertex label
+            content:add_label(Vertex, LabelMap#{ LabelKey => Text })
+    end,
+
+    AudioFilename.
+
+to_main_menu_file() ->
+    % TODO create this audio file
+    ?PROMPT_DIR ++ "to-main-menu.wav".
 
 derive_state(#{ current_content := Content } = _Data) ->
     derive_state(Content);
@@ -2766,7 +2861,7 @@ change_speed(Direction, Data) ->
     {keep_state, NewData}.
 % }}-
 
-vertex_to_filename(Vertex) ->
+vertex_to_filename(#{ title := Title} = _Vertex) ->
     Pred =
         fun(Char) when Char >= 65, Char =< 90;
                        Char >= 97, Char =< 122
@@ -2775,7 +2870,7 @@ vertex_to_filename(Vertex) ->
            (_) ->
                 false
         end,
-    lists:filter(Pred, Vertex).
+    lists:filter(Pred, Title).
 
 cp % time with Roy Wood Jr.
 (PlaybackName) ->
