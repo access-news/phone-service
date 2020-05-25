@@ -15,6 +15,7 @@
     , vertex_to_filename/1
     ]).
 
+% TODO PROD Generate all static TTS audiofiles when deploying to a new system.
 -define(FS_NODE, 'freeswitch@tr2').
 % TODO goes to README
 % erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -sname access_news -setcookie OldTimeRadio
@@ -1840,8 +1841,8 @@ comfort_noise(Data) ->
 % }}-
 
 % TODO make a module for utterances? {{-
-sign_up() ->
-    "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
+% sign_up() ->
+%     "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
 
 % invalid_selection() ->
 %     "Invalid selection. Please try again.".
@@ -1986,12 +1987,13 @@ play % CONTENT_ROOT {{-
     % speak(State, Data, [Title, "Loop test."]);
     % speak(State, Data, PromptList);
     % }}-
+    % TODO another archeological layer to be evaluated for deletion {{-
     % playback(State, Data, ?PROMPT_DIR ++ "main-menu.wav");
 
     % PrompFiletList =
     %        [ title_file(CurrentContent) ]
     %     ++ selection_files(CurrentContent)
-    %     ++ [ to_main_menu_file() ],
+    %     ++ [ play_to_main_menu() ],
         % TODO omitted from playback but document that this functionality still exists!
         % , "To enter the first category, press pound."
         % ],
@@ -2010,11 +2012,18 @@ play % CONTENT_ROOT {{-
     %   ([ Data ]
     %    ++ PlaybackFunctions
     %   );
+    % }}-
 
     f:pipe
       ([ Data
        , (f:curry(fun play_title/2))(CurrentContent)
        , (f:curry(fun play_selections/2))(CurrentContent)
+       , fun play_to_main_menu/1
+        % All the previous playbacks  have been scheduled with
+        % `sendmsg_locked/2`,  but none  of the  playbacknames
+        % match the state atom, so in  order to trick a loop a
+        % zero  ms comfort  noise is  inserted with  the state
+        % atom
        , ((f:curry(fun comfort_noise/3))(State))(0)
        ]);
 
@@ -2026,10 +2035,20 @@ play % CATEGORY {{-
      } = Data
   )
 ->
-    PromptList =
-        [ Title ]
-        ++ choice_list(CurrentContent)
-        ++ common_options(State),
+    f:pipe
+      ([ Data
+       , (f:curry(fun play_title/2))(CurrentContent)
+       , (f:curry(fun play_selections/2))(CurrentContent)
+       , fun play_go_up/1
+       , fun play_next_category/1
+       , fun play_to_main_menu/1
+       % See comment in "play % CONTENT_ROOT"
+       , ((f:curry(fun comfort_noise/3))(State))(0)
+       ]);
+    % PromptList =
+    %     [ Title ]
+    %     ++ choice_list(CurrentContent)
+    %     ++ common_options(State),
 
     % logger:debug(
     %     #{ a => "PLAY_CATEGORY"
@@ -2039,7 +2058,7 @@ play % CATEGORY {{-
     %      }),
 
     % speak(State, Data, [Title, "Loop test."]);
-    speak(State, Data, PromptList);
+    % speak(State, Data, PromptList);
     % f:pipe(
     %   [ PromptList
     %   , fun stitch/1
@@ -2055,33 +2074,47 @@ play % PUBLICATION {{-
      } = Data
   )
 ->
-    NumberOfArticles =
-        % (length . content:pick(children)) CurrentContent
-        length(content:pick(children, CurrentContent)),
+    f:pipe
+      ([ Data
+       , (f:curry(fun play_title/2))(CurrentContent)
+       , (f:curry(fun play_number_of_articles/2))(CurrentContent)
+       , fun play_go_up/1
+       , fun play_next_publication/1
+       , fun play_to_main_menu/1
+       , fun play_first_article/1
+       , fun play_last_article/1
+       , fun play_prev_publication/1
+       % See comment in "play % CONTENT_ROOT"
+       , ((f:curry(fun comfort_noise/3))(State))(0)
+       ]);
+
+    % NumberOfArticles =
+    %     % (length . content:pick(children)) CurrentContent
+    %     length(content:pick(children, CurrentContent)),
        % case content:pick(children, CurrentContent) of
        %     none -> 0;
        %     [_|_] = Children -> length(Children)
        % end,
 
-    PromptList =
-        [ Title
-        , "There are "
-          ++ integer_to_list(NumberOfArticles)
-          ++ " articles in this publication. The first article will start automatically when playback of this menu is finished."
-        ]
-        ++ common_options(State)
-        ++
-        [ "Press one to start the first article."
-        , "Press three to jump to the last article."
-        , "Press nine to go to the previous publication in this category."
-        , case NumberOfArticles =:= 0 of
-              true  -> "Starting first article.";
-              false -> ""
-          end
-        ],
+    % PromptList =
+    %     [ Title
+    %     , "There are "
+    %       ++ integer_to_list(NumberOfArticles)
+    %       ++ " articles in this publication. The first article will start automatically when playback of this menu is finished."
+    %     ]
+    %     ++ common_options(State)
+    %     ++
+    %     [ "Press one to start the first article."
+    %     , "Press three to jump to the last article."
+    %     , "Press nine to go to the previous publication in this category."
+    %     , case NumberOfArticles =:= 0 of
+    %           true  -> "Starting first article.";
+    %           false -> ""
+    %       end
+    %     ],
 
-    % speak(State, Data, [Title, Title, Title,  "loop test."]);
-    speak(State, Data, PromptList);
+    % % speak(State, Data, [Title, Title, Title,  "loop test."]);
+    % speak(State, Data, PromptList);
 
 % }}-
 % NOTE - DO NOT TOUCH `article_intro` STATE {{-
@@ -2101,7 +2134,7 @@ play % ARTICLE_INTRO {{-
 )
 ->
     % speak(article_intro, Data, ["Press 2 at any time to pause the article and listen to the help menu."]);
-    speak(article_intro, Data, ["Press 2 for help at any time."]);
+    % speak(article_intro, Data, ["Press 2 for help at any time."]);
     % playback(State, Data, Path);
     % TODO FEATURE read article meta and figure out how to store the latter
     %      (also, should article_meta be a separate state?)
@@ -2124,6 +2157,7 @@ play % ARTICLE_INTRO {{-
     %     , app_uuid_prefix   => lofa
     %     });
     % }}-
+    play_article_intro(Data);
 
 % }}-
 play % ARTICLE {{-
@@ -2149,26 +2183,37 @@ play % ARTICLE_HELP {{-
   , Data
   )
 ->
-    % TODO FEATURE resume playback from last position (see offset in `init/1`)
-    PromptList =
-        [ "Article paused."
-        , "To resume, press any button between 1 and 8."
-        , "During playback, you have the following controls available:"
-        , "For the publication menu, press star."
-        , "For the main menu, press zero."
-        , "To jump to the next article, press pound."
-        , "To listen to the previous article, press nine."
-        , "To pause the article and for this help menu, press two."
-        , "To restart the article, press seven."
-        , "To go back 10 seconds, press one."
-        , "To go forward 10 seconds, press three."
-        , "To slow down the recording, press four."
-        , "To speed up, press six."
-        , "To turn down the volume, press five."
-        , "To turn it up, press eight."
-        ],
+    f:pipe
+      ([ Data
+       , fun play_article_paused/1
+       , fun play_go_up/1
+       , fun play_next_article/1
+       , fun play_to_main_menu/1
+       , fun play_controls/1
+       % See comment in "play % CONTENT_ROOT"
+       , ((f:curry(fun comfort_noise/3))(State))(0)
+       ]);
 
-    speak(State, Data, PromptList);
+    % TODO FEATURE resume playback from last position (see offset in `init/1`)
+    % PromptList =
+    %     [ "Article paused."
+    %     , "To resume, press any button between 1 and 8."
+    %     , "During playback, you have the following controls available:"
+    %     , "For the publication menu, press star."
+    %     , "For the main menu, press zero."
+    %     , "To jump to the next article, press pound."
+    %     , "To listen to the previous article, press nine."
+    %     , "To pause the article and for this help menu, press two."
+    %     , "To restart the article, press seven."
+    %     , "To go back 10 seconds, press one."
+    %     , "To go forward 10 seconds, press three."
+    %     , "To slow down the recording, press four."
+    %     , "To speed up, press six."
+    %     , "To turn down the volume, press five."
+    %     , "To turn it up, press eight."
+    %     ],
+
+    % speak(State, Data, PromptList);
 
 % }}-
 play % INVALID_SELECTION % {{-
@@ -2176,9 +2221,12 @@ play % INVALID_SELECTION % {{-
 , Data
 )
 ->
-    speak(State, Data, ["Invalid selection."]);
+    % speak(State, Data, ["Invalid selection."]);
+    play_invalid_selection(Data);
 
 % }}-
+% TODO PROD Does this work?
+% TODO PROD poor TTS
 play % INACTIVITY_WARNING {{-
 ( inactivity_warning = State
 , Data
@@ -2191,20 +2239,24 @@ play % INACTIVITY_WARNING {{-
       );
 
 % }}-
+% TODO PROD poor TTS
 play % DEMO_HANGUP {{-
 ( demo_hangup = State
 , Data
 )
 ->
-    TextList =
-        [ "End of demo session."
-        , sign_up()
-        , "Thank you for trying out the service!"
-        ],
+    % TextList =
+    %     [ "End of demo session."
+    %     , "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
+    %     , "Thank you for trying out the service!"
+    %     ],
 
-    speak(State, Data, TextList);
+    % speak(State, Data, TextList);
+    play_demo_hangup(Data);
 
 % }}-
+% TODO PROD Does this work?
+% TODO PROD poor TTS
 play % INACTIVITY_HANGUP {{-
 ( inactivity_hangup = State
 , Data
@@ -2219,12 +2271,17 @@ play % NO_CHILDREN {{-
 , #{current_content := #{ type := ContentType }} = Data
 )
 ->
-    Prompt =
-        "This "
-        ++ atom_to_list(ContentType)
-        ++ " is empty.",
+    % Prompt =
+    %     "This "
+    %     ++ atom_to_list(ContentType)
+    %     ++ " is empty.",
 
-    speak(State, Data, [Prompt]);
+    % speak(State, Data, [Prompt]);
+
+    case ContentType of
+        category -> play_empty_category(Data);
+        publication -> play_empty_publication(Data)
+    end;
 
 % }}-
 play % NO_PREV_ITEM {{-
@@ -2232,12 +2289,18 @@ play % NO_PREV_ITEM {{-
 , #{current_content := #{ type := ContentType }} = Data
 )
 ->
-    Prompt =
-        "This is the first "
-        ++ atom_to_list(ContentType)
-        ++ ".",
+    % Prompt =
+    %     "This is the first "
+    %     ++ atom_to_list(ContentType)
+    %     ++ ".",
 
-    speak(State, Data, [Prompt]);
+    % speak(State, Data, [Prompt]);
+
+    case ContentType of
+        category -> play_no_prev_category(Data);
+        publication -> play_no_prev_publication(Data);
+        article -> play_no_prev_article(Data)
+    end;
 
 % }}-
 play % NO_NEXT_ITEM {{-
@@ -2245,12 +2308,18 @@ play % NO_NEXT_ITEM {{-
 , #{current_content := #{ type := ContentType }} = Data
 )
 ->
-    Prompt =
-        "This is the last "
-        ++ atom_to_list(ContentType)
-        ++ ".",
+    % Prompt =
+    %     "This is the last "
+    %     ++ atom_to_list(ContentType)
+    %     ++ ".",
 
-    speak(State, Data, [Prompt]).
+    % speak(State, Data, [Prompt]).
+
+    case ContentType of
+        category -> play_no_next_category(Data);
+        publication -> play_no_next_publication(Data);
+        article -> play_no_next_article(Data)
+    end.
 
 % }}-
 
@@ -2616,22 +2685,213 @@ re_start_inactivity_timer(State) -> % {{-
     put(inactivity_hangup,  ITref).
 % }}-
 
-common_options(ContentType) % {{-
-  when ContentType =:= category
-     ; ContentType =:= publication
-     ; ContentType =:= article
-->
-    Star =
-        "Press star to go up a level.",
-    Pound =
-        "Press pound to jump to the next "
-        ++ atom_to_list(ContentType)
-        ++ ".",
-    Zero =
-        "For the main menu, press zero.",
+% common_options(ContentType) % {{-
+%   when ContentType =:= category
+%      ; ContentType =:= publication
+%      ; ContentType =:= article
+% ->
+%     Star =
+%         "Press star to go up a level.",
+%     Pound =
+%         "Press pound to jump to the next "
+%         ++ atom_to_list(ContentType)
+%         ++ ".",
+%     Zero =
+%         "For the main menu, press zero.",
 
-    [Zero, Star, Pound].
-% }}-
+%     [Zero, Star, Pound].
+% % }}-
+
+play_go_up(Data) ->
+    % ./google-tts-wav.sh "Press star to go up" 0.87 > prompts/go-up.wav
+    playback
+      ( go_up
+      , Data
+      , ?PROMPT_DIR ++ "go-up.wav"
+      ).
+
+play_next_category(Data) ->
+    % ./google-tts-wav.sh "Press pound to jump to the next category." 0.87 > prompts/next-category.wav
+    playback
+      ( next_category
+      , Data
+      , ?PROMPT_DIR ++ "next-category.wav"
+      ).
+
+play_next_publication(Data) ->
+    % ./google-tts-wav.sh "Press pound to jump to the next publication." 0.87 > prompts/next-publication.wav
+    playback
+      ( next_publication
+      , Data
+      , ?PROMPT_DIR ++ "next-publication.wav"
+      ).
+
+play_prev_publication(Data) ->
+    % ./google-tts-wav.sh "Press nine for the previous publication." 0.87 > prompts/prev-publication.wav
+    playback
+      ( prev_publication
+      , Data
+      , ?PROMPT_DIR ++ "prev-publication.wav"
+      ).
+
+play_first_article(Data) ->
+    % ./google-tts-wav.sh "Press one to start the newest article." 0.87 > prompts/first-article.wav
+    playback
+      ( first_article
+      , Data
+      , ?PROMPT_DIR ++ "first-article.wav"
+      ).
+play_last_article(Data) ->
+    % ./google-tts-wav.sh "Press three to start the oldest article." 0.87 > prompts/last-article.wav
+    playback
+      ( last_article
+      , Data
+      , ?PROMPT_DIR ++ "last-article.wav"
+      ).
+
+play_article_intro(Data) ->
+    % ./google-tts-wav.sh "Press two for help at any time." 0.87 > prompts/article-intro.wav
+    playback
+      ( article_intro % !!! if changed, menu progression is messed up because in the CHANNEL_EXECUTE_COMPLETE handle_event clause nudges the menu forward by comparing the stopped playbackname and the current state
+      , Data
+      , ?PROMPT_DIR ++ "article-intro.wav"
+      ).
+
+play_article_paused(Data) ->
+    % ./google-tts-wav.sh "Article paused. Press 2 to resume. The following controls are available during playback." 0.87 > prompts/article-paused.wav
+    playback
+      ( article_paused
+      , Data
+      , ?PROMPT_DIR ++ "article-paused.wav"
+      ).
+
+play_invalid_selection(Data) ->
+    % ./google-tts-wav.sh "Invalid selection." 0.87 > prompts/invalid-selection.wav
+    playback
+      ( invalid_selection % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "invalid-selection.wav"
+      ).
+
+play_empty_category(Data) ->
+    % ./google-tts-wav.sh "This category is empty." 0.87 > prompts/empty-category.wav
+    playback
+      ( no_children % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "empty-category.wav"
+      ).
+
+play_empty_publication(Data) ->
+    % ./google-tts-wav.sh "This publication is empty." 0.87 > prompts/empty-publication.wav
+    playback
+      ( no_children % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "empty-publication.wav"
+      ).
+
+play_no_prev_category(Data) ->
+    % ./google-tts-wav.sh "This is the first category." 0.87 > prompts/no-prev-category.wav
+    playback
+      ( no_prev_item % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "no-prev-category.wav"
+      ).
+
+play_no_prev_publication(Data) ->
+    % ./google-tts-wav.sh "This is the first publication." 0.87 > prompts/no-prev-publication.wav
+    playback
+      ( no_prev_item % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "no-prev-publication.wav"
+      ).
+
+play_no_prev_article(Data) ->
+    % ./google-tts-wav.sh "This is the first article." 0.87 > prompts/no-prev-article.wav
+    playback
+      ( no_prev_item % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "no-prev-article.wav"
+      ).
+
+play_no_next_category(Data) ->
+    % ./google-tts-wav.sh "This is the last category." 0.87 > prompts/no-next-category.wav
+    playback
+      ( no_next_item % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "no-next-category.wav"
+      ).
+
+play_no_next_publication(Data) ->
+    % ./google-tts-wav.sh "This is the last publication." 0.87 > prompts/no-next-publication.wav
+    playback
+      ( no_next_item % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "no-next-publication.wav"
+      ).
+
+play_no_next_article(Data) ->
+    % ./google-tts-wav.sh "This is the last article." 0.87 > prompts/no-next-article.wav
+    playback
+      ( no_next_item % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "no-next-article.wav"
+      ).
+
+play_demo_hangup(Data) ->
+    % ./google-tts-wav.sh "End of demo session. If you would like to sign up for Access News, or have any questions, please call 916-889-7519. Thank you, and have a wondeful day!" 0.87 > prompts/demo-hangup.wav
+    playback
+      ( demo_hangup % do not change, see "article_intro % !!!"
+      , Data
+      , ?PROMPT_DIR ++ "demo-hangup.wav"
+      ).
+
+play_controls(Data) ->
+    % ./google-tts-wav.sh "Press one to go forward ten seconds. Press two to pause or resume article respectively. Press three to rewind ten seconds. Press four to slow down the recording, press six to speed it up. Press five to lower the volume, press eight to turn it up. Press seven to restart the article. Press nine to play previous article." 0.87 > prompts/article-controls.wav
+    playback
+      ( article_controls
+      , Data
+      , ?PROMPT_DIR ++ "article-controls.wav"
+      ).
+
+play_number_of_articles(Vertex, Data) ->
+
+    ArticleNumberString =
+        f:pipe
+          ([ content:pick(children, Vertex)
+           , fun erlang:length/1
+           , fun erlang:integer_to_list/1
+           ]),
+
+    AudioFilename =
+           ?PROMPT_DIR
+        ++ ArticleNumberString
+        ++ ".wav",
+
+    case filelib:is_file(AudioFilename) of
+        true ->
+            noop;
+        false ->
+            Text = ArticleNumberString ++ " articles in this publication.",
+            google_TTS_to_wav(Text, AudioFilename)
+    end,
+
+    playback(prev_publication, Data, AudioFilename).
+
+play_next_article(Data) ->
+    % ./google-tts-wav.sh "Press pound to jump to the next article." 0.87 > prompts/next-article.wav
+    playback
+      ( next_article
+      , Data
+      , ?PROMPT_DIR ++ "next-article.wav"
+      ).
+
+play_to_main_menu(Data) ->
+    % ./google-tts-wav.sh "For the main  menu press 0." 0.87 > prompts/to-main-menu.wav
+    playback
+      ( to_main_menu
+      , Data
+      , ?PROMPT_DIR ++ "to-main-menu.wav"
+      ).
 
 % TODO What if there are no choices?
 % TODO rename to "selections"
@@ -2731,18 +2991,21 @@ do_check(Text, Vertex, LabelKey) -> % {{-
             noop;
         false ->
             % 1. call the google tts script (and save the audio to ?PROMPT_DIR)
-            os:cmd(
-                "./google-tts-wav.sh \""
-              ++ Text
-              ++ "\" 0.87 > "
-              ++ AudioFilename
-            ),
+            google_TTS_to_wav(Text, AudioFilename),
             % 2. save the text to vertex label
             content:add_label(Vertex, LabelMap#{ LabelKey => Text })
     end,
 
     AudioFilename.
 % }}-
+
+google_TTS_to_wav(Text, AudioFilename) ->
+    os:cmd(
+            "./google-tts-wav.sh \""
+        ++ Text
+        ++ "\" 0.87 > "
+        ++ AudioFilename
+    ).
 
 %        String -> Map -> String -> FileName
 do_check_and_play(Text, Vertex, LabelKey, Data) -> % {{-
@@ -2772,22 +3035,13 @@ do_check_and_play(Text, Vertex, LabelKey, Data) -> % {{-
             noop;
         false ->
             % 1. call the google tts script (and save the audio to ?PROMPT_DIR)
-            os:cmd(
-                "./google-tts-wav.sh \""
-              ++ Text
-              ++ "\" 0.87 > "
-              ++ AudioFilename
-            ),
+            google_TTS_to_wav(Text, AudioFilename),
             % 2. save the text to vertex label
             content:add_label(Vertex, LabelMap#{ LabelKey => Text })
     end,
 
     playback(selection, Data, AudioFilename).
 % }}-
-
-to_main_menu_file() ->
-    % TODO create this audio file
-    ?PROMPT_DIR ++ "to-main-menu.wav".
 
 derive_state(#{ current_content := Content } = _Data) ->
     derive_state(Content);
