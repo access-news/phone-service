@@ -1813,7 +1813,7 @@ stop_playback( % {{-
 %         Data#{playback_ids := NewPlaybackIDs }.
 % }}-
 
-comfort_noise(Milliseconds, Data) -> % {{-
+comfort_noise(Name, Milliseconds, Data) ->  % {{-
     % logger:debug("play comfort noise"),
     ComfortNoise =
            "silence_stream://"
@@ -1825,12 +1825,15 @@ comfort_noise(Milliseconds, Data) -> % {{-
     %      , data => Data
     %      }),
 
-    playback(comfort_noise, Data, ComfortNoise).
+    playback(Name, Data, ComfortNoise).
     % sendmsg_locked(
     %     #{ command => execute
     %      , args    => ["playback", ComfortNoise]
     %      , app_uuid_prefix   => comfort_noise
     %      }).
+
+comfort_noise(Milliseconds, Data) ->
+    comfort_noise(comfort_noise, Milliseconds, Data).
 
 comfort_noise(Data) ->
     comfort_noise(750, Data).
@@ -1918,17 +1921,17 @@ play % GREETING {{-
 
     f:pipe
       ([ NewData
-       , (cp(greeting_welcome))("greeting-welcome.wav")
+       , (cp(greeting_welcome))(?PROMPT_DIR ++ "greeting-welcome.wav")
        , fun(D) ->
             case AuthStatus of
                 registered ->
                     D;
                 unregistered ->
-                    ((cp(greeting_unregistered))("greeting-unregistered.wav"))(D)
+                    ((cp(greeting_unregistered))(?PROMPT_DIR ++ "greeting-unregistered.wav"))(D)
             end
          end
        % TODO split up to add `main_menu_file/0`
-       , (cp(State))("greeting-options.wav")
+       , (cp(State))(?PROMPT_DIR ++ "greeting-options.wav")
        ]);
 
 % }}-
@@ -1987,13 +1990,33 @@ play % CONTENT_ROOT {{-
 
     % PrompFiletList =
     %        [ title_file(CurrentContent) ]
-    %     ++ choice_list(CurrentContent)
+    %     ++ selection_files(CurrentContent)
     %     ++ [ to_main_menu_file() ],
-    %     % , "To enter the first category, press pound."
-    %     % ],
+        % TODO omitted from playback but document that this functionality still exists!
+        % , "To enter the first category, press pound."
+        % ],
 
-    NewData = playback(some, Data, title_file(CurrentContent)),
-    speak(State, NewData, [Title, "Loop test."]);
+    % NewData = playback(some, Data, title_file(CurrentContent)),
+    % speak(State, NewData, [Title, "Loop test."]);
+
+    % Function composition rocks
+    % PlaybackFunctions =
+    %     [  (cp(ignore))(AudioFile)
+    %     || AudioFile <- PrompFiletList
+    %     ]
+    %     ++ [ ((f:curry(fun comfort_noise/3))(State))(0) ],
+
+    % f:pipe
+    %   ([ Data ]
+    %    ++ PlaybackFunctions
+    %   );
+
+    f:pipe
+      ([ Data
+       , (f:curry(fun play_title/2))(CurrentContent)
+       , (f:curry(fun play_selections/2))(CurrentContent)
+       , ((f:curry(fun comfort_noise/3))(State))(0)
+       ]);
 
 % }}-
 play % CATEGORY {{-
@@ -2061,7 +2084,7 @@ play % PUBLICATION {{-
     speak(State, Data, PromptList);
 
 % }}-
-% NOTE - DO NOT TOUCH {{-
+% NOTE - DO NOT TOUCH `article_intro` STATE {{-
 % Yes, this could have  been included in ARTICLE state
 % as  an  extra  playback  (and as  long  as  it  does
 % not  have  the  same  playback name,  it  would  not
@@ -2608,6 +2631,7 @@ common_options(ContentType) % {{-
         "For the main menu, press zero.",
 
     [Zero, Star, Pound].
+% }}-
 
 % TODO What if there are no choices?
 % TODO rename to "selections"
@@ -2624,6 +2648,12 @@ choice_list(Vertex) -> % returns [String] to be read by a TTS engine
        <- content:pick(children, Vertex)
     ].
 
+title_file(#{ title := Title } = Vertex) -> % !!!
+    do_check(Title ++ ".", Vertex, "title").
+
+play_title(Vertex, Data) -> % !!!
+    playback(vertex_title, Data, title_file(Vertex)).
+
 selection_files(Vertex) -> % returns [AudioFilename] to be `playback/3`-ed
     [ do_selection(Child)
     || Child
@@ -2636,7 +2666,7 @@ do_selection
   } = Vertex
 )
 ->
-    SelectionText = 
+    SelectionText =
            "Press "
         ++ integer_to_list(Selection)
         ++ " for "
@@ -2645,11 +2675,36 @@ do_selection
 
     do_check(SelectionText, Vertex, "selection").
 
-title_file(#{ title := Title } = Vertex) -> % !!!
-    do_check(Title ++ ".", Vertex, "title").
+play_selections(Vertex, Data) ->
+    PlaybackFunctions =
+        [  (f:curry(fun do_play_selection/2))(Child)
+        || Child
+        <- content:pick(children, Vertex)
+        ],
 
-%        String -> Map -> String
-do_check(Text, Vertex, LabelKey) ->
+    f:pipe
+      ([ Data ]
+       ++ PlaybackFunctions
+      ).
+
+do_play_selection
+(#{ title := Title
+  , selection := Selection
+  } = Vertex
+, Data
+)
+->
+    SelectionText =
+           "Press "
+        ++ integer_to_list(Selection)
+        ++ " for "
+        ++ Title
+        ++ ".",
+
+    do_check_and_play(SelectionText, Vertex, "selection", Data).
+
+%        String -> Map -> String -> FileName
+do_check(Text, Vertex, LabelKey) -> % {{-
 
     Label =
         content:get_label(Vertex),
@@ -2687,6 +2742,48 @@ do_check(Text, Vertex, LabelKey) ->
     end,
 
     AudioFilename.
+% }}-
+
+%        String -> Map -> String -> FileName
+do_check_and_play(Text, Vertex, LabelKey, Data) -> % {{-
+
+    Label =
+        content:get_label(Vertex),
+
+    {SavedText, LabelMap} =
+        case Label =:= [] of
+            true ->
+                {"", #{}};
+            false ->
+                { maps:get(LabelKey, Label, "")
+                , Label
+                }
+        end,
+
+    AudioFilename =
+           ?PROMPT_DIR
+        ++ vertex_to_filename(Vertex)
+        ++ "-"
+        ++ LabelKey
+        ++ ".wav",
+
+    case Text =:= SavedText of
+        true ->
+            noop;
+        false ->
+            % 1. call the google tts script (and save the audio to ?PROMPT_DIR)
+            os:cmd(
+                "./google-tts-wav.sh \""
+              ++ Text
+              ++ "\" 0.87 > "
+              ++ AudioFilename
+            ),
+            % 2. save the text to vertex label
+            content:add_label(Vertex, LabelMap#{ LabelKey => Text })
+    end,
+
+    playback(selection, Data, AudioFilename).
+% }}-
 
 to_main_menu_file() ->
     % TODO create this audio file
@@ -2706,7 +2803,6 @@ derive_state(#{ type := _ } = Content) ->
         #{ type := ContentType } ->
             ContentType
     end.
-% }}-
 
 % TODO add content history
 set_current(Content, Data) ->
@@ -2877,7 +2973,8 @@ cp % time with Roy Wood Jr.
 
     PlaybackWithReorderedArgs =
         fun(Name, Path, Data) ->
-            playback(Name, Data, ?PROMPT_DIR ++ Path)
+            % playback(Name, Data, ?PROMPT_DIR ++ Path)
+            playback(Name, Data, Path)
         end,
 
     (f:curry(PlaybackWithReorderedArgs))(PlaybackName).
