@@ -2999,6 +2999,8 @@ do_check(Text, Vertex, LabelKey) -> % {{-
     AudioFilename.
 % }}-
 
+% TODO add the speed to arguments, or at least make it part of the filename
+%      (simply adding it will not work, because other parts assume that the correct name is the one provided to this function!)
 google_TTS_to_wav(Text, AudioFilename) ->
     os:cmd(
             "./google-tts-wav.sh \""
