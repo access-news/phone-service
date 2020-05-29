@@ -1692,7 +1692,7 @@ spec_sendmsg_headers(_SendmsgCommand, _Args) ->
 do_sendmsg(
   #{ command := SendmsgCommand
    , args       := SendmsgArgs
-   , app_uuid_prefix   := Prefix
+   % , app_uuid_prefix   := Prefix
    , event_lock      := IsLocked
    }
 )
@@ -1704,24 +1704,32 @@ when is_list(SendmsgArgs)
             true  -> [{"event-lock", "true"}]
         end,
 
+    % EventUUIDHeaderList =
+    %     case Prefix =:= none of
+    %         true ->
+    %             [];
+    %         false ->
+    %             PoorMansUUID =
+    %                 erlang:make_ref(),
+    %             ApplicationUUID =
+    %                 stringify(Prefix)
+    %                 ++ "|"
+    %                 ++
+    %                 stringify(PoorMansUUID),
+    %             % NOTE Event-UUId =?= ApplicationUUID {{-
+    %             % This seems like a discrepancy here, but this is how `mod_event_socket` operates:
+    %             % https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket
+    %             % > When an application is executed via sendmsg, CHANNEL_EXECUTE and CHANNEL_EXECUTE_COMPLETE events are going to be generated. If you would like to correlate these two events then add an Event-UUID header with your custom UUID. In the corresponding events, the UUID will be in the Application-UUID header. If you do not specify an Event-UUID, Freeswitch will automatically generate a UUID for the Application-UUID.
+    %             % }}-
+    %             [{"Event-UUID", ApplicationUUID}]
+    %     end,
+
+    PoorMansUUID =
+        erlang:make_ref(),
+    ApplicationUUID =
+        stringify(PoorMansUUID),
     EventUUIDHeaderList =
-        case Prefix =:= none of
-            true ->
-                [];
-            false ->
-                PoorMansUUID =
-                    erlang:make_ref(),
-                ApplicationUUID =
-                    stringify(Prefix)
-                    ++ "|"
-                    ++ stringify(PoorMansUUID),
-                % NOTE Event-UUId =?= ApplicationUUID {{-
-                % This seems like a discrepancy here, but this is how `mod_event_socket` operates:
-                % https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket
-                % > When an application is executed via sendmsg, CHANNEL_EXECUTE and CHANNEL_EXECUTE_COMPLETE events are going to be generated. If you would like to correlate these two events then add an Event-UUID header with your custom UUID. In the corresponding events, the UUID will be in the Application-UUID header. If you do not specify an Event-UUID, Freeswitch will automatically generate a UUID for the Application-UUID.
-                % }}-
-                [{"Event-UUID", ApplicationUUID}]
-        end,
+        [{"Event-UUID", ApplicationUUID}],
 
     FinalHeaders =
            [{"call-command", atom_to_list(SendmsgCommand)}]
@@ -1732,23 +1740,24 @@ when is_list(SendmsgArgs)
     fsend({sendmsg, get(uuid), FinalHeaders}),
     % logger:debug(#{ a => ["DO_SENDMSG", #{ app_id => ApplicationUUID, final_headers => FinalHeaders }]}),
 
-    case EventUUIDHeaderList of
-        [] ->
-            not_used;
-        [{"Event-UUID", AppUUID}] ->
-            AppUUID % same as ApplicationUUID above
-    end;
+    ApplicationUUID.
+    % case EventUUIDHeaderList of
+    %     [] ->
+    %         not_used;
+    %     [{"Event-UUID", AppUUID}] ->
+    %         AppUUID % same as ApplicationUUID above
+    % end;
 
-do_sendmsg(
-  #{ command := SendmsgCommand
-   , args       := SendmsgArgs
-   , event_lock      := IsLocked
-   } = Args
-) ->
-    % logger:debug(#{ a => ["DO_SENDMSG", #{args => Args}]}),
-    do_sendmsg(
-      Args#{ app_uuid_prefix => none }
-    ).
+% do_sendmsg(
+%   #{ command := SendmsgCommand
+%    , args       := SendmsgArgs
+%    , event_lock      := IsLocked
+%    } = Args
+% ) ->
+%     % logger:debug(#{ a => ["DO_SENDMSG", #{args => Args}]}),
+%     do_sendmsg(
+%       Args#{ app_uuid_prefix => none }
+%     ).
 
 sendmsg(
   #{ command := _
@@ -2045,7 +2054,8 @@ play % IN_RECORDING {{-
     f:pipe
       ([ Data
        , (cp(State))(?PROMPT_DIR ++ "in-recording.wav")
-       , fun beep/1
+       % , fun beep/1
+       , (cp(beep))("tone_stream://L=1;%(500,500,1000)")
        , fun record/1
        ]);
     % NewData =
@@ -2514,7 +2524,7 @@ speak % {{-
         sendmsg_locked(
           #{ command => execute
            , args       => ["speak", "flite|kal|" ++ stitch(TextList)]
-           , app_uuid_prefix   => PlaybackName
+           % , app_uuid_prefix   => PlaybackName
            }),
 
     % logger:debug(
@@ -2527,7 +2537,15 @@ speak % {{-
     save_playback_meta(ApplicationUUID, PlaybackName, Data).
 % }}-
 
-% TODO PROD server users? {{-
+% TODO PROD users, docs, cloud {{-
+
+% 1. Update   deployment   docs   (and   automate):   the
+%    "recordings"  folder   needs  to  be   created,  and
+%    `chown`ed to user  and group `freeswitch`, otherwise
+%    the  gen_server  will  crash  on  the  first  record
+%    attempt.
+
+% 2.  Upload recordings to cloud storage.
 % }}-
 record % {{-
 ( Data
@@ -2539,12 +2557,12 @@ record % {{-
            tl(get(caller_number))
         ++ "_"
         ++ integer_to_list(Year)
-        ++ integer_to_list(Month)
-        ++ integer_to_list(Day)
+        ++ pad_int(Month)
+        ++ pad_int(Day)
         ++ "-"
-        ++ integer_to_list(Hour)
-        ++ integer_to_list(Min)
-        ++ integer_to_list(Sec)
+        ++ pad_int(Hour)
+        ++ pad_int(Min)
+        ++ pad_int(Sec)
         ++ ".wav",
 
     % Will be reset to `none` in "record CHANNEL_EXECUTE_COMPLETE" handle_event clause
@@ -2566,22 +2584,22 @@ record % {{-
             #{ command => execute
             %                                                  = 90 min
             , args       => ["record", ?REC_DIR ++ Filename ++ " 5400"]
-            , app_uuid_prefix   => record
+            % , app_uuid_prefix   => record
             }),
 
     save_playback_meta(ApplicationUUID, record, Data).
 % }}-
 
-beep(Data) ->
+% beep(Data) ->
 
-    ApplicationUUID =
-        sendmsg_locked(
-            #{ command => execute
-            , args       => ["playback", "tone_stream://L=1;%(500,500,1000)"]
-            , app_uuid_prefix   => beep
-            }),
+%     ApplicationUUID =
+%         sendmsg_locked(
+%             #{ command => execute
+%             , args       => ["playback", "tone_stream://L=1;%(500,500,1000)"]
+%             % , app_uuid_prefix   => beep
+%             }),
 
-    save_playback_meta(ApplicationUUID, beep, Data).
+%     save_playback_meta(ApplicationUUID, beep, Data).
 
 playback % {{-
 ( PlaybackName
@@ -2594,7 +2612,7 @@ playback % {{-
         sendmsg_locked(
           #{ command => execute
            , args       => ["playback", Path]
-           , app_uuid_prefix   => PlaybackName
+           % , app_uuid_prefix   => PlaybackName
            }),
 
     logger:debug(
@@ -3337,6 +3355,14 @@ stringify(Term) ->
     R = io_lib:format("~p",[Term]),
     lists:flatten(R).
 % }}-
+
+pad_int(Integer) ->
+    f:pipe
+      ([ Integer
+       , fun erlang:integer_to_list/1
+       , fun (S) -> string:pad(S, 2, leading, $0) end
+       , fun lists:flatten/1
+       ]).
 
 change_speed(Direction, Data) ->
     #{ playback_speed := Speed } = Data,
