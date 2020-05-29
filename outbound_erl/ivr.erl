@@ -34,7 +34,9 @@
 % }}-
 -define(DEMO_TIMEOUT, 300000). % 5 min
 -define(INTERDIGIT_TIMEOUT, 2000).
+% TODO PROD don't forget to document this in the deployment instructions that these directories will have to be created!
 -define(PROMPT_DIR, "/home/toraritte/clones/phone-service/prompts/").
+-define(REC_DIR,    "/home/toraritte/clones/phone-service/recordings/").
 
 % NOTE Inactivity warnings and timeouts {{-
 % are not  defined here,  becasue they  have different
@@ -471,6 +473,7 @@ handle_event(
     %%     (at least not in the Access News scenario).
     %% }}-
     put(uuid, UUID),
+    put(caller_number, CallerNumber),
 
     sendmsg_locked(
         #{ command => execute
@@ -497,7 +500,9 @@ handle_event(
     %% but this pertains  to each call, and  better to have
     %% everything related to the same call in one place.
     %% }}-
-    fsend({api, uuid_setvar, UUID ++ " playback_terminators none"}),
+    fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators none"}),
+    % % TODO the documentation shows this variable in all caps, so if it does not work then try that
+    % fsend({api, uuid_setvar, UUID ++ " record_append true"}),
 
     logger:debug(#{ self() => ["INCOMING_CALL", CallerNumber]}),
 
@@ -679,16 +684,9 @@ handle_event(
                     };
                 % }}-
                 % TODO PROD sign_in
-                % # (pound) {{- => Log in / Favourites (depending on AuthStatus)
+                % # (pound) {{- => leave_message
                 "#" ->
-                    % TODO FEATURE add favorites
-                    % NextMenu =
-                    %     case AuthStatus of
-                    %         registered   -> favourites;
-                    %         unregistered -> sign_in
-                    %     end,
-
-                    {next_state, sign_in, Data};
+                    {next_state, leave_message, Data};
                 % }}-
                 % 0         {{- => content_root
                 "0" ->
@@ -701,9 +699,16 @@ handle_event(
                     keep_state_and_data;
                 % }}-
                 % TODO FEATURE leave_message
-                % 2         {{- => leave_message
+                % 2         {{- => Log in / Favourites (depending on AuthStatus)
                 "2" ->
-                    % {next_state, leave_message, Data};
+                    % TODO FEATURE add favorites
+                    % NextMenu =
+                    %     case AuthStatus of
+                    %         registered   -> favourites;
+                    %         unregistered -> sign_in
+                    %     end,
+
+                    % {next_state, sign_in, Data};
                     keep_state_and_data;
                 % }}-
                 % TODO FEATURE settings
@@ -726,6 +731,33 @@ handle_event(
                 % TODO FEATURE where_am_i
                 "8" -> keep_state_and_data;
                 "9" -> keep_state_and_data
+                % }}-
+            end;
+
+        % }}-
+        % === LEAVE_MESSAGE (-> (loop)) {{-
+        leave_message ->
+
+            case Digit of
+                % *          {{- => main_menu
+                "*" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % [#1-9]     {{- => content root
+                _ ->
+                    {next_state, in_recording, Data}
+                % }}-
+            end;
+
+        % }}-
+        % === IN_RECORDING (-> (loop)) {{-
+        in_recording ->
+
+            case Digit of
+                % [*#0-9]    {{- => leave_message
+                _ ->
+                    fsend({api, uuid_record, stitch([get(uuid), "stop", "all"])}),
+                    {next_state, leave_message, Data}
                 % }}-
             end;
 
@@ -1120,6 +1152,7 @@ when Application =:= "speak"
     %      ,    is_stopped := IsStopped
     %      }
     % } = Playbacks,
+    logger:debug(#{a => "play CHANNEL_EXECUTE_COMPLETE", app_id => ApplicationUUID}),
     { ApplicationUUID
     , StoppedPlayback
     , {stopped, IsStopped}
@@ -1160,6 +1193,11 @@ when Application =:= "speak"
         % if digit readback runs its course, it stops here, but without this clause it would end up
         % collect_digits ->
         %     {keep_state, NewData};
+
+        _ when StoppedPlayback =:= in_recording
+             , IsStopped =:= false
+        ->
+            {keep_state, NewData};
 
         _ when StoppedPlayback =:= article
              % TODO would not `IsStopped =:= true` be better?
@@ -1209,6 +1247,7 @@ when Application =:= "speak"
              ; State =:= category
              % ; State =:= publication
              ; State =:= article_help
+             ; State =:= leave_message
         ->
             % logger:debug(
             %     #{ a => "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
@@ -1336,6 +1375,26 @@ when Application =:= "speak"
         %     % }}-
     end;
 %% }}-
+
+handle_event
+( internal                     % EventType
+, { _UUID                      % \
+  , call_event                 % |
+  , #{ "Event-Name" := "CHANNEL_EXECUTE_COMPLETE"
+     , "Application" := "record"
+     }                            % | EventContent = MassagedModErlEvent
+  } = E                            % /
+, in_recording = State
+, Data
+)
+->
+            logger:debug(
+                #{ a => "record CHANNEL_EXECUTE_COMPLETE"
+                , state => State
+                , data => Data
+                }),
+    fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators none"}),
+    {next_state, leave_message, Data};
 
 %% Debug clauses for `internal` events {{-
 handle_event(
@@ -1665,10 +1724,11 @@ when is_list(SendmsgArgs)
         end,
 
     FinalHeaders =
-        [{"call-command", atom_to_list(SendmsgCommand)}]
+           [{"call-command", atom_to_list(SendmsgCommand)}]
         ++ spec_sendmsg_headers(SendmsgCommand, SendmsgArgs)
         ++ EventUUIDHeaderList
         ++ LockHeaderList,
+
     fsend({sendmsg, get(uuid), FinalHeaders}),
     % logger:debug(#{ a => ["DO_SENDMSG", #{ app_id => ApplicationUUID, final_headers => FinalHeaders }]}),
 
@@ -1897,7 +1957,7 @@ play % GREETING {{-
 
     % ./google-tts-wav.sh "Welcome  to Access  News, a  service of  Society For The  Blind  in  Sacramento, California,  for  blind, low-vision, and  print-impaired individuals.  If you know your selection,  you may enter it  at any time, or press pound to skip to the main categories." 0.87 > prompts/greeting-welcome.wav;
     % ./google-tts-wav.sh "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected." 0.87 > prompts/greeting-unregistered.wav;
-    % ./google-tts-wav.sh "For the main  menu, press 0.  If you have any questions, please call 916 889 7519." 0.87 > prompts/greeting-options.wav;
+    % ./google-tts-wav.sh "For the main  menu, press 0.  If you have any questions, concerns, or suggestions, please call 916 889 7519 or leave a message by pressing zero and then pound." 0.87 > prompts/greeting-options.wav;
 
     NewData = comfort_noise(250, Data),
     % TODO delete % {{-
@@ -1963,8 +2023,37 @@ play % MAIN_MENU {{-
     % speak(State, Data, PromptList);
     % }}-
 
-    % ./google-tts-wav.sh "Main menu. Press star to go back. Press zero to jump to the main category." 0.87 > prompts/main-menu.wav;
+    % ./google-tts-wav.sh "Main menu. Press star to go back. Press pound to record a message. Press zero to jump to the main category." 0.87 > prompts/main-menu.wav;
     playback(State, Data, ?PROMPT_DIR ++ "main-menu.wav");
+
+% }}-
+play % LEAVE_MESSAGE {{-
+  ( leave_message        = State
+  , Data
+  )
+->
+    % ./google-tts-wav.sh "Press star to go back. Press any other button to start recording." 0.87 > prompts/leave-message.wav;
+    playback(State, Data, ?PROMPT_DIR ++ "leave-message.wav");
+
+% }}-
+play % IN_RECORDING {{-
+  ( in_recording        = State
+  , Data
+  )
+->
+    % ./google-tts-wav.sh "Recording will start after the beep. To stop recording press any button." 0.87 > prompts/in-recording.wav;
+    f:pipe
+      ([ Data
+       , (cp(State))(?PROMPT_DIR ++ "in-recording.wav")
+       , fun beep/1
+       , fun record/1
+       ]);
+    % NewData =
+    %     playback(State, Data, ?PROMPT_DIR ++ "in-recording.wav"),
+
+    % beep(Data) TODO
+
+    % record(NewData);
 
 % }}-
 play % CONTENT_ROOT {{-
@@ -2387,8 +2476,9 @@ play % NO_NEXT_ITEM {{-
 %       }
 %     ).
 
-regurgitate % {{-
+save_playback_meta % {{-
 ( ApplicationUUID
+% TODO PROD remote PlaybackName - it is unnecessary (it is already part of ApplicationUUID) and just messes things up
 , PlaybackName
 , #{ playbacks := Playbacks } = Data
 )
@@ -2434,8 +2524,64 @@ speak % {{-
     %      , text_list => TextList
     %      }),
 
-    regurgitate(ApplicationUUID, PlaybackName, Data).
+    save_playback_meta(ApplicationUUID, PlaybackName, Data).
 % }}-
+
+% TODO PROD server users? {{-
+% }}-
+record % {{-
+( Data
+)
+->
+    {{Year, Month, Day},{Hour, Min, Sec}} =
+        calendar:system_time_to_universal_time(erlang:system_time(), native),
+    Filename =
+           tl(get(caller_number))
+        ++ "_"
+        ++ integer_to_list(Year)
+        ++ integer_to_list(Month)
+        ++ integer_to_list(Day)
+        ++ "-"
+        ++ integer_to_list(Hour)
+        ++ integer_to_list(Min)
+        ++ integer_to_list(Sec)
+        ++ ".wav",
+
+    % Will be reset to `none` in "record CHANNEL_EXECUTE_COMPLETE" handle_event clause
+    fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators any"}),
+    % fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators #"}),
+
+    % NOTE using `uuid_record` is either broken or there is a setting that I did not find; recording starts alright, but it cannot be stopped (tried from fs_cli), and it does not honour `playback_terminator` but also blocks events going out. At least, the outbound erlang process never received any DTMF events. Should have sent it via `bgapi` instead of `api`?
+    % fsend({api, uuid_record, stitch([get(uuid), "start",  Filename, "5400"])});
+    % fsend({api, uuid_record, stitch([get(uuid), "start", ?REC_DIR ++ Filename, "5400"])});
+
+    logger:debug(
+        #{ a => "in_recording PLAY"
+         , data => Data
+         , path => Filename
+         }),
+
+    ApplicationUUID =
+        sendmsg_locked(
+            #{ command => execute
+            %                                                  = 90 min
+            , args       => ["record", ?REC_DIR ++ Filename ++ " 5400"]
+            , app_uuid_prefix   => record
+            }),
+
+    save_playback_meta(ApplicationUUID, record, Data).
+% }}-
+
+beep(Data) ->
+
+    ApplicationUUID =
+        sendmsg_locked(
+            #{ command => execute
+            , args       => ["playback", "tone_stream://L=1;%(500,500,1000)"]
+            , app_uuid_prefix   => beep
+            }),
+
+    save_playback_meta(ApplicationUUID, beep, Data).
 
 playback % {{-
 ( PlaybackName
@@ -2458,7 +2604,7 @@ playback % {{-
          , path => Path
          }),
 
-    regurgitate(ApplicationUUID, PlaybackName, Data).
+    save_playback_meta(ApplicationUUID, PlaybackName, Data).
 % }}-
 
 % The only  difference from `lists:flatten/1`  is that
@@ -2999,8 +3145,6 @@ do_check(Text, Vertex, LabelKey) -> % {{-
     AudioFilename.
 % }}-
 
-% TODO add the speed to arguments, or at least make it part of the filename
-%      (simply adding it will not work, because other parts assume that the correct name is the one provided to this function!)
 google_TTS_to_wav(Text, AudioFilename) ->
     os:cmd(
             "./google-tts-wav.sh \""
