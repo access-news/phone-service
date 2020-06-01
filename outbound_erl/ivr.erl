@@ -21,11 +21,13 @@
 % erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -sname access_news -setcookie OldTimeRadio
 
 % NOTE On timeouts {{-
+
 % According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out):
 % > When a time-out is  started, any running time-out of
 % > the same type (`state_timeout`, `{timeout, Name}` or
 % > `timeout`), is  cancelled, that is, the  time-out is
 % > restarted with the new time.
+
 % The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer:
 % > Setting a [generic] timer with the same `Name` while
 % > it is running will restart  it with the new time-out
@@ -36,6 +38,7 @@
 -define(INTERDIGIT_TIMEOUT, 2000).
 % TODO PROD don't forget to document this in the deployment instructions that these directories will have to be created!
 -define(PROMPT_DIR, "/home/toraritte/clones/phone-service/prompts/").
+% TODO PROD ?REC_DIR may be omitted altogether; try using just $$sound_prefix of FreeSWITCH and upload recordings directly to cloud storage
 -define(REC_DIR,    "/home/toraritte/clones/phone-service/recordings/").
 
 % NOTE Inactivity warnings and timeouts {{-
@@ -55,185 +58,67 @@ start(Ref) ->
     {ok, Pid} = gen_statem:start(?MODULE, [], []),
     {Ref, Pid}.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% gen_statem callbacks %%
-%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% State transition cheat sheat {{- {{-
-% ============================
-
-%             init
-%               |
-%  _____________V______________________
-% /                                    \
-% | {incoming_call, unregistered}      |
-% \____________________________________/
-%               |
-%               |<--- "MOD_ERL_EVENT_MASSAGE"
-%               |
-%  _____________V______________________
-% /                                    \
-% | {incoming_call, unregistered}      |
-% \____________________________________/
-%               |
-%               |<--- "INCOMING_CALL"
-%               |
-%               V
-% *------------------------------------*
-% | {main_menu, CallerStatus}          |
-% *------------------------------------*
-
-% }}- }}-
 init(_Args) -> % {{-
-    %% Set up logging to file. {{- {{-
+    %% TODO Set up logging to file. {{-
+    % It  does not  work  here  because the  `gen_statem`s
+    % spawned  by  each call  do  not  have unique  names.
+    % What  about giving  them a  unique one?  Is it  even
+    % important? (It may be better to  log  everything  in
+    % one file when it comes to calls.)
+    %
     % filog:add_process_handler(?MODULE, Ref),
     % filog:process_handler_filter(?MODULE, Ref),
-    %% }}- }}-
-    % current /etc/freeswitch/dialplan/default.xml {{-
-    % to start the gen_statem process on incoming calls
-
-    % <?xml version="1.0" encoding="utf-8"?>                                                                                                                                                                                                                                          <include>                                                                                                                                                                                                                                                                         <context name="default">
-
-    %     <extension name="SignalWire CONNECTORS incoming call">
-    %     <!-- the number you assigned in your dashboard -->
-    %     <condition field="destination_number" expression="^(\+19162510217)$">
-
-    %         <!-- <action application="set" data="outside_call=true"/> -->
-    %         <!-- <action application="export" data="RFC2822_DATE=${strftime(%a, %d %b %Y %T %z)}"/> -->
-    %         <!-- <action application="answer"/> -->
-    %         <!-- <action application="lua" data="main.lua"/> -->
-    %         <!-- <action application="erlang" data="call_control:start access_news@tr2"/> -->
-
-    %         <action application="set" data="playback_terminators=none"/>
-    %         <action application="erlang" data="ivr:start access_news@tr2"/>
-
-    %     </condition>
-    %     </extension>
-    % </context>
-    % </include>
-    % }}-
-
-    % TODO launch content.erl gen_server
-    %      AND GET RID OF FILOG LOGGING there!
-    %      AND IT CANNOT HAVE content AS REGISTERED NAME ANYMORE!
-
-    logger:debug("==========================="),
-    logger:debug("==========================="),
-    logger:debug("==========================="),
+    %% }}-
 
     % TODO Why was this necessary?
     process_flag(trap_exit, true),
 
-    % TODO which approach is better: gen_server, or just module?
-    % PROP each ivr gen_statem will get a copy of the content graph from the content gen_server during init, and the `content` will take care of keeping it up to date, and parsing during server startup (so it should start earlier than we could receive calls)
-    % pipe(
-    %   [ gen_server:call(content, {get, graph})
-    %   , fun deserialize/1
-    %   , (curry(fun erlang:put/2))(content_graph)
-    %   ]
-    % ),
-
     Data =
         #{ received_digits => []
-         % ,       anchor => ""
-         % , current_content => {}
-         ,  playback_offset => "0"
-         ,  playback_speed  => "0"
-         % ,  playback_offset => -1
-         ,  auth_status => unregistered % | registered
-         % , menu_history => [] % used as a stack
+         , playback_offset => "0"
+         , playback_speed  => "0"
+         , auth_status     => unregistered % | registered
          , current_content => hd(content:root())
-         , prev_state => content_root
-         % Why the map? Needed a data structure that can also hold info whether playback has been stopped or not (here: `is_stopped` flag). THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
-         % Could have used a proplist instead as a stack but (1) lookup is less convenient (more on that below), (2) less explicit (see below).
-         ,    playbacks => []
-         % not necessary; inactivity_warning will say its piece, and when they press a button it will clear inactivity timers
-         % , inactivity => ok
-         % ,   prev_state => init
-         % There should be only one playback running at any time, and, a corollary, each state should only have one active playback associated in this map. T
-         % , playback_stopped => false
-         % ,  playback_ids => #{}
+         , prev_state      => content_root
+         , playbacks       => []
          },
-    % When to push history {{-
-    % ====================================================
-    % Push history when leaving a category other than `?CATEGORIES`, `greeting`, and `incoming_call`.
-    % quick example:
-    %                                                                                   (the only other option from main_menu menu would be ?CATEGORIES
-    % `main_menu` state is special in that it is not added to the history
-    % TODO add flowchart
-    % }}-
-    % Why not worry about `main_menu` (and states beneath)
-    % showing up in history? {{-
-    % ====================================================
-    % Because the only way out of `main_menu` is by going forward to `?CATEGORIES` or going back/up, which always pops the history. Inside `main_menu`, whenever an option is chosen, `main_menu` gets pushed to the history, but the only way out of submenus is to go back, which will pop it.
-    % }}-
-    %    State
-    % This is kind of a cheat, becuase FreeSWITH ESL outbound mode only start the Erlang process when there is an incoming call, but because of the digraph-driven nature of this state machine, it is better to disambiguate between the states of `init` and `incoming_call`
+
     {ok, init, Data}.
 % }}-
 
-callback_mode() ->
-    [handle_event_function, state_enter].
-    % handle_event_function.
-
-terminate(Reason, State, Data) ->
-    logger:debug(#{ self() => ["TERMINATE (normal-ish)"]}). %, #{ data => Data, reason => Reason, state => State }]}).
-     % filog:process_log(debug, #{ from => ["TERMINATE", #{ reason => Reason, state => State, data => Data }]}),
-     % filog:remove_process_handler(?MODULE).
-
-% ENTER
-% handle_event(enter, OldState, State, Data) % {{-
-% when State =:= collect_digits
-% ->
-%     {keep_state, Data};
-
-handle_event(enter, OldState, State, Data) -> %
-
-    OffsetReset =
-        fun(GenStatemData) ->
-            case lists:member(OldState, [publication, category, content_root]) of
-                true  -> GenStatemData#{ playback_offset := "0" };
-                false -> GenStatemData
-            end
-        end,
-
-    NewData =
-        % ( composeFlipped(
-        f:pipe(
-          [ Data
-          , fun stop_playback/1
-          % , fun(Data) -> comfort_noise(), Data end
-          , fun comfort_noise/1
-          % , fun(GenData) -> play(State, GenData) end
-          , OffsetReset
-          , fun(Data) -> logger:debug(#{ aaa => {State, OldState, Data} }), Data end
-          , (f:curry(fun play/2))(State)
-          ]
-        ),
-
-    {keep_state, NewData};
-% }}-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% `info` clauses (for FreeSWITCH events) %%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%% Rationale for using `handle_event_function` callbacks {{- {{-
-%% =====================================================
+%% Rationale for using `handle_event_function` callback mode {{-
+%% -----------------------------------------------------
 %%
-%% Using `handle_event_function` callback mode as it is
-%% the most straightforward way to massage all incoming
-%% FreeSWITCH  events  (emitted by  `mod_erlang_event`)
-%% into a  form that  is easier  to pattern  match (see
-%% below and the specific steps for more).
+%% Short
+%% ====================================================
+%% Found  this callback  mode  the  most convenient  to
+%% pre-process all incoming  FreeSWITCH events (emitted
+%% by `mod_erlang_event`) into a form that is easier to
+%% pattern match.
 %%
-%% ### Mostly `info` type `gen_statem` events
+%% See "%%  `mod_erl_event` pre-processing %%"  for the
+%% details.
+
+%% Long
+%% ====================================================
 %%
-%% FreeSWITCH events are sent as regular messages, hence they are handled by matching on `info` type `gen_statem` events in the callbacks. With `state_functions`, the `info` events would have needed checking in every state, and a macro could have been used to type less, but it would have become cluttered nonetheless.
+%% ### Mostly `info` type `gen_statem` events {{-
 %%
-%% Using _inserted events_ (or _stored events_) to add an event pre-processing step via the `{next_event, EventType, EventContent}` **transition action**. `gen_statem` also ensures that ["_the stored events are inserted in the queue as the next to process before any already queued events. The order of these stored events is preserved, so the first next_event in the containing list becomes the first to process._"](https://erlang.org/doc/man/gen_statem.html#type-action).
+%% FreeSWITCH  events  are  sent as  regular  messages,
+%% hence  they  are  handled   by  matching  on  `info`
+%% type  `gen_statem`  events  in the  callbacks.  With
+%% `state_functions`,  the  `info`  events need  to  be
+%% checked  in every  state,  and even  though a  macro
+%% could have  been used  to type  less, it  would have
+%% been harder to oversee what is happening.
 %%
-%% TODO: Update https://erlang.org/doc/design_principles/statem.html#Inserted%20Events with the above quote from the `gen_statem` man page.
+%% With  `handle_event_function`  there   is  only  one
+%% callback,   `handle_event/4`,  so   there  is   only
+%% one  pre-processing  clause  is needed  (for  `info`
+%% `gen_statem` events).
+%%
+%% This  is  what the  module  would  have looked  like
+%% otherwise:
 %%
 %% ```erl
 %% %% `state_functions` pseudo-code
@@ -255,49 +140,143 @@ handle_event(enter, OldState, State, Data) -> %
 %%     {next_state, ...}.
 %% ```
 %%
-%% With `handle_event_function` there is only one callback, `handle_event/4`, so there is only one pre-processing clause is needed (for `info` `gen_statem` events).
-%%
-%% ### Event-focused approach
-%%
-%% An event-focused approach is justified (as opposed to a state-focused one above) by how FreeSWITCH events drive the IVR forward, resulting in the majority of `gen_statem` events to be of `info` event type.
-%%
-%% ### Clearer structure
-%%
-%% If casts and calls will ever be implemented, if external call control use case(s) would arise, they could have their own sections.
-%%
-%% ```erlang
-%% %% `handle_event_function` pseudocode
-%%
-%% %%%%%%%%%%%%%%%%%%%%%%%
-%% %% FreeSWITCH events %%
-%% %%%%%%%%%%%%%%%%%%%%%%%
-%%
-%% handle_event(info, ModErlEventMsg, _State, _Data) ->
-%%     MassagedModErlEvent = do_the_deed,
-%%     {keep_state_and_data, {next_event, internal, MassagedModErlEvent}};
-%%
-%% handle_event(internal, MassagedModErlEvent, State, Data) ->
-%%     %% ...
-%%     {next_state, ...}.
-%%
-%% handle_event(internal, MassagedModErlEvent, AnotherState, Data) ->
-%%     %% ...
-%%     {next_state, ...}.
-%%
-%% %%%%%%%%%%%%%%%%%%%%%%%
-%% %% External commands %%
-%% %%%%%%%%%%%%%%%%%%%%%%%
-%%
-%% handle_event(cast, ...) ->
-%%
-%% handle_event(call, ...) ->
-%% ```
-%%
-%% ### Complex state
-%%
-%% An added bonus is to be able to use complex (or compound states). Apart from the IVR's state, also needed to track whether caller is authenticated or not, and `gen_statem` state is a nice place to put it. Otherwise it would live in `gen_statem`'s data or in the process registry.
-%% }}- }}-
+%% Note: Using  **inserted events**  to pre-process
+%%       events.     See    "%%     `mod_erl_event`
+%%       pre-processing %%" for the details.
 
+%% }}-
+%% ### Event-focused approach {{-
+%%
+%% An event-focused  approach is justified  (as opposed
+%% to  a state-focused  one  above)  by how  FreeSWITCH
+%% events drive the IVR state machine forward.
+%%
+%% (Again, as  noted above,  the majority  of incomiing
+%% `gen_statem` events  are of  the `info`  event type,
+%% and they  are hard to  work with, so it  makes sense
+%% to  concentrate processing  into  a single  function
+%% instead  of  the  same functionality  scattered  all
+%% aroudnd the place.)
+
+%% }}-
+%% ### Clearer structure {{-
+%%
+%% Also, if external call control use cases will arise,
+%% calls and casts can have their own sections.
+%%
+%%     ```erlang
+%%     %% `handle_event_function` pseudocode
+%%
+%%     %%%%%%%%%%%%%%%%%%%%%%%
+%%     %% FreeSWITCH events %%
+%%     %%%%%%%%%%%%%%%%%%%%%%%
+%%
+%%     handle_event(info, ModErlEventMsg, _State, _Data) ->
+%%         MassagedModErlEvent = do_the_deed,
+%%         {keep_state_and_data, {next_event, internal, MassagedModErlEvent}};
+%%
+%%     handle_event(internal, MassagedModErlEvent, State, Data) ->
+%%         %% ...
+%%         {next_state, ...}.
+%%
+%%     handle_event(internal, MassagedModErlEvent, AnotherState, Data) ->
+%%         %% ...
+%%         {next_state, ...}.
+%%
+%%     %%%%%%%%%%%%%%%%%%%%%%%
+%%     %% External commands %%
+%%     %%%%%%%%%%%%%%%%%%%%%%%
+%%
+%%     handle_event(cast, ...) ->
+%%
+%%     handle_event(call, ...) ->
+%%     ```
+
+%% }}-
+%% ### Complex states {{-
+%%
+%% Not used, but good to have.
+%%
+%% Note: In the  beginning almost  all state  was a
+%%       complex  one;  first,  the  authentication
+%%       status lived  there (but made no  sense to
+%%       check  it  in  every state),  and  then  a
+%%       tuple  was  used  to track  where  we  are
+%%       in  the content  (but  that separated  out
+%%       into  the `content`  `gen_server` using  a
+%%       `digraph`, because  the IVR  controls only
+%%       depend  on  the  type  of  content,  i.e.,
+%%       category, publication, or article).
+%%
+%%       See pre-"cleanup" commits for examples.
+%%   }}-
+%% }}-
+callback_mode() ->
+    [handle_event_function, state_enter].
+
+terminate(Reason, State, Data) ->
+    logger:debug(#{ self() => ["TERMINATE (normal-ish)"
+                              , #{ data => Data, reason => Reason, state => State }
+                              ]}).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% `gen_statem:handle_event/4` clauses    %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+winnow_playbacks
+% ( OldState
+% , State
+% ,
+(
+#{ playbacks := Playbacks } = Data
+) ->
+    logger:debug(#{a => enter, playbacks => Playbacks}),
+    Data.
+    % case OldState =:= State of
+    %     true ->
+    %         Data;
+    %     false ->
+    %         Pred =
+    %             fun ({
+
+%% STATE ENTER %% %{{-
+handle_event(enter, OldState, State, Data) ->
+
+    % TODO OFFSET-RESET Does this actually do anything? {{-
+    % Had  issues when  trying  to  reset article  offsets
+    % when   navigating  away   (i.e.,  next,   prev,  up,
+    % MAIN_MENU -> CONTENT_ROOT, ARTICLE_HELP -> MAIN_MENU
+    % ->  CONTENT_ROOT)  but do  not  when  just going  to
+    % MAIN_MENU, ARTICLE_HELP, next/prev  when there is no
+    % article there.  So tried  a couple things,  this was
+    % one. }}-
+    OffsetReset =
+        fun(GenStatemData) ->
+            case lists:member(OldState, [publication, category, content_root]) of
+                true  -> GenStatemData#{ playback_offset := "0" };
+                false -> GenStatemData
+            end
+        end,
+
+    NewData =
+        f:pipe(
+          [ Data
+          % There  should be  only one  playback running  at any
+          % time.
+          , fun stop_playback/1
+          , fun comfort_noise/1
+          , OffsetReset
+          , (f:curry(fun play/2))(State)
+          , fun winnow_playbacks/1
+          ]
+        ),
+
+    {keep_state, NewData};
+
+% }}-
+%% `info` CLAUSES (FOR FreeSWITCH EVENTS) %% {{-
+
+% }}-
 %% Step 1. Pre-process FreeSWITCH events {{- {{-
 %% -------------------------------------
 %% Convert all incoming FreeSWITCH events into a form that is easier to pattern match (in this case, a map).
@@ -312,6 +291,20 @@ handle_event(enter, OldState, State, Data) -> %
 %%      lower overhead.
 
 %% MOD_ERL_EVENT_MASSAGE (info) {{-
+%% `mod_erl_event` pre-processing %% {{-
+
+%% Using _inserted events_ (or  _stored events_) to add
+%% an event  pre-processing step via  the `{next_event,
+%% EventType,  EventContent}`   **transition  action**.
+%% `gen_statem` also ensures  that ["_the stored events
+%% are inserted  in the  queue as  the next  to process
+%% before  any  already  queued events.  The  order  of
+%% these  stored  events  is preserved,  so  the  first
+%% next_event in the containing  list becomes the first
+%% to process._"](https://erlang.org/doc/man/gen_statem.html#type-action).
+
+%% TODO: Update https://erlang.org/doc/design_principles/statem.html#Inserted%20Events with the above quote from the `gen_statem` man page.
+
 %% The   event  content   is   name  `ModErlEventMsg`   on {{- {{-
 %% purpose, and not  `FSEvent` (i.e., FreeSWITCH event)
 %% or   similar,  because   `mod_erlang_event`  creates
@@ -410,6 +403,7 @@ handle_event(
 handle_event(
   internal, % EventType
   _EventContent,
+  % TODO This does not seem right. I believe complex hangup states like this have been abolished. How would we get here anyway?
   {hangup, _},                % State
   _Data                  % Data
 ) ->
@@ -426,7 +420,7 @@ handle_event(
     keep_state_and_data;
 % }}-
 
-%% mod_erlang_event: call (STATE: init -> incoming_call) {{-
+%% (STATE: init -> incoming_call)     MOD_ERLANG_EVENT: call {{-
 
 %% Call init {{-
 %% ====================================================
@@ -443,18 +437,17 @@ handle_event(
 
 %% }}-
 
-handle_event(
-  internal,                          % EventType
-  { UUID                             % \
+handle_event
+( internal                           % EventType
+, { UUID                             % \
   , call                             % |
   , #{ "Channel-ANI" := CallerNumber % | EventContent = MassagedModErlEvent
      }                               % |
-  },                                 % /
-  init, % State,
-  #{ auth_status := unregistered }   = Data
-) ->
-    % logger:debug(#{ self() => ["INCOMING_CALL", #{ data => Data, state => State }]}),
-
+  }                                  % /
+, init                               = State
+, #{ auth_status := unregistered }   = Data
+)
+->
     %% Implicit UUID {{-
     %% ====================================================
     %% Tried  to  convince   myself  to  always  explicitly
@@ -475,13 +468,18 @@ handle_event(
     put(uuid, UUID),
     put(caller_number, CallerNumber),
 
+    logger:debug(#{ get(caller_number) => ["INCOMING_CALL", #{ data => Data, state => State, uuid => UUID }]}),
+
     sendmsg_locked(
         #{ command => execute
-         , args       => ["answer", []]
+         , args    => ["answer", []]
          }),
+
     %% REMINDER (`playback_terminator`) {{-
     %% ====================================================
     %% https://freeswitch.org/confluence/display/FREESWITCH/playback_terminators
+    %%
+    %% Kind of the FreeSWITCH-equivalent of the CSS reset.
     %%
     %% The   default   `playback_terminator`  is   *,   and
     %% that   should  be   ok   because  it   is  tied   to
@@ -489,8 +487,6 @@ handle_event(
     %% be  killed  in most  cases  anyway, and disabling it
     %% would make it explicit (and also avoiding mysterious
     %% errors in the future).
-    %%
-    %% Kind of the FreeSWITCH-equivalent of the CSS reset.
     %%
     %% The same  could've been done in  the dialplan (e.g.,
     %% `freeswitch/dialplan/default.xml`) using
@@ -501,10 +497,6 @@ handle_event(
     %% everything related to the same call in one place.
     %% }}-
     fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators none"}),
-    % % TODO the documentation shows this variable in all caps, so if it does not work then try that
-    % fsend({api, uuid_setvar, UUID ++ " record_append true"}),
-
-    logger:debug(#{ self() => ["INCOMING_CALL", CallerNumber]}),
 
     { NewAuthStatus
     , TransitionActions
@@ -518,7 +510,7 @@ handle_event(
                 DemoTimeout =                       % Generic timeout
                     { {timeout, unregistered_timer} % { {timeout, Name}
                     , ?DEMO_TIMEOUT                 % , Time
-                    , demo_hangup                       % , EventContent }
+                    , demo_hangup                   % , EventContent }
                     },
                 { unregistered
                 , [ DemoTimeout
@@ -531,37 +523,32 @@ handle_event(
     , Data#{ auth_status := NewAuthStatus }
     , TransitionActions
     };
-
-    % { keep_state
-    % , Data#{ auth_status := NewAuthStatus }
-    % , TransitionActions
-    % };
 %% }}-
 
-%% mod_erlang_event: call_event(CHANNEL_ANSWER) (STATE: incoming_call -> greeting) {{-
-handle_event(
-  internal,                               % EventType
-  { _UUID                                 % \
+%% (STATE: incoming_call -> greeting) MOD_ERLANG_EVENT: call_event(CHANNEL_ANSWER) {{-
+handle_event
+( internal                                % EventType
+, { _UUID                                 % \
   , call_event                            % |
   , #{ "Event-Name" := "CHANNEL_ANSWER" } % | EventContent = MassagedModErlEvent
-  },                                      % /
-  incoming_call, % = State,                       % State
-  % #{ auth_status  := _AuthStatus           % \         Made  explicit  all  values  that  are  known,
-  %  % , menu_history := []                   % | Data    because the only state change to this state is
-  %  % , playback_ids := #{}                  % |         from  `incoming_call`, and  whatever has  been
-  %  } =
-  Data                               % /         set there must also be true.
-) ->
+  }                                       % /
+, incoming_call                           = State
+, Data
+)
+->
     {next_state, greeting, Data};
-%% }}-
 
-%% HANDLE_DTMF_FOR_ALL_STATES (internal) {{-
+%% }}-
+%% (STATE: * -> *)                    MOD_ERLANG_EVENT: call_event(DTMF) {{-
+%% tag: HANDLE_DTMF_FOR_ALL_STATES
 handle_event(
-  internal,                    % EventType
-  { _UUID                      % \
-  , call_event                 % |
-  , #{ "DTMF-Digit" := Digit} % = EventName % | EventContent = MassagedModErlEvent
-  },                           % /
+  internal,                   % EventType
+  { _UUID                     % \
+  , call_event                % |
+  , #{ "Event-Name" := "DTMF" % | EventContent = MassagedModErlEvent
+     , "DTMF-Digit" := Digit  % | TODO TEST THIS!
+     }                        % |
+  },                          % /
   State,
    % if `ReceivedDigits =/= []`, we are collecting digits
   #{
@@ -573,7 +560,7 @@ handle_event(
     % logger:debug(#{ self() => ["HANDLE_DTMF_FOR_ALL_STATES", #{ digit => Digit, state => State}]}),
     logger:debug( #{ a => "HANDLE_DTMF", state => State, digit => Digit, collected_digits => ReceivedDigits }),
 
-    % Reset inactivity timers whenever a new DTMF signal comes in
+    % Reset inactivity timers whenever a new DTMF signal comes in (i.e., a button is pressed)
     % TODO Amend when voice commands get implemented
     re_start_inactivity_timer(State),
 
@@ -698,7 +685,6 @@ handle_event(
                     % {next_state, tutorial, Data};
                     keep_state_and_data;
                 % }}-
-                % TODO FEATURE leave_message
                 % 2         {{- => Log in / Favourites (depending on AuthStatus)
                 "2" ->
                     % TODO FEATURE add favorites
@@ -1152,34 +1138,28 @@ when Application =:= "speak"
     %      ,    is_stopped := IsStopped
     %      }
     % } = Playbacks,
-    logger:debug(#{a => "play CHANNEL_EXECUTE_COMPLETE", app_id => ApplicationUUID}),
     { ApplicationUUID
     , StoppedPlayback
     , {stopped, IsStopped}
     } =
         proplists:lookup(ApplicationUUID, Playbacks),
 
+    % Simply deleting the actual playback only that comes in this clause will cause stale playback handles to accumulate, because `play/2` functions queue multiple playbacks on the FreeSWITCH server via `sendmsg_locked/?`, save them all to Data, but if a menu is interrupted (i.e., navigated away), those queued up playbacks simply just vanish, and because they never even played, there will be no CHANNEL_EXECUTE_COMPLETE event generated, leaving all those entries in the Data#playbacks proplist.
+    % With this approach, because Data#playbacks is used like a stack, all the entries before the actual stopped playback (either naturally or by user intervention) are obsolete and only represent the artifacts of a previous menu (I know, I love tautology).
     NewPlaybacks =
-        proplists:delete(ApplicationUUID, Playbacks),
+        lists:takewhile(fun({AppID, _, _}) -> AppID =/= ApplicationUUID end, Playbacks),
+    % NewPlaybacks =
+    %     proplists:delete(ApplicationUUID, Playbacks),
     NewData =
         Data#{ playbacks := NewPlaybacks },
 
-    % logger:debug(
-    %     #{ a => "HANDLE_CHANNEL_EXECUTE_COMPLETE"
-    %      , app_uuid => ApplicationUUID
-    %      , state => State
-    %      , stopped_playback => {StoppedPlayback, IsStopped}
-    %      }),
+    logger:debug(
+        #{ a => "speak/play CHANNEL_EXECUTE_COMPLETE"
+         , new_playbacks => NewPlaybacks
+         , playbacks => Playbacks
+         , stopped_playback => {StoppedPlayback, IsStopped}
+         }),
 
-    % NewData =
-    %     ( composeFlipped(
-    %         [ (curry(fun proplists:delete/2))(ApplicationUUID)
-    %         , fun(Value) -> maps:update(playbacks, Value, Data) end
-    %         ]
-    %       )
-    %     )(Data),
-
-    % logger:debug(#{event => E}),
 
     % TODO every `play/2` clause should have a corresponding entry here
     %      (or vice versa, every state mentioned here should have a `play/2` clause`
@@ -1292,13 +1272,13 @@ when Application =:= "speak"
 
         article_intro ->
 
-            logger:debug(
-                #{ a => "!!!ARTICLE_INTRO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                , app_uuid => ApplicationUUID
-                , state => State
-                , stopped_playback => {StoppedPlayback, IsStopped}
-                % , next_state => derive_state(NewData)
-                }),
+            % logger:debug(
+            %     #{ a => "!!!ARTICLE_INTRO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            %     , app_uuid => ApplicationUUID
+            %     , state => State
+            %     , stopped_playback => {StoppedPlayback, IsStopped}
+            %     % , next_state => derive_state(NewData)
+            %     }),
 
             {next_state, article, NewData};
 
@@ -1319,7 +1299,7 @@ when Application =:= "speak"
         _ when State =:= demo_hangup;
                State =:= inactivity_hangup
         ->
-            keep_state_and_data
+            {keep_state, NewData}
 
         % % TODO clean up {{-
         %     % Article =
@@ -1388,11 +1368,11 @@ handle_event
 , Data
 )
 ->
-            logger:debug(
-                #{ a => "record CHANNEL_EXECUTE_COMPLETE"
-                , state => State
-                , data => Data
-                }),
+            % logger:debug(
+            %     #{ a => "record CHANNEL_EXECUTE_COMPLETE"
+            %     , state => State
+            %     , data => Data
+            %     }),
     fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators none"}),
     {next_state, leave_message, Data};
 
@@ -1430,6 +1410,8 @@ handle_event(
     % filog:process_log(debug, #{ from => "another event that is not INCOMING_CALL and CALL_HANGUP" });
 
 %% }}-
+
+% }}-
 
 %%%%%%%%%%%%%%
 %% Timeouts %%
@@ -1692,7 +1674,6 @@ spec_sendmsg_headers(_SendmsgCommand, _Args) ->
 do_sendmsg(
   #{ command := SendmsgCommand
    , args       := SendmsgArgs
-   % , app_uuid_prefix   := Prefix
    , event_lock      := IsLocked
    }
 )
@@ -1741,23 +1722,6 @@ when is_list(SendmsgArgs)
     % logger:debug(#{ a => ["DO_SENDMSG", #{ app_id => ApplicationUUID, final_headers => FinalHeaders }]}),
 
     ApplicationUUID.
-    % case EventUUIDHeaderList of
-    %     [] ->
-    %         not_used;
-    %     [{"Event-UUID", AppUUID}] ->
-    %         AppUUID % same as ApplicationUUID above
-    % end;
-
-% do_sendmsg(
-%   #{ command := SendmsgCommand
-%    , args       := SendmsgArgs
-%    , event_lock      := IsLocked
-%    } = Args
-% ) ->
-%     % logger:debug(#{ a => ["DO_SENDMSG", #{args => Args}]}),
-%     do_sendmsg(
-%       Args#{ app_uuid_prefix => none }
-%     ).
 
 sendmsg(
   #{ command := _
@@ -1788,6 +1752,7 @@ uuid_fileman(Command) ->
        }).
 
 stop_playback(#{ playbacks := [] } = Data) ->
+    logger:debug(#{ a => "STOP_PLAYBACK []"}),
     Data;
 
 % Nothing is playing and the most recent playback has been stopped before.
@@ -1795,7 +1760,8 @@ stop_playback(#{ playbacks := [] } = Data) ->
 % TODO make sure that the Data#playbacks stack gets cleared properly
 % TODO QUESTION Where are the stopped recordings filtered out? Or does this act as a history? But not all menus play prompts.
 % TODO QUESTION If there is only one playback allowed at one time, why is `Data#playbacks a list?
-stop_playback(#{ playbacks := [{_, _, {stopped, true}}|_] } = Data) ->
+stop_playback(#{ playbacks := [{_, _, {stopped, true}}|_] = Playbacks } = Data) ->
+    logger:debug(#{ a => "STOP_PLAYBACK stopped=true", playbacks => Playbacks}),
     Data;
 
 % Stop the currently playing prompt
@@ -1807,7 +1773,7 @@ stop_playback( % {{-
        , {stopped, false} % |
        }
        | Rest
-     ]
+     ] = Playbacks
    } = Data
 ) ->
     % logger:debug("stop playback"),
@@ -1821,6 +1787,7 @@ stop_playback( % {{-
     % }}-
     fsend({api, uuid_break, get(uuid) ++ " all"}),
     StoppedPlayback = {ApplicationUUID, PlaybackName, {stopped, true}},
+    logger:debug(#{ a => "STOP_PLAYBACK stopped=false", playbacks => Playbacks, stopped => StoppedPlayback}),
     Data#{ playbacks := [StoppedPlayback|Rest] }.
 % }}-
 
@@ -2501,6 +2468,7 @@ save_playback_meta % {{-
         % When CHANNEL_EXECUTE_COMPLETE playback of the same name as the state comes in, it means that nothing has stopped the playback, because the `stopped_playback/1` function is only called in the state enter function on state change. As a corollary, every other time where PlaybackName =/= State means that the playback has been stopped
         % That is, the stopped status can be derived from the current state and ended playback.
         % }}-
+         % THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
         , {stopped, false} % Has the playback been stopped?
         },
         % #{ playback_name => PlaybackName
@@ -2573,11 +2541,11 @@ record % {{-
     % fsend({api, uuid_record, stitch([get(uuid), "start",  Filename, "5400"])});
     % fsend({api, uuid_record, stitch([get(uuid), "start", ?REC_DIR ++ Filename, "5400"])});
 
-    logger:debug(
-        #{ a => "in_recording PLAY"
-         , data => Data
-         , path => Filename
-         }),
+    % logger:debug(
+    %     #{ a => "in_recording PLAY"
+    %      , data => Data
+    %      , path => Filename
+    %      }),
 
     ApplicationUUID =
         sendmsg_locked(
@@ -2615,12 +2583,12 @@ playback % {{-
            % , app_uuid_prefix   => PlaybackName
            }),
 
-    logger:debug(
-        #{ a => "PLAYBACK"
-         , "state|playbackname" => PlaybackName
-         , data => Data
-         , path => Path
-         }),
+    % logger:debug(
+    %     #{ a => "PLAYBACK"
+    %      , "state|playbackname" => PlaybackName
+    %      , data => Data
+    %      , path => Path
+    %      }),
 
     save_playback_meta(ApplicationUUID, PlaybackName, Data).
 % }}-
@@ -3266,14 +3234,14 @@ next_content % {{-
                 ignore
         end,
 
-            logger:debug(
-                #{ a => "!!!!!!NEXT_CONTENT!!!!!!!!!!!!!!!"
-                , current_content => CurrentContent
-                , direction => Direction
-                , next_content => NextContent
-                , prev_state => PrevState
-                , next_state => NextState
-                }),
+            % logger:debug(
+            %     #{ a => "!!!!!!NEXT_CONTENT!!!!!!!!!!!!!!!"
+            %     , current_content => CurrentContent
+            %     , direction => Direction
+            %     , next_content => NextContent
+            %     , prev_state => PrevState
+            %     , next_state => NextState
+            %     }),
     case {NextContent, Direction} of
         % TODO PROD implement states otherwise it will crash
         % DONE? test
