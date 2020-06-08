@@ -16,8 +16,11 @@
    , handle_cast/2
    , terminate/2
 
+   % public API
+   , look_up/1
+
    % private functions
-   , load_phone_numbers/0
+   % , load_phone_numbers/0
    ]).
 
 -define(USER_FILE, "phone_numbers").
@@ -56,6 +59,43 @@ terminate(Reason, _PhoneNumberSet) ->
     log(debug, [terminate_making_sure, Reason]),
     filog:remove_singleton_handler(?MODULE).
 
+% === PUBLIC API ===================================== {{-
+
+% TODO re-evaluate these comments when there will be a central DB
+%% The async  version of  `is_user_registered/1`. Probably {{- {{-
+%% better  suited  for  when the  phone  number  lookup
+%% will  try to  reach  a remote  database. Handled  in
+%% `handle_cast/2` above.
+%%
+%% CAVEAT: Probably  introduces a race  condition: User
+%% calls  service, assumes  they are  registered, start
+%% dialing single/double  digits for menus, and  if the
+%% DB lookup is slow enough, it could be that the timer
+%% (for DTMF  digits) expires, and  its `handle_info/2`
+%% callback  fires   before  the  lookup   returns  (in
+%% `handle_cast/2`)  that  a  user is  registered.  The
+%% former  would  emit  a  warning  that  user  is  not
+%% registered,  will be  kicked out  in 5  minutes, but
+%% then  the  system  silently does  register  (if  the
+%% lookup is successful).
+%% Either  add another  notification that  registration
+%% successful, or stay silent the first time and give a
+%% warning  that 1  minute  remaining  for example,  if
+%% lookup not successful.
+%% }}- }}-
+% caller_status(EventHeaders) -> % {{-
+%     CallPid = self(),
+%     F = fun() ->
+%             CallerStatus = register_status(EventHeaders),
+%             gen_statem:cast(CallPid, CallerStatus)
+%         end,
+%     spawn(F).
+%% }}-
+
+look_up(PhoneNumber) ->
+    gen_server:call(user_db, {look_up, PhoneNumber}).
+
+% }}-
 %%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions %%
 %%%%%%%%%%%%%%%%%%%%%%%

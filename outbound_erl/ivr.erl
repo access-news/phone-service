@@ -11,12 +11,8 @@
     , handle_event/4
     , terminate/3
 
-    % miscellaneous
-    , vertex_to_filename/1
     ]).
 
-% TODO PROD Generate all static TTS audiofiles when deploying to a new system.
--define(FS_NODE, 'freeswitch@tr2').
 % TODO goes to README
 % erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -sname access_news -setcookie OldTimeRadio
 
@@ -36,10 +32,6 @@
 % }}-
 -define(DEMO_TIMEOUT, 300000). % 5 min
 -define(INTERDIGIT_TIMEOUT, 2000).
-% TODO PROD don't forget to document this in the deployment instructions that these directories will have to be created!
--define(PROMPT_DIR, "/home/toraritte/clones/phone-service/prompts/").
-% TODO PROD ?REC_DIR may be omitted altogether; try using just $$sound_prefix of FreeSWITCH and upload recordings directly to cloud storage
--define(REC_DIR,    "/home/toraritte/clones/phone-service/recordings/").
 
 % NOTE Inactivity warnings and timeouts {{-
 % are not  defined here,  becasue they  have different
@@ -76,11 +68,14 @@ init(_Args) -> % {{-
     Data =
         #{ received_digits => []
          , playback_offset => "0"
-         , playback_speed  => "0"
+         , article_speed   => "0"
          , auth_status     => unregistered % | registered
          , current_content => hd(content:root())
          , prev_state      => content_root
          , playbacks       => []
+         , prompt_speed    => 87
+         , call_UUID       => ""
+         , caller_number   => ""
          },
 
     {ok, init, Data}.
@@ -223,22 +218,6 @@ terminate(Reason, State, Data) ->
 %% `gen_statem:handle_event/4` clauses    %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-winnow_playbacks
-% ( OldState
-% , State
-% ,
-(
-#{ playbacks := Playbacks } = Data
-) ->
-    logger:debug(#{a => enter, playbacks => Playbacks}),
-    Data.
-    % case OldState =:= State of
-    %     true ->
-    %         Data;
-    %     false ->
-    %         Pred =
-    %             fun ({
-
 %% STATE ENTER %% %{{-
 handle_event(enter, OldState, State, Data) ->
 
@@ -259,15 +238,15 @@ handle_event(enter, OldState, State, Data) ->
         end,
 
     NewData =
-        f:pipe(
+        futil:pipe(
           [ Data
           % There  should be  only one  playback running  at any
           % time.
-          , fun stop_playback/1
-          , fun comfort_noise/1
+          , fun menus:stop_playback/1
+          , fun menus:comfort_noise/1
           , OffsetReset
-          , (f:curry(fun play/2))(State)
-          , fun winnow_playbacks/1
+          , (futil:curry(fun menus:play/2))(State)
+          % , fun winnow_playbacks/1
           ]
         ),
 
@@ -290,7 +269,7 @@ handle_event(enter, OldState, State, Data) ->
 %%      (and/or parts of the events) that are  irrelevant to
 %%      lower overhead.
 
-%% MOD_ERL_EVENT_MASSAGE (info) {{-
+%% MOD_ERL_EVENT_MASSAGE (info)
 %% `mod_erl_event` pre-processing %% {{-
 
 %% Using _inserted events_ (or  _stored events_) to add
@@ -405,22 +384,23 @@ handle_event(
   _EventContent,
   % TODO This does not seem right. I believe complex hangup states like this have been abolished. How would we get here anyway?
   {hangup, _},                % State
-  _Data                  % Data
+  #{ call_UUID := UUID } = _Data                  % Data
 ) ->
     % logger:debug(#{ self() => ["in HANGUP state", #{ data => Data, state => hangup, event_content => EC }]}),
 
     % sending it synchronously to allow the playback to end
-    sendmsg_locked(
-        #{ command => hangup
-         , args       => ["16"]
-         }),
+    fs:sendmsg_locked(UUID, hangup, ["16"]),
+        % #{ command => hangup
+        %  , args       => ["16"]
+        %  }),
     %% Not stopping the  `gen_statem` process here, because
     %% there will be further events related to the `hangup`
     %% command above. See "CALL_HANGUP" `info` clause below.
     keep_state_and_data;
 % }}-
 
-%% (STATE: init -> incoming_call)     MOD_ERLANG_EVENT: call {{-
+%% (STATE: init -> incoming_call)
+%% MOD_ERLANG_EVENT: call {{-
 
 %% Call init {{-
 %% ====================================================
@@ -448,32 +428,9 @@ handle_event
 , #{ auth_status := unregistered }   = Data
 )
 ->
-    %% Implicit UUID {{-
-    %% ====================================================
-    %% Tried  to  convince   myself  to  always  explicitly
-    %% include  the channel  ID  (i.e.,  `UUID`), but  just
-    %% putting  it  in  the process  dictionary  is  easier
-    %% because
-    %%
-    %%   + a `gen_statem` process will  only deal with one call
-    %%     anyway,
-    %%
-    %%   + analogous  to  how FreeSwITCH  does  it  in the  XML
-    %%     dialplan, and
-    %%
-    %%   + this  is  the  perfect  use  case  for  the  process
-    %%     registry as  the UUID  won't change during  the call
-    %%     (at least not in the Access News scenario).
-    %% }}-
-    put(uuid, UUID),
-    put(caller_number, CallerNumber),
+    logger:debug(#{ CallerNumber => ["INCOMING_CALL", #{ data => Data, state => State, uuid => UUID }]}),
 
-    logger:debug(#{ get(caller_number) => ["INCOMING_CALL", #{ data => Data, state => State, uuid => UUID }]}),
-
-    sendmsg_locked(
-        #{ command => execute
-         , args    => ["answer", []]
-         }),
+    fs:sendmsg_locked(UUID, execute, ["answer", []]),
 
     %% REMINDER (`playback_terminator`) {{-
     %% ====================================================
@@ -496,7 +453,7 @@ handle_event
     %% but this pertains  to each call, and  better to have
     %% everything related to the same call in one place.
     %% }}-
-    fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators none"}),
+    fs:fsend({api, uuid_setvar, UUID ++ " playback_terminators none"}),
 
     { NewAuthStatus
     , TransitionActions
@@ -520,12 +477,16 @@ handle_event
 
     { next_state
     , incoming_call
-    , Data#{ auth_status := NewAuthStatus }
+    , Data#{ auth_status   := NewAuthStatus
+           , call_UUID     := UUID
+           , caller_number := CallerNumber
+           }
     , TransitionActions
     };
 %% }}-
 
-%% (STATE: incoming_call -> greeting) MOD_ERLANG_EVENT: call_event(CHANNEL_ANSWER) {{-
+%% (STATE: incoming_call -> greeting)
+%% MOD_ERLANG_EVENT: call_event(CHANNEL_ANSWER) {{-
 handle_event
 ( internal                                % EventType
 , { _UUID                                 % \
@@ -539,11 +500,13 @@ handle_event
     {next_state, greeting, Data};
 
 %% }}-
-%% (STATE: * -> *)                    MOD_ERLANG_EVENT: call_event(DTMF) {{-
+
+%% (STATE: * -> *)
+%% MOD_ERLANG_EVENT: call_event(DTMF) {{-
 %% tag: HANDLE_DTMF_FOR_ALL_STATES
 handle_event(
   internal,                   % EventType
-  { _UUID                     % \
+  { UUID                      % \
   , call_event                % |
   , #{ "Event-Name" := "DTMF" % | EventContent = MassagedModErlEvent
      , "DTMF-Digit" := Digit  % | TODO TEST THIS!
@@ -685,17 +648,9 @@ handle_event(
                     % {next_state, tutorial, Data};
                     keep_state_and_data;
                 % }}-
-                % 2         {{- => Log in / Favourites (depending on AuthStatus)
+                % 2         {{- => prompt_playback_speed
                 "2" ->
-                    % TODO FEATURE add favorites
-                    % NextMenu =
-                    %     case AuthStatus of
-                    %         registered   -> favourites;
-                    %         unregistered -> sign_in
-                    %     end,
-
-                    % {next_state, sign_in, Data};
-                    keep_state_and_data;
+                    {next_state, prompt_playback_speed, Data};
                 % }}-
                 % TODO FEATURE settings
                 % 3         {{- => settings
@@ -721,6 +676,36 @@ handle_event(
             end;
 
         % }}-
+        % === PROMPT_PLAYBACK_SPEED (-> (loop)) {{-
+        prompt_playback_speed ->
+
+            PromptSpeed =
+                maps:get(prompt_speed, Data),
+
+            case Digit of
+                % *          {{- => main_menu
+                "*" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % 1          {{- => prompt_playback_speed (slower)
+                "1" ->
+                    {repeat_state, Data#{ prompt_speed := PromptSpeed - 10 }};
+                % }}-
+                % 1          {{- => prompt_playback_speed (reset)
+                "2" ->
+                    {repeat_state, Data#{ prompt_speed := 87 }};
+                % }}-
+                % 1          {{- => prompt_playback_speed (faster)
+                "3" ->
+                    {repeat_state, Data#{ prompt_speed := PromptSpeed + 10 }};
+                % }}-
+                % [#04-9]     {{- => content root
+                _ ->
+                    keep_state_and_data
+                % }}-
+            end;
+
+        % }}-
         % === LEAVE_MESSAGE (-> (loop)) {{-
         leave_message ->
 
@@ -736,18 +721,32 @@ handle_event(
             end;
 
         % }}-
-        % === IN_RECORDING (-> (loop)) {{-
-        in_recording ->
+        % === (inactive) IN_RECORDING (-> (loop))  (see NOTE below) {{-
 
-            case Digit of
-                % [*#0-9]    {{- => leave_message
-                _ ->
-                    fsend({api, uuid_record, stitch([get(uuid), "stop", "all"])}),
-                    {next_state, leave_message, Data}
-                % }}-
-            end;
+        % NOTE This  clause  will never  come  into  play; as  soon
+        %      as  recording is  started the  control is  hijacked,
+        %      and  no  events will  be  sent  towards through  the
+        %      event socket. That  is why `playback_terminators` is
+        %      set  to `any`,  and  when that  stops the  recording
+        %      the  generated  CHANNEL_EXECUTE_COMPLETE event  will
+        %      be  evaluated, and  control returns  to this  Erlang
+        %      process.
 
-        % }}-
+        % in_recording ->
+
+        %     case Digit of
+        %         % [*#0-9]    {{- => leave_message
+        %         _ ->
+        %             fs:fsend
+        %               ({ api
+        %                , uuid_record
+        %                , futil:stitch([UUID, "stop", "all"])
+        %                }),
+        %             {next_state, leave_message, Data}
+        %         % }}-
+        %     end;
+
+        % % }}-
         % === CONTENT_ROOT (loop) {{-
         content_root ->
             case Digit of
@@ -784,7 +783,7 @@ handle_event(
         % === CATEGORY (loop) {{-
         category ->
             case Digit of
-                % *          {{- => back (i.e., up in content hierarchy)
+                % *          {{- => go_up (i.e., up in content hierarchy)
                 "*" ->
                     % next_content(parent, Data);
                     next_content(parent, Data#{ prev_state := State });
@@ -820,7 +819,7 @@ handle_event(
         % === PUBLICATION (-> first article) {{-
         publication ->
             case Digit of
-                % *          {{- => back (i.e., up in content hierarchy)
+                % *          {{- => go_up (i.e., up in content hierarchy)
                 "*" ->
                     % next_content(parent, Data);
                     next_content(parent, Data#{ prev_state := State });
@@ -917,7 +916,7 @@ handle_event(
         %      see `play % article`
         article ->
             case Digit of
-                % *          {{- => back (i.e., up in content hierarchy)
+                % *          {{- => go_up (i.e., up in content hierarchy)
                 "*" ->
                     % next_content(parent, NewData);
                     next_content(parent, Data#{ prev_state := State });
@@ -927,53 +926,52 @@ handle_event(
                     % `playback_offset` is saved at CHANNEL_EXECUTE_COMPLETE clause in {article, is_stopped: true}
                     {next_state, main_menu, Data};
                 % }}-
-                % #          {{- => next article (i.e., next sibling)
+                % #          {{- => next_article (i.e., next sibling)
                 "#" ->
-                    % next_content(next, NewData);
                     next_content(next, Data#{ prev_state := State });
                 % }}-
                 % NOTE using `api` for now instead of `bgapi`
-                % 1          {{- => rewind (10s)
+                % 1          {{- => skip_backward (10s)
                 "1" ->
-                    uuid_fileman("seek:-10000"),
+                    fs:uuid_fileman(UUID, "seek:-10000"),
                     keep_state_and_data;
                 % }}-
-                % 2          {{- => pause (stop) article
+                % 2          {{- => pause_resume
                 "2" ->
                     % `playback_offset` is saved at CHANNEL_EXECUTE_COMPLETE clause in {article, is_stopped: true}
                     {next_state, article_help, Data};
                 % }}-
-                % 3          {{- => forward (10s)
+                % 3          {{- => skip_forward (10s)
                 "3" ->
-                    uuid_fileman("seek:+10000"),
+                    fs:uuid_fileman(UUID, "seek:+10000"),
                     keep_state_and_data;
                 % }}-
-                % 4          {{- => slower
+                % 4          {{- => slow_down
                 "4" ->
                     change_speed("-", Data);
                 % }}-
-                % 5          {{- => volume down
+                % 5          {{- => volume_down
                 "5" ->
                     % TODO PROD figure out the right amount
-                    uuid_fileman("volume:-2"),
+                    fs:uuid_fileman(UUID, "volume:-2"),
                     keep_state_and_data;
                 % }}-
-                % 6          {{- => faster
+                % 6          {{- => speed_up
                 "6" ->
                     change_speed("+", Data);
                 % }}-
                 % TODO FEATURE add to favourites
-                % 7          {{- => restart article
+                % 7          {{- => restart
                 "7" ->
-                    uuid_fileman("restart"),
+                    fs:uuid_fileman(UUID, "restart"),
                     {keep_state, Data};
                 % }}-
-                % 8          {{- => volume up
+                % 8          {{- => volume_up
                 "8" ->
-                    uuid_fileman("volume:+2"),
+                    fs:uuid_fileman(UUID, "volume:+2"),
                     keep_state_and_data;
                 % }}-
-                % 9          {{- => previous article
+                % 9          {{- => prev_article
                 "9" ->
                     % next_content(prev, NewData)
                     next_content(prev, Data#{ prev_state := State })
@@ -986,7 +984,7 @@ handle_event(
         %      ; State =:= article_intro
         article_help ->
             case Digit of
-                % *          {{- => back to publication
+                % *          {{- => go_up to publication
                 "*" ->
                     % next_content(parent, Data);
                     next_content
@@ -1034,7 +1032,7 @@ handle_event(
             end;
 
         % }}-
-        % === ARTICLE_HELP (loop) {{-
+        % === INACTIVITY_WARNING (loop) {{-
         % Not checking  for digits because their  only meaning
         % here  is  to  skip   this  prompt,  and  cancel  the
         % inactivity timers.
@@ -1115,7 +1113,6 @@ handle_event(
   , #{ "Event-Name" := "CHANNEL_EXECUTE_COMPLETE"
        % TODO re-eval on any playback change! (external engine etc)
      , "Application" := Application
-     % , "Application" := "speak"
      , "Application-UUID" := ApplicationUUID
      , "variable_playback_last_offset_pos" := LastOffset
      }                            % | EventContent = MassagedModErlEvent
@@ -1129,15 +1126,6 @@ handle_event(
 when Application =:= "speak"
    ; Application =:= "playback"
 ->
-    % PlaybackName =
-    %     extract_playback_name(ApplicationUUID),
-
-    % This dancing around is because functions in `maps` never fail, and this `handle_event/4` clause should crash if an `ApplicationUUID` is not in `Playbacks` as it would mean that a playback has been started without saving its ID in the `gen_statem` data, which should not happen. All menus use only `speak` (for now), so anything that gets in here is a playback that has been stopped (one way or another).
-    % #{ ApplicationUUID :=
-    %     #{ playback_name := PlaybackName
-    %      ,    is_stopped := IsStopped
-    %      }
-    % } = Playbacks,
     { ApplicationUUID
     , StoppedPlayback
     , {stopped, IsStopped}
@@ -1147,22 +1135,15 @@ when Application =:= "speak"
     % Simply deleting the actual playback only that comes in this clause will cause stale playback handles to accumulate, because `play/2` functions queue multiple playbacks on the FreeSWITCH server via `sendmsg_locked/?`, save them all to Data, but if a menu is interrupted (i.e., navigated away), those queued up playbacks simply just vanish, and because they never even played, there will be no CHANNEL_EXECUTE_COMPLETE event generated, leaving all those entries in the Data#playbacks proplist.
     % With this approach, because Data#playbacks is used like a stack, all the entries before the actual stopped playback (either naturally or by user intervention) are obsolete and only represent the artifacts of a previous menu (I know, I love tautology).
     NewPlaybacks =
-        lists:takewhile(fun({AppID, _, _}) -> AppID =/= ApplicationUUID end, Playbacks),
-    % NewPlaybacks =
-    %     proplists:delete(ApplicationUUID, Playbacks),
+        lists:takewhile
+          ( fun({AppID, _, _}) ->
+                AppID =/= ApplicationUUID
+            end
+          , Playbacks
+          ),
     NewData =
         Data#{ playbacks := NewPlaybacks },
 
-    logger:debug(
-        #{ a => "speak/play CHANNEL_EXECUTE_COMPLETE"
-         , new_playbacks => NewPlaybacks
-         , playbacks => Playbacks
-         , stopped_playback => {StoppedPlayback, IsStopped}
-         }),
-
-
-    % TODO every `play/2` clause should have a corresponding entry here
-    %      (or vice versa, every state mentioned here should have a `play/2` clause`
     case State of
 
         % TODO list_articles (and lots others)
@@ -1174,31 +1155,17 @@ when Application =:= "speak"
         % collect_digits ->
         %     {keep_state, NewData};
 
-        _ when StoppedPlayback =:= in_recording
-             , IsStopped =:= false
-        ->
-            {keep_state, NewData};
+        % _ when StoppedPlayback =:= in_recording
+        %      , IsStopped =:= false
+        % ->
+        %     {keep_state, NewData};
 
         _ when StoppedPlayback =:= article
              % TODO would not `IsStopped =:= true` be better?
              % , StoppedPlayback =/= State
              , IsStopped =:= true
         ->
-            % TODO BUG? Is there a possibility that this never gets saved?
-            % case SavedOffset =:= "-1" of
-            % case {SavedOffset, IsStopped} of
-            %     {-1, true} ->
-                    % {keep_state, NewData#{playback_offset := "0"}};
-            %     {_, true} ->
                     {keep_state, NewData#{playback_offset := LastOffset}};
-            %     _ ->
-            %         next_content
-            %         ( next
-            %         , NewData#{ prev_state := State
-            %                   , playback_offset := "0" % because moving to the next article
-            %                   }
-            %         );
-            % end;
 
         % 1
         % `is_stopped` should always be TRUE in this scenario
@@ -1209,12 +1176,6 @@ when Application =:= "speak"
         _ when StoppedPlayback =:= State
              , IsStopped =:= true
         ->
-            % logger:debug(
-            %     #{ a => "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-            %     , app_uuid => ApplicationUUID
-            %     , state => State
-            %     , stopped_playback => {StoppedPlayback, IsStopped}
-            %     }),
             {keep_state, NewData};
 
         % 3
@@ -1223,18 +1184,12 @@ when Application =:= "speak"
         _ when StoppedPlayback =:= State
              , IsStopped =:= false
              , State =:= main_menu
+             ; State =:= prompt_playback_speed
              ; State =:= content_root
              ; State =:= category
-             % ; State =:= publication
              ; State =:= article_help
              ; State =:= leave_message
         ->
-            % logger:debug(
-            %     #{ a => "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-            %     , app_uuid => ApplicationUUID
-            %     , state => State
-            %     , stopped_playback => {StoppedPlayback, IsStopped}
-            %     }),
             {repeat_state, NewData};
 
         % States where playback ended naturally,
@@ -1248,51 +1203,24 @@ when Application =:= "speak"
             % next_content(first, NewData);
             next_content(first, NewData#{ prev_state := State });
 
+        % TODO Test this!
         article -> % that is, playback hasn't been stopped and the state loops but in a special kind of way (offset needs to be reset)
             {repeat_state, NewData#{ playback_offset := "0"}};
-        %     % next_content(next, NewData);
-
-        %     logger:debug(
-        %         #{ a => "!!!article, false -> CULPRIT?!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        %         , app_uuid => ApplicationUUID
-        %         , state => State
-        %         , stopped_playback => {StoppedPlayback, IsStopped}
-        %         % , next_state => derive_state(NewData)
-        %         }),
-
-        %     next_content
-        %       ( next
-        %       , NewData#{ prev_state := State
-        %                 , playback_offset := "0" % because moving to the next article
-        %                 }
-        %       );
 
         collect_digits ->
             {keep_state, NewData};
 
         article_intro ->
-
-            % logger:debug(
-            %     #{ a => "!!!ARTICLE_INTRO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-            %     , app_uuid => ApplicationUUID
-            %     , state => State
-            %     , stopped_playback => {StoppedPlayback, IsStopped}
-            %     % , next_state => derive_state(NewData)
-            %     }),
-
             {next_state, article, NewData};
 
         inactivity_warning ->
             {next_state, derive_state(NewData), NewData};
 
         % UNINTERRUPTABLE states that only play a prompt
-        % formerly {warning, _}         % | TODO already see a pattern
         _ when State =:= invalid_selection
-             % ; State =:= inactivity_warning
              ; State =:= no_children
              ; State =:= no_prev_item
              ; State =:= no_next_item
-             % ; State =:= article_intro
         ->
             {next_state, derive_state(NewData), NewData};
 
@@ -1300,65 +1228,12 @@ when Application =:= "speak"
                State =:= inactivity_hangup
         ->
             {keep_state, NewData}
-
-        % % TODO clean up {{-
-        %     % Article =
-        %     %     content(Current, first),
-
-        %     % Article =
-        %     %     #{ path := ArticlePath
-        %     %      , offset := 0
-        %     %      },
-
-        %     { next_state
-        %     , {content, content(Current, first)} % i.e., article
-        %     % TODO checking the offset is done at play
-        %     % -1 -> read article title and meta
-        %     % other -> keep playing from given offset
-        %     % NOTE: not touching `offset`; it is -1 when coming from publication (either because it played or because option 1 or 3 is selected)
-        %     , NewData
-        %     };
-
-        % {content, #{type := article} = Current} ->
-        %     case NewData of
-        %         % article meta played (aka, `article_entry`)
-        %         #{ offset := 0 } ->
-        %             { next_state
-        %             , State
-        %             , NewData
-        %             };
-        %         % #{ offset := 1 } - article playback finished without interruptions
-        %         % #{ offset := Offset } when Offset >= 1 - article playback was interrupted at one point
-        %         #{ offset := Offset }
-        %         % `when Offset > 0` would have sufficed but this documents it better
-        %           when Offset =:= 1 % article playback finished without interruptions
-        %              ; Offset > 1   % article playback was interrupted at one point (to go to a menu, etc.)
-        %         ->
-        %             { next_state
-        %             , content(Current, next)
-        %             , NewData#{ offset := -1 }
-        %             }
-        %     end,
-
-        %     { next_state
-        %     , NextMenu
-        %     , NewData
-        %     }
-
-        % % article_entry ->
-        % %     {next_state, article_playback, NewData};
-
-        % % `collect_digits` has no menu playback (via `speak/3`), hence no clause here
-
-        % % TODO do a playback CEC clause
-        % % `article_playback` does have a `play/2` clause but it uses dptools:playback instead of speak
-        %     % }}-
     end;
 %% }}-
 
 handle_event
 ( internal                     % EventType
-, { _UUID                      % \
+, { UUID                       % \
   , call_event                 % |
   , #{ "Event-Name" := "CHANNEL_EXECUTE_COMPLETE"
      , "Application" := "record"
@@ -1373,7 +1248,7 @@ handle_event
             %     , state => State
             %     , data => Data
             %     }),
-    fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators none"}),
+    fs:fsend({api, uuid_setvar, UUID ++ " playback_terminators none"}),
     {next_state, leave_message, Data};
 
 %% Debug clauses for `internal` events {{-
@@ -1459,8 +1334,6 @@ handle_event(
   State,
   #{ auth_status := AuthStatus } = Data
 ) ->
-    % logger:debug(#{ self() => ["UNREGISTERED_TIMEOUT", #{ data => Data, state => State }]}),
-
     case AuthStatus of
 
         registered ->
@@ -1468,7 +1341,6 @@ handle_event(
             keep_state_and_data;
 
         unregistered ->
-            % TODO speak notice that hanging up as demo timer expired, and goodbye (don't forget to add new warning state to HANDLE_DTMF_FOR_ALL_STATES, and HANDLE_CHANNEL_EXECUTE_COMPLETE!)
             {next_state, demo_hangup, Data}
             % A state_enter callback occurs at this point (i.e., `handle_event(enter, ...` is called; an event does not have to come in to trigger it), that triggers playback stop, starts playing the `demo_hangup` playback. Meanwhile, when an event comes in, it will trigger INTERNAL HANGUP clause, formally issuing a hangup request towards freeswitch (synchronously to let playback finish), and it will ignore any subsequent FS events.
             % TODO verify the claim below
@@ -1489,10 +1361,10 @@ handle_event
 ->
     Selection =
         % ( composeFlipped(
-        f:pipe
+        futil:pipe
           ([ ReceivedDigits
            , fun lists:reverse/1
-           , (f:cflip(fun string:join/2))("")
+           , (futil:cflip(fun string:join/2))("")
             % [ fun (List) -> string:join(List, "") end
             % Will throw on empty list but it should never happen the way collect_digits/2 is called
             % (to elaborate: `collect_digits/2` is only triggered by DTMF digits 1-9, hence it should never be empty. If it is, it means that the menu calling (i.e., DTMF-processing) logic is wrong, and should be corrected)
@@ -1533,6 +1405,10 @@ handle_event
             }
     end.
 %% }}-
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%% Private functions %%
+%%%%%%%%%%%%%%%%%%%%%%%
 
 % TODO Eval on 2 digits immediately to speed up things
 collect_digits(Digit, Data)
@@ -1578,40 +1454,6 @@ when Digit =:= "1";
     }.
 % }}-
 
-%%%%%%%%%%%%%%%%%%%%%%%
-%% Private functions %%
-%%%%%%%%%%%%%%%%%%%%%%%
-
-%% The async  version of  `is_user_registered/1`. Probably {{- {{-
-%% better  suited  for  when the  phone  number  lookup
-%% will  try to  reach  a remote  database. Handled  in
-%% `handle_cast/2` above.
-%%
-%% CAVEAT: Probably  introduces a race  condition: User
-%% calls  service, assumes  they are  registered, start
-%% dialing single/double  digits for menus, and  if the
-%% DB lookup is slow enough, it could be that the timer
-%% (for DTMF  digits) expires, and  its `handle_info/2`
-%% callback  fires   before  the  lookup   returns  (in
-%% `handle_cast/2`)  that  a  user is  registered.  The
-%% former  would  emit  a  warning  that  user  is  not
-%% registered,  will be  kicked out  in 5  minutes, but
-%% then  the  system  silently does  register  (if  the
-%% lookup is successful).
-%% Either  add another  notification that  registration
-%% successful, or stay silent the first time and give a
-%% warning  that 1  minute  remaining  for example,  if
-%% lookup not successful.
-%% }}- }}-
-% caller_status(EventHeaders) -> % {{-
-%     CallPid = self(),
-%     F = fun() ->
-%             CallerStatus = register_status(EventHeaders),
-%             gen_statem:cast(CallPid, CallerStatus)
-%         end,
-%     spawn(F).
-%% }}-
-
 is_user_registered(CallerNumber) -> %% {{-
     PhoneNumber =
         case CallerNumber of
@@ -1621,1176 +1463,135 @@ is_user_registered(CallerNumber) -> %% {{-
             %% first, in this case, as it is declared above.)
             "+1" ++ Number ->
                 Number;
+
+            % TODO handle this more gracefully
             _Invalid ->
                 % filog:process_log(emergency, #{ from => ["IS_USER_REGISTERED", #{ caller_number => CallerNumber}]}),
                 exit("invalid")
         end,
-    look_up(PhoneNumber).
+    user_db:look_up(PhoneNumber).
 %% }}-
 
-% TODO this should be in `user_db` module
-look_up(PhoneNumber) ->
-    gen_server:call(user_db, {look_up, PhoneNumber}).
-
-%%%%%%%%%%%%%%%%%%%%%%%%
-%% FreeSWITCH helpers %%
-%%%%%%%%%%%%%%%%%%%%%%%%
-
-%% sendmsg/2 {{-
-
-%% Could've just saved the channel ID (i.e., `UUID`) to
-%% the process registry, because it unique to this call
-%% (hence to this process) but  this way it is explicit
-%% on  every  call,  and  mirrors  the  FreeSWITCH  ESL
-%% `sendmsg` syntax.
-
-%% TODO Only implemented for `execute` and `hangup` for now;
-%%      even these are lacking a thorough documentation.
-%%
-%%      See available `sendmsg` commands at
-%%      https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket#mod_event_socket-3.9.1Commands
-% event_uuid_header(UUID) ->
-%     {"Event-UUID", UUID}.
-
-spec_sendmsg_headers(execute, [App, Args]) when is_list(Args) ->
-    %% TODO "loops"  header   and  alternate  format   for  long
-    %%      messages (is it needed here?)  not added as they are
-    %%      not needed yet.
-    [ {"execute-app-name", App}
-    , {"execute-app-arg", Args}
-    ];
-
-spec_sendmsg_headers(hangup, [HangupCode, _ApplicationUUID]) ->
-    %% For hangup codes, see
-    %% https://freeswitch.org/confluence/display/FREESWITCH/Hangup+Cause+Code+Table
-    [{"hangup-cause", HangupCode}];
-
-%% This will  blow up,  one way or  the other,  but not
-%% planning to get there anyway.
-spec_sendmsg_headers(_SendmsgCommand, _Args) ->
-    [].
-
-% `Prefix` is mostly to identify a playback/speak. Menus, such as greeting, main_menu, etc., are also states, so most of the time this will be the state of the `gen_statem` process. But sometimes it just needs a label that it is a warning etc.
-do_sendmsg(
-  #{ command := SendmsgCommand
-   , args       := SendmsgArgs
-   , event_lock      := IsLocked
-   }
-)
-when is_list(SendmsgArgs)
-->
-    LockHeaderList =
-        case IsLocked of
-            false -> [];
-            true  -> [{"event-lock", "true"}]
-        end,
-
-    % EventUUIDHeaderList =
-    %     case Prefix =:= none of
-    %         true ->
-    %             [];
-    %         false ->
-    %             PoorMansUUID =
-    %                 erlang:make_ref(),
-    %             ApplicationUUID =
-    %                 stringify(Prefix)
-    %                 ++ "|"
-    %                 ++
-    %                 stringify(PoorMansUUID),
-    %             % NOTE Event-UUId =?= ApplicationUUID {{-
-    %             % This seems like a discrepancy here, but this is how `mod_event_socket` operates:
-    %             % https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket
-    %             % > When an application is executed via sendmsg, CHANNEL_EXECUTE and CHANNEL_EXECUTE_COMPLETE events are going to be generated. If you would like to correlate these two events then add an Event-UUID header with your custom UUID. In the corresponding events, the UUID will be in the Application-UUID header. If you do not specify an Event-UUID, Freeswitch will automatically generate a UUID for the Application-UUID.
-    %             % }}-
-    %             [{"Event-UUID", ApplicationUUID}]
-    %     end,
-
-    PoorMansUUID =
-        erlang:make_ref(),
-    ApplicationUUID =
-        stringify(PoorMansUUID),
-    EventUUIDHeaderList =
-        [{"Event-UUID", ApplicationUUID}],
-
-    FinalHeaders =
-           [{"call-command", atom_to_list(SendmsgCommand)}]
-        ++ spec_sendmsg_headers(SendmsgCommand, SendmsgArgs)
-        ++ EventUUIDHeaderList
-        ++ LockHeaderList,
-
-    fsend({sendmsg, get(uuid), FinalHeaders}),
-    % logger:debug(#{ a => ["DO_SENDMSG", #{ app_id => ApplicationUUID, final_headers => FinalHeaders }]}),
-
-    ApplicationUUID.
-
-sendmsg(
-  #{ command := _
-   , args       := SendmsgArgs
-   } = Args
-) ->
-    % logger:debug(#{ a => ["SENDMSG", #{args => Args}]}),
-    do_sendmsg(Args#{ event_lock => false }).
-
-sendmsg_locked(
-  #{ command := _
-   , args       := SendmsgArgs
-   } = Args
-) ->
-    do_sendmsg(Args#{ event_lock => true }).
-%% }}-
-
-fsend(Msg) ->
-    %% Why the `lofa` atom:
-    %% https://stackoverflow.com/questions/58981920/
-    {lofa, ?FS_NODE} ! Msg.
-
-uuid_fileman(Command) ->
-    fsend
-      ({ api
-       , uuid_fileman
-       , stitch([get(uuid), Command])
-       }).
-
-stop_playback(#{ playbacks := [] } = Data) ->
-    logger:debug(#{ a => "STOP_PLAYBACK []"}),
-    Data;
-
-% Nothing is playing and the most recent playback has been stopped before.
-% For example, ?CATEGORIES is playing, "*" is sent when nothing is in history, `warning/?` stops playback, warning starts playing, ends naturally, so HANDLE_CHANNEL_EXECUTE_COMPLETE get clears {warning, false}, and calls that scenario in its `case`, which is `repeat/?`, that also has a `stop_playback/1`, and the most recent playback is the stopped ?CATEGORIES. Subsequent HANDLE_CHANNEL_EXECUTE_COMPLETE clauses will clear out these entries. (or should...)
-% TODO make sure that the Data#playbacks stack gets cleared properly
-% TODO QUESTION Where are the stopped recordings filtered out? Or does this act as a history? But not all menus play prompts.
-% TODO QUESTION If there is only one playback allowed at one time, why is `Data#playbacks a list?
-stop_playback(#{ playbacks := [{_, _, {stopped, true}}|_] = Playbacks } = Data) ->
-    logger:debug(#{ a => "STOP_PLAYBACK stopped=true", playbacks => Playbacks}),
-    Data;
-
-% Stop the currently playing prompt
-% (but just in case, stop all, even though only one should be playing at any time)
-stop_playback( % {{-
-  #{ playbacks :=
-     [ { ApplicationUUID  % |
-       , PlaybackName     % | currently playing
-       , {stopped, false} % |
-       }
-       | Rest
-     ] = Playbacks
-   } = Data
-) ->
-    % logger:debug("stop playback"),
-    % TODO Should this  be `bgapi`? Will the  synchronous `api`
-    %      call wreak havoc when many users are calling?
-
-    % TODO: is stopped status necessary? If not, is there a scenario where it may be in the future?
-    % NOTE it is superfluous: {{-
-    % When CHANNEL_EXECUTE_COMPLETE playback of the same name as the state comes in, it means that nothing has stopped the playback, because the `stopped_playback/1` function is only called in the state enter function on state change. As a corollary, every other time where PlaybackName =/= State means that the playback has been stopped
-    % That is, the stopped status can be derived from the current state and ended playback.
-    % }}-
-    fsend({api, uuid_break, get(uuid) ++ " all"}),
-    StoppedPlayback = {ApplicationUUID, PlaybackName, {stopped, true}},
-    logger:debug(#{ a => "STOP_PLAYBACK stopped=false", playbacks => Playbacks, stopped => StoppedPlayback}),
-    Data#{ playbacks := [StoppedPlayback|Rest] }.
-% }}-
-
-% Access News controls {{-
-% Press 8 for the help menu.
-% Press 0 to pause playback.
-% Press 1 to skip back one article.
-% Press 2 to restart the current article.
-% Press 3 to go forward to the next article.
-% Press 4 to jump back 10 seconds in article.
-% Press 5 to change volume up or down.
-% Press 6 to skip forward 10 seconds.
-% Press 7 to slow the playback down.
-% Press 9 to speed the playback up.
-% Press * key once to return to the main system menu.
-% Press # to skip to the last article in this category.
-% }}-
-
-%% Playback-related {{-
-% TODO Sift throught these notes. {{-
-%% Using  `sendmsg_locked`  most   of  the  time  (with
-%% `speak`   or   `playback`)    because   it   enables
-%% synchronous execution on FreeSWITCH, so `event_lock`
-%% events  get  queued   up  and  called  sequentially.
-%% Otherwise playbacks would overlap.
-
-% NOTE: "Locked" (i.e., synced) and async events can be mix-and-matched. Just did a `comfort_noise/0`, followed by a `speak` (both "locked"), and then an async hangup (with simple `sendmsg/2`). Everything went fine, and after the all media played the channel got hung up. Another test: sync `comfort_noise/0` followed by an async `speak` and async `hangup`. Could hear the `speak` kick in, but once `hangup` was received the call got terminated.
-%%
-%% Although  this  does   not  mean  that  `gen_statem`
-%% stands  still! Once  the  command is  sent off  with
-%% `sendmsg_locked`,  the process  continues execution,
-%% and waits for coming events (such as DTMF events).
-
-% Welcome to Access News, a service of Society For The Blind in Sacramento, California for blind, low-vision, and print-impaired individuals.
-
-% You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial 0# followed by your code, or if you would like to sign up up for Access News, please call us at 916 889 7519, or dial 02 to leave a message with your contact details.
-
-% For the main menu, press 0.
-% To listen to the tutorial, dial 00.
-% To learn about other blindness services, dial 01.
-% If you have any questions, comments, or suggestions, please call 916 889 7519, or dial 02 to leave a message.
-% To start exploring menu items one by one, press the pound sign.
-% Press # again to skip to the next, and dial #0 to jump back to the previous one.
-
-% If you would like to learn about the national Federation of the blind nfb newsline service with access to more than 300 newspapers and magazines including the Sacramento Bee. Please call 410-659-9314. If you would like to learn about the California Braille and talking book Library, please call 80095 to 5666.
-
-% `Prompt` is either a state name or custom designation (such a prompt on timeout).
-% `Data` always refers to `gen_fsm` process data (a.k.a., state in `gen_server`)
-% play(
-%   Prompt,
-%   #{ playback_ids := PlaybackIDs } = Data
-% ) ->
-%     ApplicationUUID =
-%         play(Prompt, Data),
-%     NewPlaybackIDs =
-%         % `=>` update if present, or create new
-%         % `:=` only update when present, otherwise crash
-%         PlaybackIDs#{ Prompt => ApplicationUUID },
-%     NewData =
-%         Data#{playback_ids := NewPlaybackIDs }.
-% }}-
-
-comfort_noise(Name, Milliseconds, Data) ->  % {{-
-    % logger:debug("play comfort noise"),
-    ComfortNoise =
-           "silence_stream://"
-        ++ integer_to_list(Milliseconds)
-        ++ ",1400",
-
-    % logger:debug(
-    %     #{ a => "COMFORT_NOISE"
-    %      , data => Data
-    %      }),
-
-    playback(Name, Data, ComfortNoise).
-    % sendmsg_locked(
-    %     #{ command => execute
-    %      , args    => ["playback", ComfortNoise]
-    %      , app_uuid_prefix   => comfort_noise
-    %      }).
-
-comfort_noise(Milliseconds, Data) ->
-    comfort_noise(comfort_noise, Milliseconds, Data).
-
-comfort_noise(Data) ->
-    comfort_noise(750, Data).
-% }}-
-
-% TODO make a module for utterances? {{-
-% sign_up() ->
-%     "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
-
-% invalid_selection() ->
-%     "Invalid selection. Please try again.".
-% }}-
-
-% TODO Try out `mod_vlc` to play aac and m4a files. {{-
-% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
-% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
-% }}-
-
-play(init, Data) -> Data;
-play(incoming_call, Data) -> Data;
-play(collect_digits, Data) -> Data;
-
-play % GREETING {{-
-( greeting = State
-, #{ auth_status := AuthStatus } = Data
-)
-->
-    % TTS pariahs {{-
-    % logger:debug("play greeting"),
-    % Anchor = "Welcome to Access News, a service of Society For The Blind in Sacramento, California, for blind, low-vision, and print-impaired individuals.",
-    % PoundOrStar = "If you know your selection, you may enter it at any time, or press star or pound to skip to listen to the main categories.",
-    % Unregistered =
-    %     case AuthStatus of
-    %         registered ->
-    %             "";
-    %         unregistered ->
-    %             "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected. To log in, dial zero pound, followed by your code."
-    %             ++ sign_up()
-    %             % ++ "To leave a message with your contact details, dial zero two."
-    %     end,
-    % MainMenu =
-    %     "For the main menu, press 0.",
-    % TODO FEATUREs
-    % GoToTutorial = "To listen to the tutorial, dial zero one.",
-    % GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
-    % LeaveMessage = "If you have any questions, comments, or suggestions, please call 916 889 7519, or dial zero two to leave a message.",
-
-    % PromptList =
-    %     [ Anchor
-    %     , Unregistered
-    %     , PoundOrStar
-    %     , MainMenu
-        % , GoToTutorial
-        % , GoToBlindnessServices
-        % , LeaveMessage
-        % ],
-
-    % speak(State, Data, PromptList);
-    % }}-
-
-    % ./google-tts-wav.sh "Welcome  to Access  News, a  service of  Society For The  Blind  in  Sacramento, California,  for  blind, low-vision, and  print-impaired individuals.  If you know your selection,  you may enter it  at any time, or press pound to skip to the main categories." 0.87 > prompts/greeting-welcome.wav;
-    % ./google-tts-wav.sh "You are currently in demo mode, and have approximately 5 minutes to try out the system before getting disconnected." 0.87 > prompts/greeting-unregistered.wav;
-    % ./google-tts-wav.sh "For the main  menu, press 0.  If you have any questions, concerns, or suggestions, please call 916 889 7519 or leave a message by pressing zero and then pound." 0.87 > prompts/greeting-options.wav;
-
-    NewData = comfort_noise(250, Data),
-    % TODO delete % {{-
-    % Prompt =
-    %     case AuthStatus of
-    %         registered -> "registered-greeting.wav";
-    %         unregistered -> "unregistered-greeting.wav"
-    %     end,
-    % playback(greeting_welcome, NewData, ?PROMPT_DIR ++ "greeting-welcome.wav"),
-    % case AuthStatus of
-    %     registered ->
-    %         playback
-    %           ( greeting_unregistered
-    %           , NewData
-    %           , ?PROMPT_DIR ++ "greeting-unregistered.wav"
-    %           );
-    %     unregistered ->
-    %         noop
-    % end,
-    % playback(State, NewData, ?PROMPT_DIR ++ "greeting-options.wav");
-    % }}-
-
-    f:pipe
-      ([ NewData
-       , (cp(greeting_welcome))(?PROMPT_DIR ++ "greeting-welcome.wav")
-       , fun(D) ->
-            case AuthStatus of
-                registered ->
-                    D;
-                unregistered ->
-                    ((cp(greeting_unregistered))(?PROMPT_DIR ++ "greeting-unregistered.wav"))(D)
-            end
-         end
-       % TODO split up to add `main_menu_file/0`
-       , (cp(State))(?PROMPT_DIR ++ "greeting-options.wav")
-       ]);
-
-% }}-
-play % MAIN_MENU {{-
-  ( main_menu        = State
-  , #{auth_status := AuthStatus} = Data
-  )
-->
-    % TTS pariahs {{-
-    % PromptList =
-    %     [ "Main menu."
-    %     , "Press star to go back."
-    %     , "Press zero to jump to the main category."
-    %     , "NOTE! The following options are still not implemented."
-    %     % , case AuthStatus of
-    %     %       registered -> "For your Favourites, ";
-    %     %       unregistered -> "To log in, "
-    %     %   end
-    %     %   ++ "press pound."
-    %     , "Press one to start the tutorial."
-    %     , "Press two to leave a message."
-    %     % , "For settings, press three."
-    %     , "Press three to learn about other blindness resources."
-    %     % , "randomize playback",
-    %     ],
-
-    % % speak(State, Data, [Anchor, "Loop test."]);
-    % speak(State, Data, PromptList);
-    % }}-
-
-    % ./google-tts-wav.sh "Main menu. Press star to go back. Press pound to record a message. Press zero to jump to the main category." 0.87 > prompts/main-menu.wav;
-    playback(State, Data, ?PROMPT_DIR ++ "main-menu.wav");
-
-% }}-
-play % LEAVE_MESSAGE {{-
-  ( leave_message        = State
-  , Data
-  )
-->
-    % ./google-tts-wav.sh "Press star to go back. Press any other button to start recording." 0.87 > prompts/leave-message.wav;
-    playback(State, Data, ?PROMPT_DIR ++ "leave-message.wav");
-
-% }}-
-play % IN_RECORDING {{-
-  ( in_recording        = State
-  , Data
-  )
-->
-    % ./google-tts-wav.sh "Recording will start after the beep. To stop recording press any button." 0.87 > prompts/in-recording.wav;
-    f:pipe
-      ([ Data
-       , (cp(State))(?PROMPT_DIR ++ "in-recording.wav")
-       % , fun beep/1
-       , (cp(beep))("tone_stream://L=1;%(500,500,1000)")
-       , fun record/1
-       ]);
-    % NewData =
-    %     playback(State, Data, ?PROMPT_DIR ++ "in-recording.wav"),
-
-    % beep(Data) TODO
-
-    % record(NewData);
-
-% }}-
-play % CONTENT_ROOT {{-
-  ( content_root = State
-  , #{ current_content :=
-       #{title := Title} = CurrentContent
-     } = Data
-  )
-->
-    % TTS pariahs {{-
-    % PromptList =
-    %     [ Title ]
-    %     ++
-    %     choice_list(CurrentContent)
-    %     ++
-    %     [ "For the main menu, press 0."
-    %     , "To enter the first category, press pound."
-    %     ],
-
-    % speak(State, Data, [Title, "Loop test."]);
-    % speak(State, Data, PromptList);
-    % }}-
-    % TODO another archeological layer to be evaluated for deletion {{-
-    % playback(State, Data, ?PROMPT_DIR ++ "main-menu.wav");
-
-    % PrompFiletList =
-    %        [ title_file(CurrentContent) ]
-    %     ++ selection_files(CurrentContent)
-    %     ++ [ play_to_main_menu() ],
-        % TODO omitted from playback but document that this functionality still exists!
-        % , "To enter the first category, press pound."
-        % ],
-
-    % NewData = playback(some, Data, title_file(CurrentContent)),
-    % speak(State, NewData, [Title, "Loop test."]);
-
-    % Function composition rocks
-    % PlaybackFunctions =
-    %     [  (cp(ignore))(AudioFile)
-    %     || AudioFile <- PrompFiletList
-    %     ]
-    %     ++ [ ((f:curry(fun comfort_noise/3))(State))(0) ],
-
-    % f:pipe
-    %   ([ Data ]
-    %    ++ PlaybackFunctions
-    %   );
-    % }}-
-
-    f:pipe
-      ([ Data
-       , (f:curry(fun play_title/2))(CurrentContent)
-       , (f:curry(fun play_selections/2))(CurrentContent)
-       , fun play_to_main_menu/1
-        % All the previous playbacks  have been scheduled with
-        % `sendmsg_locked/2`,  but none  of the  playbacknames
-        % match the state atom, so in  order to trick a loop a
-        % zero  ms comfort  noise is  inserted with  the state
-        % atom
-       , ((f:curry(fun comfort_noise/3))(State))(0)
-       ]);
-
-% }}-
-play % CATEGORY {{-
-  ( category = State
-  , #{ current_content :=
-       #{title := Title} = CurrentContent
-     } = Data
-  )
-->
-    f:pipe
-      ([ Data
-       , (f:curry(fun play_title/2))(CurrentContent)
-       , (f:curry(fun play_selections/2))(CurrentContent)
-       , fun play_go_up/1
-       , fun play_next_category/1
-       , fun play_to_main_menu/1
-       % See comment in "play % CONTENT_ROOT"
-       , ((f:curry(fun comfort_noise/3))(State))(0)
-       ]);
-    % PromptList =
-    %     [ Title ]
-    %     ++ choice_list(CurrentContent)
-    %     ++ common_options(State),
-
-    % logger:debug(
-    %     #{ a => "PLAY_CATEGORY"
-    %      , current_content => CurrentContent
-    %      , data => Data
-    %      , prompt => PromptList
-    %      }),
-
-    % speak(State, Data, [Title, "Loop test."]);
-    % speak(State, Data, PromptList);
-    % f:pipe(
-    %   [ PromptList
-    %   , fun stitch/1
-    %   , ((f:curry(fun speak/3))(State))(Data)
-    %   ]
-    % );
-
-% }}-
-play % PUBLICATION {{-
-  ( publication = State
-  , #{ current_content :=
-       #{title := Title} = CurrentContent
-     } = Data
-  )
-->
-    f:pipe
-      ([ Data
-       , (f:curry(fun play_title/2))(CurrentContent)
-       , (f:curry(fun play_number_of_articles/2))(CurrentContent)
-       , fun play_go_up/1
-       , fun play_next_publication/1
-       , fun play_to_main_menu/1
-       , fun play_first_article/1
-       , fun play_last_article/1
-       , fun play_prev_publication/1
-       % See comment in "play % CONTENT_ROOT"
-       , ((f:curry(fun comfort_noise/3))(State))(0)
-       ]);
-
-    % NumberOfArticles =
-    %     % (length . content:pick(children)) CurrentContent
-    %     length(content:pick(children, CurrentContent)),
-       % case content:pick(children, CurrentContent) of
-       %     none -> 0;
-       %     [_|_] = Children -> length(Children)
-       % end,
-
-    % PromptList =
-    %     [ Title
-    %     , "There are "
-    %       ++ integer_to_list(NumberOfArticles)
-    %       ++ " articles in this publication. The first article will start automatically when playback of this menu is finished."
-    %     ]
-    %     ++ common_options(State)
-    %     ++
-    %     [ "Press one to start the first article."
-    %     , "Press three to jump to the last article."
-    %     , "Press nine to go to the previous publication in this category."
-    %     , case NumberOfArticles =:= 0 of
-    %           true  -> "Starting first article.";
-    %           false -> ""
-    %       end
-    %     ],
-
-    % % speak(State, Data, [Title, Title, Title,  "loop test."]);
-    % speak(State, Data, PromptList);
-
-% }}-
-% NOTE - DO NOT TOUCH `article_intro` STATE {{-
-% Yes, this could have  been included in ARTICLE state
-% as  an  extra  playback  (and as  long  as  it  does
-% not  have  the  same  playback name,  it  would  not
-% have interfered  with state progression laid  out in
-% CHANNEL_EXECUTE_COMPLETE  `handle_event/4`  clause),
-% but  all  the  controls defined  for  ARTICLE  would
-% also  apply  to  it,  and as  soon  as  the  article
-% starts,  everything would  have  been reset,  making
-% this probably confusing for the listener.
-% }}-
-play % ARTICLE_INTRO {{-
-( article_intro = State
-, Data
-)
-->
-    % speak(article_intro, Data, ["Press 2 at any time to pause the article and listen to the help menu."]);
-    % speak(article_intro, Data, ["Press 2 for help at any time."]);
-    % playback(State, Data, Path);
-    % TODO FEATURE read article meta and figure out how to store the latter
-    %      (also, should article_meta be a separate state?)
-    % Saving this snippet to demonstrate a solution {{-
-    %
-    %   1. that multiple heterogeneous playbacks (e.g., Application="speak" &  Application="playback") can be queued
-    %      TODO Figure out how to handle CHANNEL_EXECUTE_COMPLETEs
-    %
-    %   2. how to play audio from cloud blob storage
-    %
-    % sendmsg_locked(
-    %     #{ sendmsg_command => execute
-    %     , arguments       => ["speak", "flite|kal|" ++ "Testing! Testing! 27."]
-    %     , app_uuid_prefix   => testrun
-    %     }),
-
-    % sendmsg_locked(
-    %     #{ sendmsg_command => execute
-    %     , arguments       => ["playback",  "shout://accessnews.blob.core.windows.net/safeway/ro.mp3"]
-    %     , app_uuid_prefix   => lofa
-    %     });
-    % }}-
-    play_article_intro(Data);
-
-% }}-
-play % ARTICLE {{-
-  ( article = State
-  , #{ current_content :=
-       #{ path := Path
-        } = CurrentContent
-     , playback_offset := Offset
-     } = Data
-  )
-->
-    % NOTE Why ARTICLE_INTRO had to split out into its own state {{-
-    % speak(article_intro, Data, ...),
-    % The CHANNEL_EXECUTE_COMPLETE clause could have been twisted into compliance, but it would have been more complex. As it stands this is still not a piece of cake.
-    % }}-
-
-    % TODO FEATURE resume playback from last position (see offset in `init/1`)
-    playback(State, Data, Path ++ "@@" ++ Offset );
-
-% }}-
-play % ARTICLE_HELP {{-
-  ( article_help = State
-  , Data
-  )
-->
-    f:pipe
-      ([ Data
-       , fun play_article_paused/1
-       , fun play_go_up/1
-       , fun play_next_article/1
-       , fun play_to_main_menu/1
-       , fun play_controls/1
-       % See comment in "play % CONTENT_ROOT"
-       , ((f:curry(fun comfort_noise/3))(State))(0)
-       ]);
-
-    % TODO FEATURE resume playback from last position (see offset in `init/1`)
-    % PromptList =
-    %     [ "Article paused."
-    %     , "To resume, press any button between 1 and 8."
-    %     , "During playback, you have the following controls available:"
-    %     , "For the publication menu, press star."
-    %     , "For the main menu, press zero."
-    %     , "To jump to the next article, press pound."
-    %     , "To listen to the previous article, press nine."
-    %     , "To pause the article and for this help menu, press two."
-    %     , "To restart the article, press seven."
-    %     , "To go back 10 seconds, press one."
-    %     , "To go forward 10 seconds, press three."
-    %     , "To slow down the recording, press four."
-    %     , "To speed up, press six."
-    %     , "To turn down the volume, press five."
-    %     , "To turn it up, press eight."
-    %     ],
-
-    % speak(State, Data, PromptList);
-
-% }}-
-play % INVALID_SELECTION % {{-
-( invalid_selection = State
-, Data
-)
-->
-    % speak(State, Data, ["Invalid selection."]);
-    play_invalid_selection(Data);
-
-% }}-
-% TODO PROD Does this work?
-% TODO PROD poor TTS
-play % INACTIVITY_WARNING {{-
-( inactivity_warning = State
-, Data
-)
-->
-    speak
-      ( State
-      , Data
-      , ["Please note that we haven't registered any activity from you for some time now. Please press any buttons if you are still there."]
-      );
-
-% }}-
-% TODO PROD poor TTS
-play % DEMO_HANGUP {{-
-( demo_hangup = State
-, Data
-)
-->
-    % TextList =
-    %     [ "End of demo session."
-    %     , "If you would like to sign up for Access News, please call us at 916, 889, 7519.".
-    %     , "Thank you for trying out the service!"
-    %     ],
-
-    % speak(State, Data, TextList);
-    play_demo_hangup(Data);
-
-% }}-
-% TODO PROD Does this work?
-% TODO PROD poor TTS
-play % INACTIVITY_HANGUP {{-
-( inactivity_hangup = State
-, Data
-)
-->
-    speak(State, Data, ["Goodbye."]);
-
-% }}-
-% TODO PROD Is this even used?
-play % NO_CHILDREN {{-
-( no_children = State
-, #{current_content := #{ type := ContentType }} = Data
-)
-->
-    % Prompt =
-    %     "This "
-    %     ++ atom_to_list(ContentType)
-    %     ++ " is empty.",
-
-    % speak(State, Data, [Prompt]);
-
-    case ContentType of
-        category -> play_empty_category(Data);
-        publication -> play_empty_publication(Data)
-    end;
-
-% }}-
-play % NO_PREV_ITEM {{-
-( no_prev_item = State
-, #{current_content := #{ type := ContentType }} = Data
-)
-->
-    % Prompt =
-    %     "This is the first "
-    %     ++ atom_to_list(ContentType)
-    %     ++ ".",
-
-    % speak(State, Data, [Prompt]);
-
-    case ContentType of
-        category -> play_no_prev_category(Data);
-        publication -> play_no_prev_publication(Data);
-        article -> play_no_prev_article(Data)
-    end;
-
-% }}-
-play % NO_NEXT_ITEM {{-
-( no_next_item = State
-, #{current_content := #{ type := ContentType }} = Data
-)
-->
-    % Prompt =
-    %     "This is the last "
-    %     ++ atom_to_list(ContentType)
-    %     ++ ".",
-
-    % speak(State, Data, [Prompt]).
-
-    case ContentType of
-        category -> play_no_next_category(Data);
-        publication -> play_no_next_publication(Data);
-        article -> play_no_next_article(Data)
+derive_state(#{ current_content := Content } = _Data) -> % {{-
+    derive_state(Content);
+
+derive_state(#{ type := _ } = Content) ->
+    case Content of
+        #{ selection := 0 } ->
+            content_root;
+        #{ type := article } ->
+            % Implies that ARTICLE_INTRO is always played (even if article is resumed)
+            article_intro;
+        #{ type := ContentType } ->
+            ContentType
     end.
 
 % }}-
+set_current(Content, Data) ->
+    Data#{ current_content := Content }.
 
-% TODO ok to delete old `play(article, ...)`s? {{-
-% `article_entry`
-% play
-%   ( { content
-%     , #{ type := article
-%        , title := Title
-%        } = Current}
-%   , #{ offset := -1 } = Data
-%   )
-% -> % {{-
-%     % Shows that metadata has been spoken (aka, `article_entry`)
-%     NewData =
-%         Data#{ offset := 0 },
-%     % TODO `speak` article metadata
-
-% % }}-
-% % This clause plays the actual recording
-% play
-%   ( { content
-%     , #{ type := article
-%        , title := Title
-%        } = Current}
-%   , #{ offset := 0 } = Data
-%   )
-% -> % {{-
-%     % Changing the offset from zero, because if the file plays through without interruption (pause, enter other menus etc) then when it is finished playing, the CHANNEL_EXECUTE_COMPLETE `handle_event` clauses would assume that `article_entry` just played and would start playing the same recording all over again. This way, it will know to skip to the next article.
-
-%     % TODO WHEN TO RESET THE OFFSET TO -1
-%     %   1. Playback finished uninterrupted (i.e., implicit next in CHANNEL_EXECUTE_COMPLETE.)
-%     %   2. Switching to another article (next, last, first, etc.)
-%     %   3. Leaving the publication (e.g., next publication, jump to main category from main_menu).
-%     % TODO Save article offsets at one point for "Would you like to continue where you left off?" when visiting the same article next time
-%     NewData =
-%         Data#{ offset := 1 }, % otherwise the same article would get played because of the clause in HANDLE_CHANNEL_EXECUTE_COMPLETE
-%     % TODO `speak` article metadata
-
-% % }}-
-% play(publication_menu, Data) ->
-%     done;
-
-% play(article_menu, Data) ->
-%     done;
-% }}-
-
-% http://erlang.org/pipermail/erlang-questions/2005-April/015279.html
-% extract_playback_name(ApplicationUUID) ->
-%     PlaybackIDString =
-%         string:sub_word(ApplicationUUID, 1, $|),
-%     {ok, Tokens, _Line} =
-%         erl_scan:string( PlaybackIDString ++ "." ),
-%     {ok, PlaybackName} =
-%         erl_parse:parse_term(Tokens),
-%     PlaybackName.
-
-% speak(State, Data, PromptList)
-%     when erlang:is_list(PromptList)
-% ->
-%     speak(
-%       #{ playback_name => State
-%        , data => Data
-%        , text => stitch(PromptList)
-%       }
-%     ).
-
-save_playback_meta % {{-
-( ApplicationUUID
-% TODO PROD remote PlaybackName - it is unnecessary (it is already part of ApplicationUUID) and just messes things up
-, PlaybackName
-, #{ playbacks := Playbacks } = Data
+next_content % {{-
+( Direction
+, #{ current_content := CurrentContent
+   % TODO this could have been deduced from CurrentContent above... UPDATE A MONTH LATER: How?...
+   , prev_state      := PrevState
+   } = Data
 )
+  % The `children` direction is omitted on purpose as it
+  % is  semantically(?) different  from the  rest; aside
+  % from [] and [_], it  can also return lists with more
+  % than one  element (i.e., [_,_|_]). It  also does not
+  % make  sense  because we  only  need  one element  to
+  % determine the next state.
+  when Direction =:= parent;
+       Direction =:= first;
+       Direction =:= last;
+       Direction =:= next;
+       Direction =:= prev;
+       Direction =:= content_root
 ->
-    Playback =
-        { ApplicationUUID
-        , PlaybackName % Only for convenience; already part of `ApplicationUUID`.
-        % TODO: is stopped status necessary? If not, is there a scenario where it may be in the future?
-        % NOTE it is superfluous: {{-
-        % When CHANNEL_EXECUTE_COMPLETE playback of the same name as the state comes in, it means that nothing has stopped the playback, because the `stopped_playback/1` function is only called in the state enter function on state change. As a corollary, every other time where PlaybackName =/= State means that the playback has been stopped
-        % That is, the stopped status can be derived from the current state and ended playback.
-        % }}-
-         % THE STOPPED FLAG IS IMPORTANT: had the false assumptions that simple checking whether PlaybackName =:= CurrentState, but the behaviour should be different when the playback stops naturally, or by a warning that will keep the same state. Without a "stopped" bit there is no way to know how to proceed (e.g., ?CATEGORIES is stopped by a warning, warning starts playing, CHANNEL_EXECUTE_COMPLETE comes in with ?CATEGORIES, but if we simple repeat, than the the warning is stopped immediately.)
-        , {stopped, false} % Has the playback been stopped?
-        },
-        % #{ playback_name => PlaybackName
-        %  ,    is_stopped => false
-        %  },
-    NewPlaybacks =
-        [ Playback | Playbacks ],
-        % Playbacks#{ ApplicationUUID => Playback },
+    NextContent =
+        case content:pick(Direction, CurrentContent) of
+            [] -> none;
+            [Content] -> Content
+        end,
+    NewData =
+        set_current(NextContent, Data),
+    NextState =
+        % When  there  is  no  vertex in  a  given  direction,
+        % `content:pick/2`  will   return  `none`,   in  which
+        % case  `NextState` is  set  to  a non-existing  state
+        % so  that  control  will  be  redirected  to  special
+        % uninterruptable warning  states in the  next `case`;
+        % see the last 2 clauses where `NextState` is compared
+        % with `PrevState`. (The  parallel between the control
+        % flow and current state  of things is accidental, but
+        % fitting.)
+        case NextContent =:= none of
+            false ->
+                % case PrevState =:= article of
+                case {PrevState, NextContent} of
+                    {article, #{ type := article }} -> article;
+                    _ -> derive_state(NextContent)
+                end;
+            true ->
+                'Black_Lives_Matter'
+        end,
 
-    Data#{ playbacks := NewPlaybacks }.
+    case {NextContent, Direction} of
+        {none, next}  -> {next_state, no_next_item, Data}; % \
+        {none, prev}  -> {next_state, no_prev_item, Data}; % | Not `NewData`, because
+        {none, first} -> {next_state, no_children, Data};  % | that direction is empty.
+        {none, last}  -> {next_state, no_children, Data};  % /
+     % `{none,   parent}`  would   only   be  possible   if
+     % `content_root` would  be the current content,  but *
+     % is disabled  there so this should  never happen (see
+     % DTMF processing `handle_event/4` clause)
+
+        _ when PrevState =:= NextState
+             , CurrentContent =/= NextContent
+        ->
+            case PrevState =:= article of
+                true  -> {repeat_state, NewData#{ playback_offset := "0" }};
+                false -> {repeat_state, NewData}
+            end;
+
+        _ when PrevState =/= NextState
+        ->
+            {next_state, NextState, NewData}
+    end.
+
+%   }}-
+change_speed(Direction, #{ call_UUID := UUID } = Data) -> % {{-
+    #{ article_speed := Speed } = Data,
+    NewSpeed =
+        futil:pipe
+         ([ Speed
+          , fun erlang:list_to_integer/1
+          , fun(X) ->
+                case Direction of
+                    "-" -> X - 1;
+                    "+" -> X + 1
+                end
+            end
+          , fun erlang:integer_to_list/1
+          ]),
+    fs:uuid_fileman(UUID, "speed:" ++ NewSpeed),
+    NewData = Data#{ article_speed := NewSpeed },
+    {keep_state, NewData}.
+
 % }}-
 
-speak % {{-
-( PlaybackName
-, Data
-, TextList
-)
-->
-    % return the application UUID string.
-    ApplicationUUID =
-        sendmsg_locked(
-          #{ command => execute
-           , args       => ["speak", "flite|kal|" ++ stitch(TextList)]
-           % , app_uuid_prefix   => PlaybackName
-           }),
-
-    % logger:debug(
-    %     #{ a => "SPEAK"
-    %      , "state|playbackname" => PlaybackName
-    %      , data => Data
-    %      , text_list => TextList
-    %      }),
-
-    save_playback_meta(ApplicationUUID, PlaybackName, Data).
-% }}-
-
-% TODO PROD users, docs, cloud {{-
-
-% 1. Update   deployment   docs   (and   automate):   the
-%    "recordings"  folder   needs  to  be   created,  and
-%    `chown`ed to user  and group `freeswitch`, otherwise
-%    the  gen_server  will  crash  on  the  first  record
-%    attempt.
-
-% 2.  Upload recordings to cloud storage.
-% }}-
-record % {{-
-( Data
-)
-->
-    {{Year, Month, Day},{Hour, Min, Sec}} =
-        calendar:system_time_to_universal_time(erlang:system_time(), native),
-    Filename =
-           tl(get(caller_number))
-        ++ "_"
-        ++ integer_to_list(Year)
-        ++ pad_int(Month)
-        ++ pad_int(Day)
-        ++ "-"
-        ++ pad_int(Hour)
-        ++ pad_int(Min)
-        ++ pad_int(Sec)
-        ++ ".wav",
-
-    % Will be reset to `none` in "record CHANNEL_EXECUTE_COMPLETE" handle_event clause
-    fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators any"}),
-    % fsend({api, uuid_setvar, get(uuid) ++ " playback_terminators #"}),
-
-    % NOTE using `uuid_record` is either broken or there is a setting that I did not find; recording starts alright, but it cannot be stopped (tried from fs_cli), and it does not honour `playback_terminator` but also blocks events going out. At least, the outbound erlang process never received any DTMF events. Should have sent it via `bgapi` instead of `api`?
-    % fsend({api, uuid_record, stitch([get(uuid), "start",  Filename, "5400"])});
-    % fsend({api, uuid_record, stitch([get(uuid), "start", ?REC_DIR ++ Filename, "5400"])});
-
-    % logger:debug(
-    %     #{ a => "in_recording PLAY"
-    %      , data => Data
-    %      , path => Filename
-    %      }),
-
-    ApplicationUUID =
-        sendmsg_locked(
-            #{ command => execute
-            %                                                  = 90 min
-            , args       => ["record", ?REC_DIR ++ Filename ++ " 5400"]
-            % , app_uuid_prefix   => record
-            }),
-
-    save_playback_meta(ApplicationUUID, record, Data).
-% }}-
-
-% beep(Data) ->
-
-%     ApplicationUUID =
-%         sendmsg_locked(
-%             #{ command => execute
-%             , args       => ["playback", "tone_stream://L=1;%(500,500,1000)"]
-%             % , app_uuid_prefix   => beep
-%             }),
-
-%     save_playback_meta(ApplicationUUID, beep, Data).
-
-playback % {{-
-( PlaybackName
-, Data
-, Path
-)
-->
-    % return the application UUID string.
-    ApplicationUUID =
-        sendmsg_locked(
-          #{ command => execute
-           , args       => ["playback", Path]
-           % , app_uuid_prefix   => PlaybackName
-           }),
-
-    % logger:debug(
-    %     #{ a => "PLAYBACK"
-    %      , "state|playbackname" => PlaybackName
-    %      , data => Data
-    %      , path => Path
-    %      }),
-
-    save_playback_meta(ApplicationUUID, PlaybackName, Data).
-% }}-
-
-% The only  difference from `lists:flatten/1`  is that
-% it adds an extra space between elements.
-stitch([Utterance]) ->
-    Utterance;
-stitch([Utterance|Rest]) ->
-    Utterance ++ " " ++ stitch(Rest).
-
-% TODO ok to delete this section? {{-
-%% Push/pop history {{-
-% push_history(Data, State)
-% when State =:= incoming_call;
-%      State =:= greeting;
-%      % State =:= main_menu;
-%      % State =:= quick_help;
-%      State =:= collect_digits;
-%      % TODO These are compound states!
-%      element(1, State) =:= warning
-%      % State =:= publication;
-%      % State =:= article
-% ->
-%     push_history(Data, {skip, State});
-
-% push_history(#{ menu_history := History } = Data, State) ->
-%     logger:debug(#{ self() => ["PUSH_HISTORY", {history, History}, {state, State}]}),
-%     Data#{ menu_history := [State | History] }.
-
-% % Why not check if history is empty? {{-
-% % ====================================================
-% % Because it will (or at least should) not happen: Call comes in, FreeSWITCH start `ivr.erl`, `init/0` sets history to `[?CATEGORIES]`, meaning that states before that (i.e., `incoming_call` and `greeting`) can never be revisited. When traversing the history backwards with * (star), `HANDLE_DTMF_FOR_ALL_STATES` will make sure that when the `?HISTORY_ROOT` is reached, pressing the * (star) will be ignored (see `case` clause starting with comment "Go up/back").
-% % UPDATE
-% % What is said above still holds, but the root is now [].
-% % }}-
-% pop_history(#{ menu_history := [] } = Data) ->
-%     { ?CATEGORIES
-%     , Data
-%     };
-
-% % TODO adjust when final form of `article` state is known
-% pop_history(
-%   #{ menu_history :=
-%      [ {article, _}
-%      , _Publication
-%      , Category
-%      | RestHistory
-%      ]
-%    } = Data
-% ) ->
-%     pop_history(Data#{ menu_history := [Category|RestHistory] });
-
-% pop_history(#{ menu_history := [{skip, _} | RestHistory] } = Data) ->
-%     pop_history(Data#{ menu_history := RestHistory });
-
-% pop_history(#{ menu_history := [PrevState | RestHistory] } = Data) ->
-%     logger:debug(#{ self() => ["POP_HISTORY", {history, [PrevState|RestHistory]}]}),
-%     { PrevState
-%     , Data#{ menu_history := RestHistory }
-%     }.
-% % }}-
-
-% Playback keeps going while accepting DTMFs, and each subsequent entry has a pre-set IDT
-% 1-9 trigger collection (all states except some, see HANDLE_DTMF_FOR_ALL_STATES)
-% *, 0, # are single digit instant actions
-% (TODO make users able to set it)
-
-% TODO warning will become a new state, so eliminate this clause
-%      and create a `play` clause for it
-% warning(WarningPrompt, Data) -> % {{-
-%     logger:debug("SPEAK_WARNING: " ++ WarningPrompt),
-%     NewData = stop_playback(Data),
-%     comfort_noise(),
-%     speak(
-%       #{ playback_name => warning
-%        , data => NewData
-%        , text => WarningPrompt
-%        }).
-% }}-
-
-% never push history (no point because just replaying menu prompt)
-% repeat_menu( % {{-
-%   #{ menu := Menu
-%    , data := Data
-%    }
-%  ) ->
-%     logger:debug("REPEAT_MENU"),
-%     % Not necessary when playback ends naturally,
-%     % but calling it multiple times doesn't hurt.
-%     % NewDataP = stop_playback(Data),
-%     % comfort_noise(),
-%     % NewDataPP = play(Menu, NewDataP),
-%     {keep_state, NewDataPP}.
-% % }}-
-
-%       = NextState
-% next_menu
-% ( NextState
-% , CurrentContent
-% , #{ menu_history := MenuHistory } = Data
-% )
-% ->  % {{-
-
-%     logger:debug("NEXT_MENU"),
-
-%     NewData = Data#{ menu_history := [{NextState, CurrentContent}|MenuHistory] },
-%     % Update menu history (if permitted) {{-
-%     % NewDataH =
-%     %     push_history(Data, CurrentState),
-%         % case {CurrentState, NextMenu} of {{-
-
-%         %     % TODO re-write so that always pushing history; more straightforward, plus extra debug info. mark states that shouldn't be revisited by user via *
-%         %     % State changes when history is not updated  with prev
-%         %     % state (corner cases)
-%         %     % ====================================================
-%         %     % NOTE: This is adding behaviour to `next_menu/1`, which {{-
-%         %     % I do not like, but these are the only cases when history is not pushed (so far). Another advantage is that all corner cases are listed in one place.
-%         %     % }}-
-%         %     % NOTE: `main_menu` -> `?CATEGORIES` {{-
-%         %     % Go to `?CATEGORIES` from `main_menu` (only forward option from `main_menu`), but do not add `main_menu` to history
-%         %     % NOTE Currently it is possible to accumulate `?CATEGORIES` in history by going to `main_menu` and forward to `?CATEGORIES`, as it will add `?CATEGORIES` each time but leaving it as is
-%         %     % }}-
-%         %     {main_menu, ?CATEGORIES}  -> Data;
-%         %     % {{-
-%         %     %   + `greeting` -> `?CATEGORIES` (i.e., when pressing * or #  in `greeting` or playback stops)
-%         %         % No `next_menu/1` here to keep the history empty so that `greeting` cannot be revisited, making `?CATEGORIES` the root. Whatever navigations happen there
-%         %         % Why not keep state? Reminder: 0# (not very relevant in this particular case, but keeping state changes consistent makes it easier to think about each `handle_event/4` clause. Read note at the very end of HANDLE_DTMF_FOR_ALL_STATES `handle_event/4` clause)
-%         %     % }}-
-%         %     {greeting, ?CATEGORIES}   -> Data;
-%         %     {greeting, main_menu}     -> Data;
-%         %     {incoming_call, greeting} -> Data;
-
-%         %     % On any other state change
-%         %     _ -> push_history(Data, CurrentState)
-%         % end,
-%     % }}-
-
-%     % NewDataP = stop_playback(Data),
-%     % comfort_noise(), }}-
-
-%     % TODO put play/2 in CEC
-%     % NewDataPP =
-%     %     play(NextMenu, NewDataP),
-
-%     {next_state, NextState, NewData}.
-% % }}-
-
-% prev_menu(#{ menu_history := History } = Data) -> % {{-
-%   % #{ current_state := CurrentState
-%   %  , data := #{ menu_history := History } = Data
-%   %  }
-% % ) ->
-%     logger:debug("PREV_MENU"),
-%     % case {CurrentState, History} of {{-
-%     %     {?CATEGORIES, []} -> % {{-
-%     %     % Nowhere to go back to; give warning and repeat
-%     %         EmptyHistory = "Nothing in history.",
-%     %         NewDataP =
-%     %             warning(EmptyHistory, Data),
-
-%     %         {keep_state, NewDataP};
-
-%     %     % }}-
-%     %     {main_menu, []} -> % {{-
-%     %     % The only  way this is  (or should be)  possible when
-%     %     % coming to `main_menu` from `greeting` (`greeting` is
-%     %     % not pushed  to history  during that  transition; see
-%     %     % `next_menu/1`).
-%     %         next_menu(
-%     %           #{ menu => ?CATEGORIES
-%     %            , data => Data
-%     %            , current_state => main_menu
-%     %            });
-%     %     % }}-
-%     %     _ ->
-%     % }}-
-
-%     % NewDataP = stop_playback(Data),
-%     % comfort_noise(),
-%     {PrevState, NewDataPH} =
-%         pop_history(NewDataP),
-%     % TODO put play/2 in CEC (solves CD warning prev)
-%     % NewDataPHP =
-%     %     play(PrevState, NewDataPH),
-
-%     {next_state, PrevState, NewDataPHP}.
-%     % end.
-% % }}-
-% }}-
-
+% TODO clean up comments below and TODOs {{-
 % start,   when call is answered
 % restart, when a DTMF signal comes in
 % NOTE: impossible to time out while collecting digits, because a DTMF signal restarts the timers, and the interdigit timeout is a couple seconds
-
-
 % Only triggered when  a new DTMF event  comes in, and
 % not  affected by  state transition/change  (as those
 % are mostly automatic).
+% }}-
 re_start_inactivity_timer(State) -> % {{-
 % TODO PROD test this (with corresponding handle clause); amended after the re-write, but no clue if it will blow up or not
-
     timer:cancel( get(inactivity_warning) ),
     timer:cancel( get(inactivity_hangup ) ),
 
@@ -2815,563 +1616,24 @@ re_start_inactivity_timer(State) -> % {{-
 
     put(inactivity_warning, IWref),
     put(inactivity_hangup,  ITref).
+
 % }}-
 
-% common_options(ContentType) % {{-
-%   when ContentType =:= category
-%      ; ContentType =:= publication
-%      ; ContentType =:= article
-% ->
-%     Star =
-%         "Press star to go up a level.",
-%     Pound =
-%         "Press pound to jump to the next "
-%         ++ atom_to_list(ContentType)
-%         ++ ".",
-%     Zero =
-%         "For the main menu, press zero.",
-
-%     [Zero, Star, Pound].
-% % }}-
-
-play_go_up(Data) ->
-    % ./google-tts-wav.sh "Press star to go up" 0.87 > prompts/go-up.wav
-    playback
-      ( go_up
-      , Data
-      , ?PROMPT_DIR ++ "go-up.wav"
-      ).
-
-play_next_category(Data) ->
-    % ./google-tts-wav.sh "Press pound to jump to the next category." 0.87 > prompts/next-category.wav
-    playback
-      ( next_category
-      , Data
-      , ?PROMPT_DIR ++ "next-category.wav"
-      ).
-
-play_next_publication(Data) ->
-    % ./google-tts-wav.sh "Press pound to jump to the next publication." 0.87 > prompts/next-publication.wav
-    playback
-      ( next_publication
-      , Data
-      , ?PROMPT_DIR ++ "next-publication.wav"
-      ).
-
-play_prev_publication(Data) ->
-    % ./google-tts-wav.sh "Press nine for the previous publication." 0.87 > prompts/prev-publication.wav
-    playback
-      ( prev_publication
-      , Data
-      , ?PROMPT_DIR ++ "prev-publication.wav"
-      ).
-
-play_first_article(Data) ->
-    % ./google-tts-wav.sh "Press one to start the newest article." 0.87 > prompts/first-article.wav
-    playback
-      ( first_article
-      , Data
-      , ?PROMPT_DIR ++ "first-article.wav"
-      ).
-play_last_article(Data) ->
-    % ./google-tts-wav.sh "Press three to start the oldest article." 0.87 > prompts/last-article.wav
-    playback
-      ( last_article
-      , Data
-      , ?PROMPT_DIR ++ "last-article.wav"
-      ).
-
-play_article_intro(Data) ->
-    % ./google-tts-wav.sh "Press two for help at any time." 0.87 > prompts/article-intro.wav
-    playback
-      ( article_intro % !!! if changed, menu progression is messed up because in the CHANNEL_EXECUTE_COMPLETE handle_event clause nudges the menu forward by comparing the stopped playbackname and the current state
-      , Data
-      , ?PROMPT_DIR ++ "article-intro.wav"
-      ).
-
-play_article_paused(Data) ->
-    % ./google-tts-wav.sh "Article paused. Press 2 to resume. The following controls are available during playback." 0.87 > prompts/article-paused.wav
-    playback
-      ( article_paused
-      , Data
-      , ?PROMPT_DIR ++ "article-paused.wav"
-      ).
-
-play_invalid_selection(Data) ->
-    % ./google-tts-wav.sh "Invalid selection." 0.87 > prompts/invalid-selection.wav
-    playback
-      ( invalid_selection % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "invalid-selection.wav"
-      ).
-
-play_empty_category(Data) ->
-    % ./google-tts-wav.sh "This category is empty." 0.87 > prompts/empty-category.wav
-    playback
-      ( no_children % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "empty-category.wav"
-      ).
-
-play_empty_publication(Data) ->
-    % ./google-tts-wav.sh "This publication is empty." 0.87 > prompts/empty-publication.wav
-    playback
-      ( no_children % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "empty-publication.wav"
-      ).
-
-play_no_prev_category(Data) ->
-    % ./google-tts-wav.sh "This is the first category." 0.87 > prompts/no-prev-category.wav
-    playback
-      ( no_prev_item % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "no-prev-category.wav"
-      ).
-
-play_no_prev_publication(Data) ->
-    % ./google-tts-wav.sh "This is the first publication." 0.87 > prompts/no-prev-publication.wav
-    playback
-      ( no_prev_item % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "no-prev-publication.wav"
-      ).
-
-play_no_prev_article(Data) ->
-    % ./google-tts-wav.sh "This is the first article." 0.87 > prompts/no-prev-article.wav
-    playback
-      ( no_prev_item % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "no-prev-article.wav"
-      ).
-
-play_no_next_category(Data) ->
-    % ./google-tts-wav.sh "This is the last category." 0.87 > prompts/no-next-category.wav
-    playback
-      ( no_next_item % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "no-next-category.wav"
-      ).
-
-play_no_next_publication(Data) ->
-    % ./google-tts-wav.sh "This is the last publication." 0.87 > prompts/no-next-publication.wav
-    playback
-      ( no_next_item % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "no-next-publication.wav"
-      ).
-
-play_no_next_article(Data) ->
-    % ./google-tts-wav.sh "This is the last article." 0.87 > prompts/no-next-article.wav
-    playback
-      ( no_next_item % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "no-next-article.wav"
-      ).
-
-play_demo_hangup(Data) ->
-    % ./google-tts-wav.sh "End of demo session. If you would like to sign up for Access News, or have any questions, please call 916-889-7519. Thank you, and have a wondeful day!" 0.87 > prompts/demo-hangup.wav
-    playback
-      ( demo_hangup % do not change, see "article_intro % !!!"
-      , Data
-      , ?PROMPT_DIR ++ "demo-hangup.wav"
-      ).
-
-play_controls(Data) ->
-    % ./google-tts-wav.sh "Press one to go forward ten seconds. Press two to pause or resume article respectively. Press three to rewind ten seconds. Press four to slow down the recording, press six to speed it up. Press five to lower the volume, press eight to turn it up. Press seven to restart the article. Press nine to play previous article." 0.87 > prompts/article-controls.wav
-    playback
-      ( article_controls
-      , Data
-      , ?PROMPT_DIR ++ "article-controls.wav"
-      ).
-
-play_number_of_articles(Vertex, Data) ->
-
-    ArticleNumberString =
-        f:pipe
-          ([ content:pick(children, Vertex)
-           , fun erlang:length/1
-           , fun erlang:integer_to_list/1
-           ]),
-
-    AudioFilename =
-           ?PROMPT_DIR
-        ++ ArticleNumberString
-        ++ ".wav",
-
-    case filelib:is_file(AudioFilename) of
-        true ->
-            noop;
-        false ->
-            Text = ArticleNumberString ++ " articles in this publication.",
-            google_TTS_to_wav(Text, AudioFilename)
-    end,
-
-    playback(prev_publication, Data, AudioFilename).
-
-play_next_article(Data) ->
-    % ./google-tts-wav.sh "Press pound to jump to the next article." 0.87 > prompts/next-article.wav
-    playback
-      ( next_article
-      , Data
-      , ?PROMPT_DIR ++ "next-article.wav"
-      ).
-
-play_to_main_menu(Data) ->
-    % ./google-tts-wav.sh "For the main  menu press 0." 0.87 > prompts/to-main-menu.wav
-    playback
-      ( to_main_menu
-      , Data
-      , ?PROMPT_DIR ++ "to-main-menu.wav"
-      ).
-
-% TODO What if there are no choices?
-% TODO rename to "selections"
-% Good for a dynamic TTS solution with `stitch/1`
-choice_list(Vertex) -> % returns [String] to be read by a TTS engine
-    [  "Press "
-       ++ integer_to_list(Selection)
-       ++ " for "
-       ++ Title
-       ++ "."
-    || #{ title := Title
-        , selection := Selection
-        }
-       <- content:pick(children, Vertex)
-    ].
-
-title_file(#{ title := Title } = Vertex) -> % !!!
-    do_check(Title ++ ".", Vertex, "title").
-
-play_title(Vertex, Data) -> % !!!
-    playback(vertex_title, Data, title_file(Vertex)).
-
-selection_files(Vertex) -> % returns [AudioFilename] to be `playback/3`-ed
-    [ do_selection(Child)
-    || Child
-       <- content:pick(children, Vertex)
-    ].
-
-do_selection
-(#{ title := Title
-  , selection := Selection
-  } = Vertex
-)
-->
-    SelectionText =
-           "Press "
-        ++ integer_to_list(Selection)
-        ++ " for "
-        ++ Title
-        ++ ".",
-
-    do_check(SelectionText, Vertex, "selection").
-
-play_selections(Vertex, Data) ->
-    PlaybackFunctions =
-        [  (f:curry(fun do_play_selection/2))(Child)
-        || Child
-        <- content:pick(children, Vertex)
-        ],
-
-    f:pipe
-      ([ Data ]
-       ++ PlaybackFunctions
-      ).
-
-do_play_selection
-(#{ title := Title
-  , selection := Selection
-  } = Vertex
-, Data
-)
-->
-    SelectionText =
-           "Press "
-        ++ integer_to_list(Selection)
-        ++ " for "
-        ++ Title
-        ++ ".",
-
-    do_check_and_play(SelectionText, Vertex, "selection", Data).
-
-%        String -> Map -> String -> FileName
-do_check(Text, Vertex, LabelKey) -> % {{-
-
-    Label =
-        content:get_label(Vertex),
-
-    {SavedText, LabelMap} =
-        case Label =:= [] of
-            true ->
-                {"", #{}};
-            false ->
-                { maps:get(LabelKey, Label, "")
-                , Label
-                }
-        end,
-
-    AudioFilename =
-           ?PROMPT_DIR
-        ++ vertex_to_filename(Vertex)
-        ++ "-"
-        ++ LabelKey
-        ++ ".wav",
-
-    case Text =:= SavedText of
-        true ->
-            noop;
-        false ->
-            % 1. call the google tts script (and save the audio to ?PROMPT_DIR)
-            google_TTS_to_wav(Text, AudioFilename),
-            % 2. save the text to vertex label
-            content:add_label(Vertex, LabelMap#{ LabelKey => Text })
-    end,
-
-    AudioFilename.
+% TODO Try out `mod_vlc` to play aac and m4a files. {{-
+% sendmsg(UUID, execute, ["playback", "/home/toraritte/clones/main.mp3"]),
+% sendmsg_locked(UUID, execute, ["playback", "/home/toraritte/clones/phone-service/ro.mp3"]),
 % }}-
 
-google_TTS_to_wav(Text, AudioFilename) ->
-    os:cmd(
-            "./google-tts-wav.sh \""
-        ++ Text
-        ++ "\" 0.87 > "
-        ++ AudioFilename
-    ).
+% TODO PROD users, docs, cloud {{-
 
-%        String -> Map -> String -> FileName
-do_check_and_play(Text, Vertex, LabelKey, Data) -> % {{-
+% 1. Update   deployment   docs   (and   automate):   the
+%    "recordings"  folder   needs  to  be   created,  and
+%    `chown`ed to user  and group `freeswitch`, otherwise
+%    the  gen_server  will  crash  on  the  first  record
+%    attempt.
 
-    Label =
-        content:get_label(Vertex),
-
-    {SavedText, LabelMap} =
-        case Label =:= [] of
-            true ->
-                {"", #{}};
-            false ->
-                { maps:get(LabelKey, Label, "")
-                , Label
-                }
-        end,
-
-    AudioFilename =
-           ?PROMPT_DIR
-        ++ vertex_to_filename(Vertex)
-        ++ "-"
-        ++ LabelKey
-        ++ ".wav",
-
-    case Text =:= SavedText of
-        true ->
-            noop;
-        false ->
-            % 1. call the google tts script (and save the audio to ?PROMPT_DIR)
-            google_TTS_to_wav(Text, AudioFilename),
-            % 2. save the text to vertex label
-            content:add_label(Vertex, LabelMap#{ LabelKey => Text })
-    end,
-
-    playback(selection, Data, AudioFilename).
+% 2.  Upload recordings to cloud storage. (both volunteer recordings and messages left in main menu.
 % }}-
-
-derive_state(#{ current_content := Content } = _Data) ->
-    derive_state(Content);
-
-derive_state(#{ type := _ } = Content) ->
-    % case maps:get(current_content, Data) of
-    case Content of
-        #{ selection := 0 } ->
-            content_root;
-        #{ type := article } ->
-            % Implies that ARTICLE_INTRO is always played (even if article is resumed)
-            article_intro;
-        #{ type := ContentType } ->
-            ContentType
-    end.
-
-% TODO add content history
-set_current(Content, Data) ->
-    Data#{ current_content := Content }.
-
-% get_current(#{ current_content := Content } = _Data) ->
-%     Content.
-
-next_content % {{-
-( Direction
-, #{ current_content := CurrentContent
-     % #{ type := ContentType } = CurrentContent
-   , prev_state := PrevState % TODO this could have been deduced from CurrentContent above...
-   } = Data
-)
-  % The `children` direction is different from the rest; aside from [] and [_], it can also return lists with more than one element ([_,_|_]). It also does not make sense semantically, because we only need one element to determine the next state.
-  when Direction =:= parent;
-       Direction =:= first;
-       Direction =:= last;
-       Direction =:= next;
-       Direction =:= prev;
-       Direction =:= content_root
-->
-    % uuid_fileman("pause"),
-
-    NextContent =
-        case content:pick(Direction, CurrentContent) of
-            [] -> none;
-            [Content] -> Content
-        end,
-    NewData =
-        set_current(NextContent, Data),
-    NextState =
-        % When there is no vertex in a given direction `content:pick/2` will return `none`, and it means that control will be redirected to special uninterruptable warning states in the next case clause, hence `ignore`
-        case NextContent =:= none of
-            false ->
-                % case PrevState =:= article of
-                case {PrevState, NextContent} of
-                    {article, #{ type := article }} -> article;
-                    _ -> derive_state(NextContent)
-                end;
-            true ->
-                ignore
-        end,
-
-            % logger:debug(
-            %     #{ a => "!!!!!!NEXT_CONTENT!!!!!!!!!!!!!!!"
-            %     , current_content => CurrentContent
-            %     , direction => Direction
-            %     , next_content => NextContent
-            %     , prev_state => PrevState
-            %     , next_state => NextState
-            %     }),
-    case {NextContent, Direction} of
-        % TODO PROD implement states otherwise it will crash
-        % DONE? test
-        {none, next}  -> {next_state, no_next_item, Data}; % \
-        {none, prev}  -> {next_state, no_prev_item, Data}; % | Not `NewData`, because
-        {none, first} -> {next_state, no_children, Data};  % | that direction is empty.
-        {none, last}  -> {next_state, no_children, Data};  % /
-        % {none, parent} - this would only be possible if content_root would be the current content, but * is dissabled there (see DTMF processing)
-        _ when PrevState =:= NextState
-             , CurrentContent =/= NextContent
-        ->
-            case PrevState =:= article of
-                true  -> {repeat_state, NewData#{ playback_offset := "0" }};
-                false -> {repeat_state, NewData}
-            end;
-
-        _ when PrevState =/= NextState
-        ->
-            % NewData = set_current(NextContent, Data),
-            % Not simply pattern-matching `NewData` because if "up" results in the root category then the next state is `content_root` and not `category`
-            % NextState = derive_state(NewData),
-            % {keep_state, NewData};
-            % % {next_state, NextContent, NewData}
-        % _ when CurrentContent =/= NextContent ->
-            {next_state, NextState, NewData}
-    end.
-    % NewData =
-    %     f:pipe
-    %       ([ Data
-    %        , (f:curry(fun get_content/2))(Direction)
-    %        , (f:cflip(fun set_current/2))(Data)
-    %        ]),
-    % NextState =
-    %     derive_state(NewData),
-
-    % { next_state, NextState, NewData }.
-% }}-
-
-% TODO INVENTORY! (stringify, curry, composeFlipped, serialize/deserialize, etc.) % {{-
-% NOTE `go_to/1` and `retrieve/1` will crash if used improperly. It is not handled, because these are strictly internal functions not intended to be used from anywhere else, and if they crash then the culprit is an error in the surrounding code
-% next(Data, Content) ->
-%     % { ContentType
-%     % , _Selection
-%     % , _Metadata
-%     % } =
-%         content(get, current),
-
-%     {next_state, Content, Data}.
-
-% retrieve(Direction) ->
-%     call_content(get, Direction).
-
-% NOTE The corresponding serialization function is in content.erl (also commented out)
-% deserialize(
-%   { serialized_digraph
-%   , VerticeList
-%   , EdgeList
-%   , NeighbourList
-%   , _Cyclicity
-%   }
-% ) ->
-%     Graph =
-%     { digraph
-%     , Vertices
-%     , Edges
-%     , Neighbours
-%     , true
-%     } =
-%         digraph:new([cyclic, protected]), % default values made explicit
-
-%     ets:insert(Vertices, VerticeList),
-%     ets:insert(Edges, EdgeList),
-%     ets:insert(Neighbours, NeighbourList),
-%     Graph.
-
-% e.g., `stringify` is also in `content.erl`. How many other similar functions are there? Put them in a utility module.
-% curry is not used (is composeFlipped?) but they are interesting and a by-product of experimenting (and procrastinating); figure out what to do with them
-stringify(Term) ->
-    R = io_lib:format("~p",[Term]),
-    lists:flatten(R).
-% }}-
-
-pad_int(Integer) ->
-    f:pipe
-      ([ Integer
-       , fun erlang:integer_to_list/1
-       , fun (S) -> string:pad(S, 2, leading, $0) end
-       , fun lists:flatten/1
-       ]).
-
-change_speed(Direction, Data) ->
-    #{ playback_speed := Speed } = Data,
-    NewSpeed =
-        f:pipe
-            ([ Speed
-             , fun erlang:list_to_integer/1
-             , fun(X) ->
-                   case Direction of
-                       "-" -> X - 1;
-                       "+" -> X + 1
-                   end
-               end
-             , fun erlang:integer_to_list/1
-             ]),
-    uuid_fileman("speed:" ++ NewSpeed),
-    NewData = Data#{ playback_speed := NewSpeed },
-    {keep_state, NewData}.
-% }}-
-
-vertex_to_filename(#{ title := Title} = _Vertex) ->
-    Pred =
-        fun(Char) when Char >= 65, Char =< 90;
-                       Char >= 97, Char =< 122
-           ->
-                true;
-           (_) ->
-                false
-        end,
-    lists:filter(Pred, Title).
-
-cp % time with Roy Wood Jr.
-(PlaybackName) ->
-
-    PlaybackWithReorderedArgs =
-        fun(Name, Path, Data) ->
-            % playback(Name, Data, ?PROMPT_DIR ++ Path)
-            playback(Name, Data, Path)
-        end,
-
-    (f:curry(PlaybackWithReorderedArgs))(PlaybackName).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:

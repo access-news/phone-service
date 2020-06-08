@@ -1,13 +1,20 @@
--module(f).
+-module(futil).
 
 -export(
-    [ pipe/1
+    [
+    % Functional helpers
+      pipe/1
     , composeFlipped/1
     , cflip/1
-    , flip/3
     , curry/1
+    , flip/3
+
+    % General helpers
+    , stitch/1
+    , stringify/1
     ]).
 
+% FUNCTIONAL HELPERS ================================================== {{-
 % Recursive left-to-right composition instead of a traditional one instead of (b -> c) -> (a -> b) -> (a -> c), it is (a -> b) -> (b -> c) -> ... -> (x -> y) -> (y -> z)
 % See PureScript's Control.Semigroupoid.composeFlipped (>>>) or Haskell's Control.Arrow.>>>
 composeFlipped([G|[]]) -> % {{-
@@ -37,6 +44,7 @@ curry(AnonymousFun) -> % {{-
 
     do_curry(AnonymousFun, Arity, [[], [], []]).
 
+%% `curry/1` internals {{-
 do_curry(Fun, 0, [_Fronts, _Middle, _Ends] = X) ->
     [F, M, E] =
         lists:map(fun(L) -> string:join(L, "") end, X),
@@ -65,3 +73,24 @@ do_curry(Fun, Arity, [Fronts, Middle, Ends]) ->
     NewMiddle = [VarName ++ ","|Middle],
     NewEnds = [" end"|Ends],
     do_curry(Fun, Arity-1, [NewFronts, NewMiddle, NewEnds]).
+%    }}-
+%   }}-
+
+% }}-
+% GENERERAL HELPERS =================================================== {{-
+
+% Same as `lists:flatten(lists:join(" ", UtteranceList))`.
+stitch([Utterance]) ->
+    Utterance;
+stitch([Utterance|Rest]) ->
+    Utterance ++ " " ++ stitch(Rest).
+
+stringify(Term) ->
+    R = io_lib:format("~p",[Term]),
+    lists:flatten(R).
+
+% }}-
+
+% vim: set fdm=marker:
+% vim: set foldmarker={{-,}}-:
+% vim: set nowrap:

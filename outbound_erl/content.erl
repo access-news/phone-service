@@ -25,7 +25,6 @@
     % , refresh_content_graph/1
     % TODO Make this part of the public API
     , realize/0
-
     , get_vertex/3
     , process_call/3
     , get_meta/1
@@ -675,6 +674,7 @@ publication_guide() -> % {{-
 
 % Yes, this could have been just the one string below, but it is not.
 % string:join([ erlang:integer_to_list(erlang:system_time()) | tl(string:lexemes(erlang:ref_to_list(erlang:make_ref()), ".>"))], "-")
+% TODO So what was the point of this? {{-
 make_id() ->
     NowString =
         f:pipe(
@@ -690,6 +690,7 @@ make_id() ->
           ]
         ),
     string:join([NowString|tl(RefNumbers)], "-").
+% }}-
 
 % digraph ets query notes {{-
 % 201> {_,V,_,_,_} = G = digraph:new().
@@ -1103,29 +1104,30 @@ get_meta(CategoryDir) -> % {{-
     Meta.
 % }}-
 
-list_category_entries(CategoryDir) -> % {{-
-    { ok
-    , SubCategoryDirectories
-    } =
-        file:list_dir(CategoryDir),
-    MetaList =
-        lists:map(
-          fun(SubDir) ->
-              MetaPath =
-                  filename:join([CategoryDir, SubDir, metafile_name()]),
-              {ok, {_, N, SubCategory} } =
-                  file:script(MetaPath),
+% TODO Again, what was the point of this?
+% list_category_entries(CategoryDir) -> % {{-
+%     { ok
+%     , SubCategoryDirectories
+%     } =
+%         file:list_dir(CategoryDir),
+%     MetaList =
+%         lists:map(
+%           fun(SubDir) ->
+%               MetaPath =
+%                   filename:join([CategoryDir, SubDir, metafile_name()]),
+%               {ok, {_, N, SubCategory} } =
+%                   file:script(MetaPath),
 
-              "Press "
-              ++ integer_to_list(N)
-              ++ " for "
-              ++ SubCategory
-              ++ "."
-          end,
-          SubCategoryDirectories -- [metafile_name()]
-        ),
-    ordsets:from_list(MetaList).
-% }}-
+%               "Press "
+%               ++ integer_to_list(N)
+%               ++ " for "
+%               ++ SubCategory
+%               ++ "."
+%           end,
+%           SubCategoryDirectories -- [metafile_name()]
+%         ),
+%     ordsets:from_list(MetaList).
+% % }}-
 
 make_dir_and_meta_file({_, N, _} = Category, Path) -> % {{-
     SubDir =
@@ -1183,29 +1185,30 @@ realize([{publication, _, _} = Publication | Rest], Path) ->
     make_dir_and_meta_file(Publication, Path),
     realize(Rest, Path).
 
-add_recordings(FromDir, ToDir) -> % {{-
-    {ok, FileList} =
-        file:list_dir(FromDir),
-    MoveAndRenameFile =
-        fun (File) ->
-            FromPath =
-                filename:join(FromDir, File),
-            NewBaseFileName =
-                integer_to_list(os:system_time()),
-            OldFileExt =
-                filename:extension(File),
-            ToPath =
-                filename:join(
-                  ToDir,
-                  NewBaseFileName ++ OldFileExt
-                ),
-            file:copy(FromPath, ToPath)
-        end,
-    lists:foreach(
-      MoveAndRenameFile,
-      FileList
-    ).
-% }}-
+% TODO Another mystery function
+% add_recordings(FromDir, ToDir) -> % {{-
+%     {ok, FileList} =
+%         file:list_dir(FromDir),
+%     MoveAndRenameFile =
+%         fun (File) ->
+%             FromPath =
+%                 filename:join(FromDir, File),
+%             NewBaseFileName =
+%                 integer_to_list(os:system_time()),
+%             OldFileExt =
+%                 filename:extension(File),
+%             ToPath =
+%                 filename:join(
+%                   ToDir,
+%                   NewBaseFileName ++ OldFileExt
+%                 ),
+%             file:copy(FromPath, ToPath)
+%         end,
+%     lists:foreach(
+%       MoveAndRenameFile,
+%       FileList
+%     ).
+% % }}-
 
 stringify(Term) ->
     R = io_lib:format("~p",[Term]),

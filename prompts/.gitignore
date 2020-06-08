@@ -1,0 +1,11 @@
+# Ignore everything in this directory
+*
+# Except this file
+!.gitignore
+
+# Whatever  is put  in this  directory, it  will never
+# show up in  `git status` but that  is the intention,
+# This  directory  is only  here  so  that the  Erlang
+# outbound socket  would not  crash during  runtime as
+# this directory  name is  hardcoded. Perhaps  not the
+# best idea.
