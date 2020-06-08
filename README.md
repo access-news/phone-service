@@ -5,6 +5,35 @@
 ```erlang
 erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -run content -sname access_news -setcookie OldTimeRadio
 ```
+### Current `/etc/freeswitch/dialplan/default.xml` to start the `gen_statem` process on incoming calls
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<include>
+<context name="default">
+
+    <extension name="SignalWire CONNECTORS incoming call">
+    <!-- the number you assigned in your dashboard -->
+    <condition field="destination_number" expression="^(\+19162510217)$">
+
+        <!-- <action application="set" data="outside_call=true"/> -->
+        <!-- <action application="export" data="RFC2822_DATE=${strftime(%a, %d %b %Y %T %z)}"/> -->
+        <!-- <action application="answer"/> -->
+        <!-- <action application="lua" data="main.lua"/> -->
+        <!-- <action application="erlang" data="call_control:start access_news@tr2"/> -->
+
+        <action application="set" data="playback_terminators=none"/>
+        <action application="erlang" data="ivr:start access_news@tr2"/>
+
+    </condition>
+    </extension>
+</context>
+</include>
+```
+
+### TODOs
+
+1. state diagram
 
 ## 0. Layout
 
