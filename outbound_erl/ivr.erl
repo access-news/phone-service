@@ -229,6 +229,7 @@ handle_event(enter, OldState, State, Data) ->
     % MAIN_MENU, ARTICLE_HELP, next/prev  when there is no
     % article there.  So tried  a couple things,  this was
     % one. }}-
+    % UPDATE: it does
     OffsetReset =
         fun(GenStatemData) ->
             case lists:member(OldState, [publication, category, content_root]) of
@@ -640,6 +641,7 @@ handle_event(
                 % }}-
                 % 0         {{- => content_root
                 "0" ->
+                    % TODO don't understand this prev_state business.. Why did I do this?
                     next_content(content_root, Data#{ prev_state := State });
                 % }}-
                 % TODO FEATURE tutorial
@@ -761,7 +763,6 @@ handle_event(
                 % }}-
                 % #          {{- => enter first child category
                 "#" ->
-                    % next_content(first, Data);
                     next_content(first, Data#{ prev_state := State });
                 % }}-
                 % [1-9]      {{- => collect digits
@@ -1161,11 +1162,9 @@ when Application =:= "speak"
         %     {keep_state, NewData};
 
         _ when StoppedPlayback =:= article
-             % TODO would not `IsStopped =:= true` be better?
-             % , StoppedPlayback =/= State
              , IsStopped =:= true
         ->
-                    {keep_state, NewData#{playback_offset := LastOffset}};
+            {keep_state, NewData#{playback_offset := LastOffset}};
 
         % 1
         % `is_stopped` should always be TRUE in this scenario
@@ -1192,20 +1191,19 @@ when Application =:= "speak"
         ->
             {repeat_state, NewData};
 
-        % States where playback ended naturally,
+        % States where playback ended naturally (i.e., `IsStopped` is `false` and `StoppedPlayback` is the same as `State`)
         % but that should not loop
         % --------------------------------------
         greeting ->                     % |
-            % next_content(content_root, NewData);
             {next_state, content_root, NewData};
 
         publication ->
-            % next_content(first, NewData);
             next_content(first, NewData#{ prev_state := State });
 
         % TODO Test this!
         article -> % that is, playback hasn't been stopped and the state loops but in a special kind of way (offset needs to be reset)
-            {repeat_state, NewData#{ playback_offset := "0"}};
+            % {repeat_state, NewData#{ playback_offset := "0"}};
+            next_content(next, Data#{ prev_state := State });
 
         collect_digits ->
             {keep_state, NewData};
@@ -1401,7 +1399,7 @@ handle_event
             { next_state
             % `content_root` will never be possible here so pattern matching would have sufficed but this is more uniform
             , derive_state(SelectedContent)
-            , set_current(SelectedContent, NewData)
+            , NewData#{ current_content := SelectedContent }
             }
     end.
 %% }}-
@@ -1487,13 +1485,12 @@ derive_state(#{ type := _ } = Content) ->
     end.
 
 % }}-
-set_current(Content, Data) ->
-    Data#{ current_content := Content }.
 
 next_content % {{-
 ( Direction
 , #{ current_content := CurrentContent
    % TODO this could have been deduced from CurrentContent above... UPDATE A MONTH LATER: How?...
+   % ooooor, just add it a separate argument
    , prev_state      := PrevState
    } = Data
 )
@@ -1516,7 +1513,7 @@ next_content % {{-
             [Content] -> Content
         end,
     NewData =
-        set_current(NextContent, Data),
+        Data#{ current_content := NextContent },
     NextState =
         % When  there  is  no  vertex in  a  given  direction,
         % `content:pick/2`  will   return  `none`,   in  which
@@ -1529,7 +1526,6 @@ next_content % {{-
         % fitting.)
         case NextContent =:= none of
             false ->
-                % case PrevState =:= article of
                 case {PrevState, NextContent} of
                     {article, #{ type := article }} -> article;
                     _ -> derive_state(NextContent)
