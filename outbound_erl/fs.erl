@@ -22,7 +22,6 @@
 %% See available `sendmsg` commands at
 %% https://freeswitch.org/confluence/display/FREESWITCH/mod_event_socket#mod_event_socket-3.9.1Commands
 
-% TODO get rid of the map, and simply the event-lock (e.g., the "LockHeaderList =" part in do_sendmsg can be dismissed immediately)
 sendmsg(CallUUID, Cmd, Args) ->
 
     SendmsgHeaders =

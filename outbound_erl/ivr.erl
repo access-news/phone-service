@@ -604,7 +604,7 @@ handle_event(
             % QUESTION Should this be set in `init/1` instead?
             %          I think it is easier to understand it this way.
             % NewData = set_current(content:root(), Data),
-            % NOTE set in init because of `next_content/2` complications
+            % NOTE set in init because of `next_content/3` complications
 
             case Digit of
                 % [*#]       {{- => content root
@@ -642,7 +642,7 @@ handle_event(
                 % 0         {{- => content_root
                 "0" ->
                     % TODO don't understand this prev_state business.. Why did I do this?
-                    next_content(content_root, Data#{ prev_state := State });
+                    next_content(content_root, State, Data);
                 % }}-
                 % TODO FEATURE tutorial
                 % 1         {{- => tutorial
@@ -763,7 +763,7 @@ handle_event(
                 % }}-
                 % #          {{- => enter first child category
                 "#" ->
-                    next_content(first, Data#{ prev_state := State });
+                    next_content(first, State, Data);
                 % }}-
                 % [1-9]      {{- => collect digits
                 _ when Digit =:= "1"
@@ -786,8 +786,7 @@ handle_event(
             case Digit of
                 % *          {{- => go_up (i.e., up in content hierarchy)
                 "*" ->
-                    % next_content(parent, Data);
-                    next_content(parent, Data#{ prev_state := State });
+                    next_content(parent, State, Data);
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -795,11 +794,7 @@ handle_event(
                 % }}-
                 % #          {{- => next category (i.e., next sibling)
                 "#" ->
-                    % logger:debug(#{ a => "HANDLE_DTMF:CATEGORY"
-                    %               , state => State
-                    %               }),
-                    % next_content(next, Data);
-                    next_content(next, Data#{ prev_state := State });
+                    next_content(next, State, Data);
                 % }}-
                 % [1-9]      {{- => collect digits
                 _ when Digit =:= "1"
@@ -822,8 +817,7 @@ handle_event(
             case Digit of
                 % *          {{- => go_up (i.e., up in content hierarchy)
                 "*" ->
-                    % next_content(parent, Data);
-                    next_content(parent, Data#{ prev_state := State });
+                    next_content(parent, State, Data);
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -831,15 +825,13 @@ handle_event(
                 % }}-
                 % #          {{- => next publication (i.e., next sibling)
                 "#" ->
-                    % next_content(next, Data);
-                    next_content(next, Data#{ prev_state := State });
+                    next_content(next, State, Data);
                 % }}-
                 % TODO PROD handle no articles
                 % DONE? test
                 % 1         {{- => Play FIRST article
                 "1" ->
-                    % next_content(first, Data);
-                    next_content(first, Data#{ prev_state := State });
+                    next_content(first, State, Data);
                 % }}-
                 % TODO FEATURE list articles
                 % 2         {{- => UNASSIGNED (keep_state_and_data)
@@ -847,8 +839,7 @@ handle_event(
                 % }}-
                 % 3         {{- => Play LAST article
                 "3" ->
-                    % next_content(last, Data);
-                    next_content(last, Data#{ prev_state := State });
+                    next_content(last, State, Data);
                 % }}-
                 % 4-8       {{- => UNASSIGNED (keep_state_and_data)
                 "4" -> keep_state_and_data;
@@ -862,8 +853,7 @@ handle_event(
                 % }}-
                 % 9         {{- => PREVIOUS publication
                 "9" ->
-                    % next_content(prev, Data)
-                    next_content(prev, Data#{ prev_state := State })
+                    next_content(prev, State, Data)
                 % }}-
             end;
 
@@ -873,8 +863,7 @@ handle_event(
             case Digit of
                 % *          {{- => back to publication
                 "*" ->
-                    % next_content(parent, Data);
-                    next_content(parent, Data#{ prev_state := State });
+                    next_content(parent, State, Data);
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -882,8 +871,7 @@ handle_event(
                 % }}-
                 % #          {{- => next article (i.e., next sibling)
                 "#" ->
-                    % next_content(next, Data);
-                    next_content(next, Data#{ prev_state := State });
+                    next_content(next, State, Data);
                 % }}-
                 % 1          {{- => skip rest of intro and start article
                 "1" ->
@@ -907,8 +895,7 @@ handle_event(
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
-                    % next_content(prev, Data)
-                    next_content(prev, Data#{ prev_state := State })
+                    next_content(prev, State, Data)
                 % }}-
             end;
 
@@ -919,8 +906,7 @@ handle_event(
             case Digit of
                 % *          {{- => go_up (i.e., up in content hierarchy)
                 "*" ->
-                    % next_content(parent, NewData);
-                    next_content(parent, Data#{ prev_state := State });
+                    next_content(parent, State, Data);
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -929,7 +915,7 @@ handle_event(
                 % }}-
                 % #          {{- => next_article (i.e., next sibling)
                 "#" ->
-                    next_content(next, Data#{ prev_state := State });
+                    next_content(next, State, Data);
                 % }}-
                 % NOTE using `api` for now instead of `bgapi`
                 % 1          {{- => skip_backward (10s)
@@ -974,8 +960,7 @@ handle_event(
                 % }}-
                 % 9          {{- => prev_article
                 "9" ->
-                    % next_content(prev, NewData)
-                    next_content(prev, Data#{ prev_state := State })
+                    next_content(prev, State, Data)
                 % }}-
             end;
 
@@ -987,12 +972,7 @@ handle_event(
             case Digit of
                 % *          {{- => go_up to publication
                 "*" ->
-                    % next_content(parent, Data);
-                    next_content
-                      ( parent
-                      , Data#{ prev_state := State
-                             }
-                      );
+                    next_content(parent, State, Data);
                 % }}-
                 % 0          {{- => main_menu
                 "0" ->
@@ -1000,12 +980,7 @@ handle_event(
                 % }}-
                 % #          {{- => next article (i.e., next sibling)
                 "#" ->
-                    % next_content(next, Data);
-                    next_content
-                      ( next
-                      , Data#{ prev_state := State
-                             }
-                      );
+                    next_content(next, State, Data);
                 % }}-
                 % TODO FEATURE reset volume/speed
                 % Almost the same here as in ARTICLE_INTRO; see note there
@@ -1023,12 +998,7 @@ handle_event(
                 % }}-
                 % 9          {{- => previous article
                 "9" ->
-                    % next_content(prev, Data)
-                    next_content
-                      ( prev
-                      , Data#{ prev_state := State
-                             }
-                      )
+                    next_content(prev, State, Data)
                 % }}-
             end;
 
@@ -1119,7 +1089,6 @@ handle_event(
      }                            % | EventContent = MassagedModErlEvent
   } = E,                           % /
   State,
-  % #{ prev_state := PrevState } = Data
   #{    playbacks := Playbacks
    ,    playback_offset := SavedOffset
    } = Data
@@ -1149,18 +1118,6 @@ when Application =:= "speak"
 
         % TODO list_articles (and lots others)
 
-        % The `play/2` function of this state just reads back the pressed digits;
-        % if this clause had not been here, triggering the collectoin would simply end up in clause 1 below but it has the same outcome so OK
-        % if digit readback gets stopped by a new digit, it would be clause 2 below, but it has the same outcome so OK
-        % if digit readback runs its course, it stops here, but without this clause it would end up
-        % collect_digits ->
-        %     {keep_state, NewData};
-
-        % _ when StoppedPlayback =:= in_recording
-        %      , IsStopped =:= false
-        % ->
-        %     {keep_state, NewData};
-
         _ when StoppedPlayback =:= article
              , IsStopped =:= true
         ->
@@ -1172,14 +1129,18 @@ when Application =:= "speak"
             {keep_state, NewData};
 
         % 2
+        % For  example, selecting  a category  that interrupts
+        % the menu playback, so `gen_statem` state enter stops
+        % all playback when going to another state, so let the
+        % new menu keep playing.
         _ when StoppedPlayback =:= State
              , IsStopped =:= true
         ->
             {keep_state, NewData};
 
         % 3
-        % `is_stopped` should always be FALSE in this scenario
-        % STATES TO BE LOOPED
+        % STATES (that stopped naturally) TO BE LOOPED
+        % ------------------------------------------
         _ when StoppedPlayback =:= State
              , IsStopped =:= false
              , State =:= main_menu
@@ -1191,19 +1152,24 @@ when Application =:= "speak"
         ->
             {repeat_state, NewData};
 
-        % States where playback ended naturally (i.e., `IsStopped` is `false` and `StoppedPlayback` is the same as `State`)
-        % but that should not loop
-        % --------------------------------------
+        % STATES THAT (stopped naturally and)
+        % HAVE SPECIAL DIRECTIVES
+        % ------------------------------------------
+        % This clause applies implicitly at this point:
+        % ```
+        % _ when StoppedPlayback =:= State
+        %      , IsStopped =:= false
+        % ->
+        % ```
+
         greeting ->                     % |
             {next_state, content_root, NewData};
 
         publication ->
-            next_content(first, NewData#{ prev_state := State });
+            next_content(first, State, NewData);
 
-        % TODO Test this!
-        article -> % that is, playback hasn't been stopped and the state loops but in a special kind of way (offset needs to be reset)
-            % {repeat_state, NewData#{ playback_offset := "0"}};
-            next_content(next, Data#{ prev_state := State });
+        article ->
+            next_content(next, State, NewData);
 
         collect_digits ->
             {keep_state, NewData};
@@ -1488,10 +1454,8 @@ derive_state(#{ type := _ } = Content) ->
 
 next_content % {{-
 ( Direction
+, OldState
 , #{ current_content := CurrentContent
-   % TODO this could have been deduced from CurrentContent above... UPDATE A MONTH LATER: How?...
-   % ooooor, just add it a separate argument
-   , prev_state      := PrevState
    } = Data
 )
   % The `children` direction is omitted on purpose as it
@@ -1521,14 +1485,16 @@ next_content % {{-
         % so  that  control  will  be  redirected  to  special
         % uninterruptable warning  states in the  next `case`;
         % see the last 2 clauses where `NextState` is compared
-        % with `PrevState`. (The  parallel between the control
+        % with `OldState`. (The  parallel between the control
         % flow and current state  of things is accidental, but
         % fitting.)
         case NextContent =:= none of
             false ->
-                case {PrevState, NextContent} of
-                    {article, #{ type := article }} -> article;
-                    _ -> derive_state(NextContent)
+                case {OldState, NextContent} of
+                    {article, #{ type := article }} ->
+                        article;
+                    _ ->
+                        derive_state(NextContent)
                 end;
             true ->
                 'Black_Lives_Matter'
@@ -1544,15 +1510,15 @@ next_content % {{-
      % is disabled  there so this should  never happen (see
      % DTMF processing `handle_event/4` clause)
 
-        _ when PrevState =:= NextState
+        _ when OldState =:= NextState
              , CurrentContent =/= NextContent
         ->
-            case PrevState =:= article of
+            case OldState =:= article of
                 true  -> {repeat_state, NewData#{ playback_offset := "0" }};
                 false -> {repeat_state, NewData}
             end;
 
-        _ when PrevState =/= NextState
+        _ when OldState =/= NextState
         ->
             {next_state, NextState, NewData}
     end.
