@@ -56,9 +56,9 @@ play % GREETING {{-
     menu_queue
       ( State
       , Data
-      , [ curried_comfort(250)
+      % , [ curried_comfort(250)
         % , (cp(lofa))("https://accessnews.blob.core.windows.net/safeway/ro.mp3")
-        , q(greeting_welcome)
+      , [ q(greeting_welcome)
         , q(to_main_menu)
         , IsRegistered
         , q(greeting_footer)
