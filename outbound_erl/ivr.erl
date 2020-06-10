@@ -31,7 +31,7 @@
 % > time-out by setting it to infinity.
 % }}-
 -define(DEMO_TIMEOUT, 300000). % 5 min
--define(INTERDIGIT_TIMEOUT, 2000).
+% -define(INTERDIGIT_TIMEOUT, 2000).
 
 % NOTE Inactivity warnings and timeouts {{-
 % are not  defined here,  becasue they  have different
@@ -66,16 +66,16 @@ init(_Args) -> % {{-
     process_flag(trap_exit, true),
 
     Data =
-        #{ received_digits => []
-         , playback_offset => "0"
-         , article_speed   => "0"
-         , auth_status     => unregistered % | registered
-         , current_content => hd(content:root())
-         , prev_state      => content_root
-         , playbacks       => []
-         , prompt_speed    => 87
-         , call_UUID       => ""
-         , caller_number   => ""
+        #{ received_digits  => []
+         , playback_offset  => "0"
+         , article_speed    => "0"
+         , auth_status      => unregistered % | registered
+         , current_content  => hd(content:root())
+         , current_children => []
+         , playbacks        => []
+         , prompt_speed     => 87
+         , call_UUID        => ""
+         , caller_number    => ""
          },
 
     {ok, init, Data}.
@@ -641,7 +641,6 @@ handle_event(
                 % }}-
                 % 0         {{- => content_root
                 "0" ->
-                    % TODO don't understand this prev_state business.. Why did I do this?
                     next_content(content_root, State, Data);
                 % }}-
                 % TODO FEATURE tutorial
@@ -1318,46 +1317,43 @@ handle_event
   , eval_collected_digits       % EventContent
   , collect_digits   % State
   % , {collect_digits, Content}   % State
-  , #{ received_digits := ReceivedDigits
-     , current_content := CurrentContent
+  , #{ received_digits  := ReceivedDigits
+     , current_content  := CurrentContent
+     , current_children := CurrentChildren
      } = Data
   )
 ->
     Selection =
-        % ( composeFlipped(
         futil:pipe
           ([ ReceivedDigits
            , fun lists:reverse/1
            , (futil:cflip(fun string:join/2))("")
-            % [ fun (List) -> string:join(List, "") end
             % Will throw on empty list but it should never happen the way collect_digits/2 is called
             % (to elaborate: `collect_digits/2` is only triggered by DTMF digits 1-9, hence it should never be empty. If it is, it means that the menu calling (i.e., DTMF-processing) logic is wrong, and should be corrected)
            , fun erlang:list_to_integer/1
            ]),
-          % )
-        % )(ReceivedDigits),
 
     % Always clear DTMF buffer when the `interdigit_timer` expires, because this is the point the buffer is evaluated. Outcome is irrelevant, because at this point user finished putting in digits, hence waiting for the result, and so a clean slate is needed.
     NewData =
-        Data#{ received_digits := [] },
-
-    % logger:debug(#{ a => "INTERDIGIT_TIMEOUT (category exists)", collected_digits => ReceivedDigits, state => State, category => Category}),
+        Data#{ received_digits  := []
+             , current_children := []
+             },
 
     SelectionResult =
         [  Child
         || Child
-           <- content:pick(children, CurrentContent)
+           % <- content:pick(children, CurrentContent)
+           <- CurrentChildren
            ,  maps:find(selection, Child) =:= {ok, Selection}
         ],
 
-    logger:debug(
-        #{ a => "INTERDIGIT_TIMEOUT"
-         , current_content => CurrentContent
-         , selection_result => SelectionResult
-         , selection => Selection
-         }),
+    % logger:debug(
+    %     #{ a => "INTERDIGIT_TIMEOUT"
+    %      , current_content => CurrentContent
+    %      , selection_result => SelectionResult
+    %      , selection => Selection
+    %      }),
 
-    % case lists:keyfind(Selection, 2, SubCategories) of
     case SelectionResult of
         [] ->
             {next_state, invalid_selection, NewData};
@@ -1376,36 +1372,57 @@ handle_event
 
 % TODO Eval on 2 digits immediately to speed up things
 collect_digits(Digit, Data)
-    when Digit =:= "*";
-         Digit =:= "#"
+    when Digit =:= "*"
+       ; Digit =:= "#"
 ->
     collect_digits("", Data);
 
 collect_digits % {{-
   ( Digit
-  , #{ received_digits := ReceivedDigits
+  , #{ received_digits  := ReceivedDigits
+     , current_content  := CurrentContent
+     , current_children := CurrentChildren
      } = Data
   )
-when Digit =:= "1";
-     Digit =:= "2";
-     Digit =:= "3";
-     Digit =:= "4";
-     Digit =:= "5";
-     Digit =:= "6";
-     Digit =:= "7";
-     Digit =:= "8";
-     Digit =:= "9";
-     Digit =:= "0"
+when Digit =:= "1"
+   ; Digit =:= "2"
+   ; Digit =:= "3"
+   ; Digit =:= "4"
+   ; Digit =:= "5"
+   ; Digit =:= "6"
+   ; Digit =:= "7"
+   ; Digit =:= "8"
+   ; Digit =:= "9"
+   ; Digit =:= "0"
 ->
+    NewCurrentChildren =
+        case CurrentChildren =:= [] of
+            true ->
+                content:pick(children, CurrentContent);
+            false ->
+                CurrentChildren
+        end,
+
+    InterDigitTimeout =
+        case length(NewCurrentChildren) >= 10 of
+            true ->
+                2000;
+            false ->
+                0
+        end,
+
     NewData =
-        Data#{received_digits := [Digit|ReceivedDigits]},
+        Data#{ received_digits  := [Digit|ReceivedDigits]
+             , current_children := NewCurrentChildren
+             },
+
     % The notion is that the `InterDigitTimer` is restarted whenever {{-
     % a new DTMF signal arrives while we are collecting digits. According to [the `gen_statem` section in Design Principles](from https://erlang.org/doc/design_principles/statem.html#cancelling-a-time-out) (and whoever wrote it was not a fan of proper punctuation): "_When a time-out is started any running time-out of the same type; state_timeout, {timeout, Name} or timeout, is cancelled, that is, the time-out is restarted with the new time._"  The [man pages](https://erlang.org/doc/man/gen_statem.html#ghlink-type-generic_timeout) are clearer: "_Setting a [generic] timer with the same `Name` while it is running will restart it with the new time-out value. Therefore it is possible to cancel a specific time-out by setting it to infinity._"
     % }}-
     % TODO Does timer cancellation produce an event?
     InterDigitTimer =                 % Generic timeout
         { {timeout, interdigit_timer} % { {timeout, Name}
-        , ?INTERDIGIT_TIMEOUT         % , Time
+        , InterDigitTimeout           % , Time
         , eval_collected_digits       % , EventContent }
         },
 
