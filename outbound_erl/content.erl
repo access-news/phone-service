@@ -64,61 +64,28 @@ init(_Args) -> % {{-
     end,
 
     Graph = load_content_graph({from_dir, ContentRootDir}),
-    % digraph:add_vertex(Graph, history, []),
-    % Necessary because ?CONTENT_ROOT gets written to the metafile, but that tuple is going to be changed when building the graph (and reading back from the file system).
-    % ContentRoot =
-    %     lists:keyfind(0, 2, digraph:vertices(Graph)),
-    % digraph:add_edge
-    %     ( Graph
-    %     , current         % edge name
-    %     , history         % from vertex
-    %     , ContentRoot   % to
-    %     , [ContentRoot] % label, moonlighting as history stack
-    %     ),
 
     {ok, Graph}.
 % }}-
 
-%           request,      from,        state
 handle_call({pick, Direction, Vertex}, _From, Graph)
-% handle_call({Action, Direction}, _From, Graph)
   when Direction =:= parent       % \
      ; Direction =:= first        % |
      ; Direction =:= last         % |
      ; Direction =:= next         % | Vertex
      ; Direction =:= prev         % |
      ; Direction =:= content_root % |
-     % ; Direction =:= current      % /
      ; Direction =:= children     %   [ Vertex ]
 ->
     { reply
-    % , process_action(Graph, Action, Direction)
     , process_call(Graph, Vertex, Direction)
     , Graph
     };
 
-% No  error handling  if  Vertex is  not  a map;  this
-% should only be used from `ivr`, and it should use it
-% properly.
 handle_call({get_label, Vertex}, _From, Graph) when is_map(Vertex) ->
-    % NOTE  This  was  a   pretty  good  accidental  error {{-
-    % checking  code,  love  pattern  matching.  Was  only
-    % interested in Label, but  when called it manually in
-    % the ERL shell,  it blew up: simply  piped the result
-    % of   `content:root/0`  into   `content:get_label/1`,
-    % but  `content:pick/2`  always  returns  a  list.  So
-    % forgetting to ignore Vertex in the resulting 2-tuple
-    % below saved the day.  As Gorduin would say, "WooHoo"
-    % \o/ }}-
     {Vertex, Label} = digraph:vertex(Graph, Vertex),
     {reply, Label, Graph}.
 
-% handle_call(_Command, _From, Graph) ->
-%     {reply, invalid_command, Graph}.
-
-% No  error handling  if  Vertex is  not  a map;  this
-% should only be used from `ivr`, and it should use it
-% properly.
 handle_cast({add_label, Vertex, Label}, Graph) when is_map(Vertex) ->
     digraph:add_vertex(Graph, Vertex, Label),
     {noreply, Graph};
