@@ -18,6 +18,7 @@
 
    % public API
    , look_up/1
+   , reload/0
 
    % private functions
    % , load_phone_numbers/0
@@ -94,6 +95,9 @@ terminate(Reason, _PhoneNumberSet) ->
 
 look_up(PhoneNumber) ->
     gen_server:call(user_db, {look_up, PhoneNumber}).
+
+reload() ->
+    gen_server:cast(user_db, reload_db).
 
 % }}-
 %%%%%%%%%%%%%%%%%%%%%%%
