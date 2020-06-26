@@ -1,7 +1,8 @@
 -module(content).
 -behaviour(gen_server).
 
--define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").  % -define(CONTENT_ROOT, {category, 0, "Main category"}).
+-define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").
+% -define(CONTENT_ROOT, {category, 0, "Main category"}).
 
 -export(
     [ start/0
@@ -48,8 +49,8 @@ init(_Args) -> % {{-
     % 1> c("outbound_erl/content").
     % 2> content:start().
     % 3> R = content:pick(content_root, 27).
-    % 4> [C|_] = content:pick(children, R). 
-    % 5> R = content:pick(parent, C).       
+    % 4> [C|_] = content:pick(children, R).
+    % 5> R = content:pick(parent, C).
     % TODO PROD How to set up the graph? ("do not overthink" notes below) {{-
     % It `realize/0`s the dir structure at the moment if it does not exit, but in subsequent phases the graph will be based on a remote cloud storage - it is cheap to redraw the entire graph by reading local files, but that will not cut it later. The graph will need to be de-serialized and kept up to date via messages, then saved to disk on startup.
     % }}-
@@ -116,7 +117,7 @@ handle_cast(regraph, Graph) ->
 
 % Direction -> Vertex
 process_call(Graph, _Vertex, content_root) ->
-    [  Vertex 
+    [  Vertex
     || Vertex
        <- digraph:vertices(Graph)
        , maps:find(selection, Vertex) =:= {ok, 0}
@@ -342,7 +343,7 @@ add_meta_to_path(ContentType, Dir, Path) ->
                  , path => FullPath
                  , title => "" % formerly known as "anchortext"
                  % FORGET ABOUT MUTABLE STATE IN VERTEX!
-                 % , offset => -1 
+                 % , offset => -1
                  }
         end,
     {true, {Meta, FullPath}}.
@@ -540,98 +541,218 @@ get_vertex(Graph, Vertex, Direction) ->
 % The publication guide below is just a representation of future data of the yet-to-be-implemented core web service, and its data may not contain such IDs, but that could be done on this end by ordering and adding that via a script.
 
 publication_guide() -> % {{-
-    [ { {category, 0, "Main category"}
-      , [ { {category, 1, "Store sales advertising"}
-          , [ { {category, 1, "Grocery stores"}
-              , [ {publication, 1, "Safeway"}
-                , {publication, 2, "Raley's"}
-                , {publication, 3, "La Superior"}
-                , {publication, 4, "Food source"}
-                , {publication, 5, "Savemart"}
-                , {publication, 6, "Foods Co"}
-                , {publication, 7, "Trader Joe's"}
-                , {publication, 8, "Sprouts"}
-                , {publication, 9, "Lucky Supermarkets"}
+    [ { {category, "Main category"}
+      , [ { {category, "Store sales advertising"} % {{-
+          , [ { {category, "Grocery stores"}
+              , [ {publication, "Safeway"}
+                , {publication, "Raley's"}
+                , {publication, "La Superior"}
+                , {publication, "Food source"}
+                , {publication, "Savemart"}
+                , {publication, "Foods Co"}
+                , {publication, "Trader Joe's"}
+                , {publication, "Sprouts"}
+                , {publication, "Lucky Supermarkets"}
                 ]
               }
-            , { {category, 2, "Drug stores"}
-              , [ {publication, 1, "CVS"}
-                , {publication, 2, "Rite Aid"}
-                , {publication, 3, "Walgreen's"}
+            , { {category, "Drug stores"}
+              , [ {publication, "CVS"}
+                , {publication, "Rite Aid"}
+                , {publication, "Walgreen's"}
                 ]
               }
-            , { {category, 3, "Discount stores"}
-              , [ {publication, 1, "Target"}
-                , {publication, 2, "Walmart"}
-                ]
-              }
-            ]
-          }
-
-        , { {category, 2, "Sacramento newspapers and magazines"}
-          , [ { {category, 1, "Sacramento newspapers"}
-              , [ {publication, 1, "Sacramento Bee"}
-                , {publication, 2, "Sacramento News & Review"}
-                , {publication, 3, "Sacramento Press"}
-                , {publication, 4, "Sacramento Business Journal"}
-                , {publication, 5, "East Sacramento News by Valley Community Newspapers"}
-                , {publication, 6, "The Land Park News by Valley Community Newspapers"}
-                , {publication, 7, "The Pocket News by Valley Community Newspapers"}
-                ]
-              }
-            , { {category, 2, "Sacramento magazines"}
-              , [ {publication, 1, "Comstocks"}
-                , {publication, 2, "SacTown"}
-                , {publication, 3, "Sacramento Magazine"}
+            , { {category, "Discount stores"}
+              , [ {publication, "Target"}
+                , {publication, "Walmart"}
                 ]
               }
             ]
-          }
+          } % }}-
+        , { {category, "Northern California newspapers"} % {{-
+          , [ { {category, "Sacramento newspapers and magazines"}
+              , [ { {category, "Sacramento Bee sections"}
+                  , [ {publication, "Sports"}
+                    , {publication, "News"}
+                    , {publication, "Obituaries"}
+                    ]
+                  }
+                , { {category, "Sacramento newspapers"}
+                  , [ {publication, "Sacramento News & Review"}
+                    , {publication, "Sacramento Press"}
+                    , {publication, "Sacramento Business Journal"}
+                    , {publication, "Sacramento Observer"}
+                    , {publication, "Sacramento City Express"}
+                    , {publication, "East Sacramento News"}
+                    , {publication, "The Land Park News"}
+                    , {publication, "The Pocket News"}
+                    ]
+                  }
+                , { {category, "Sacramento magazines"}
+                  , [ {publication, "Comstocks"}
+                    , {publication, "SacTown"}
+                    , {publication, "Sacramento Magazine"}
+                    ]
+                  }
+                ]
+              }
 
-        , { {category, 3, "Greater Sacramento area newspapers"}
-          , [ {publication, 1, "Carmichael Times"}
-            , {publication, 2, "Arden Carmichael News"}
-            , {publication, 3, "California Kids"}
-            , {publication, 4, "Davis Enterprise"}
-            , {publication, 5, "Roseville Press Tribune"}
-            , {publication, 6, "Woodland Daily Democrat"}
-            , {publication, 7, "Carmichael Times"}
-            , {publication, 8, "Auburn Journal"}
-            , {publication, 9, "Grass Valley-Nevada City Union"}
-            , {publication, 10, "Arden Carmichael News by Valley Community Newspapers"}
-            , {publication, 11, "El Dorado County Mountain Democrat"}
-            ]
-          }
+            , { {category, "Greater Sacramento area newspapers"}
+              , [ {publication, "Carmichael Times"}
+                , {publication, "Arden Carmichael News"}
+                , {publication, "Davis Enterprise"}
+                , {publication, "Roseville Press Tribune"}
+                , {publication, "Woodland Daily Democrat"}
+                , {publication, "Elk Grove Citizen"}
+                , {publication, "Auburn Journal"}
+                , {publication, "Grass Valley-Nevada City Union"}
+                , {publication, "El Dorado County Mountain Democrat"}
+                ]
+              }
 
-        , { {category, 4, "Central California newspapers"}
-          , [ {publication, 1, "Modesto Bee"}
-            , {publication, 2, "Stockton Record"}
-            ]
-          }
+            , { {category, "San Francisco and Bay Area newspapers"}
+              , [ {publication, "Vallejo Times Herald"}
+                , {publication, "Santa Rosa Press Democrat"}
+                , {publication, "SF Gate"}
+                , {publication, "San Francisco Bay Guardian"}
+                , {publication, "East Bay Times"}
+                , {publication, "SF Weekly"}
+                , {publication, "KQED Bay Area Bites"}
+                ]
+              }
 
-        , { {category, 5, "San Francisco and Bay Area newspapers"}
-          , [ {publication, 1, "Vallejo Times Herald"}
-            , {publication, 2, "Santa Rosa Press Democrat"}
-            , {publication, 3, "SF Gate"}
-            , {publication, 4, "San Francisco Bay Guardian"}
-            , {publication, 5, "East Bay Times"}
-            , {publication, 6, "SF Weekly"}
-            , {publication, 7, "KQED Bay Area Bites"}
-            ]
-          }
+            , { {category, "Central California newspapers"}
+              , [ {publication, "Modesto Bee"}
+                , {publication, "Stockton Record"}
+                ]
+              }
 
-        , { {category, 6, "Northern California newspapers"}
-          , [ {publication, 1, "Fort Bragg Advocate News"}
-            , {publication, 2, "The Mendocino Beacon"}
-            , {publication, 3, "Humboldt Senior Resource Center's Senior News"}
-            , {publication, 4, "North Coast Journal"}
-            , {publication, 5, "Mad River Union"}
-            , {publication, 6, "Eureka Times Standard"}
-            , {publication, 7, "Ferndale Enterprise"}
+            , { {category, "Mendocino county newspapers"}
+              , [ {publication, "Fort Bragg Advocate News"}
+                , {publication, "The Mendocino Beacon"}
+                ]
+              }
+
+            , { {category, "Humboldt & Trinity county newspapers"}
+              , [ {publication, "Humboldt Senior Resource Center's Senior News"}
+                , {publication, "North Coast Journal"}
+                , {publication, "Eureka Times Standard"}
+                , {publication, "Ferndale Enterprise"}
+                , {publication, "Mad River Union"}
+                ]
+              }
             ]
-          }
+          } % }}-
+        , { {category, "Blindness resources"} % {{-
+          , [ { {category, "Newsletters"}
+              , [ {publication, "Society for the Blind"}
+                , {publication, "SFB Connection"}
+                , {publication, "The Earle Baum Center"}
+                , {publication, "Sierra Services for the Blind"}
+                , {publication, "California Council of the Blind"}
+                ]
+              }
+            , { { category, "Publications" }
+              , [ {publication, "Braille Monitor"}
+                , {publication, "Client Assistence Program"}
+                ]
+              }
+            ]
+          } % }}-
+        , { {category, "Educational materials"} % {{-
+          , [ {publication, "Society for the Blind's student handbook"}
+            , {publication, "Balance exercises"}
+            , {publication, "Achieve a healthy weight by UC Davis"}
+            ]
+          } % }}-
+        , { {category, "General information"} % {{-
+          , [ {publication, "Yuba-Sutter Meals On Wheels"}
+            ]
+          } % }}-
+        , { {category, "Popular magazines"} % {{-
+          , [ {publication, "Newsweek"}
+            , {publication, "Fortune"}
+            , {publication, "Capital Public Radio"}
+            , {publication, "Travel & Leisure"}
+            , {publication, "Entertainment Weekly"}
+            , {publication, "Mental Floss"}
+            , {publication, "Atlas Obscura"}
+            , {publication, "New Scientist"}
+            ]
+          } % }}-
+        , { {category, "Games"} % {{-
+          , [ {publication, "Crosswords"}
+            , {publication, "Trivia"}
+            ]
+          } % }}-
+        , { {category, "Community content"} % {{-
+          , [ { {category, "Podcasts"}
+              , [ {publication, "Society for the Blind"}
+                , {publication, "SFB Connection"}
+                , {publication, "The Earle Baum Center"}
+                , {publication, "Sierra Services for the Blind"}
+                , {publication, "California Council of the Blind"}
+                ]
+              }
+            , { { category, "Poetry" }
+              , [ {publication, "Brad Buchanan"}
+                , {publication, "Writer's on the air"}
+                ]
+              }
+            ]
+          } % }}-
+        , { {category, "Old Time Radio Theater"} % {{-
+          , [ { {category, "Mystery and drama"}
+              , [ {publication, "Broadway's my Beet"}
+                , {publication, "Black Stone the Magic Detective"}
+                , {publication, "Boston Blacky"}
+                , {publication, "Crime Does Not Pay"}
+                , {publication, "Drag Net"}
+                , {publication, "Gang Busters"}
+                , {publication, "Inner Sanctum"}
+                , {publication, "Mercury Radio Theater"}
+                , {publication, "Mystery Traveler"}
+                , {publication, "Richard Diamond Private Detective"}
+                , {publication, "Adventures of Sam Spaid"}
+                , {publication, "The Shadow"}
+                , {publication, "Suspense"}
+                , {publication, "The Whistler"}
+                , {publication, "Light's Out"}
+                ]
+              }
+            , { {category, "Comedy"}
+              , [ {publication, "Abbot and Costello"}
+                , {publication, "The Adventures of Ozzie and Harriet"}
+                , {publication, "The Bickerson's"}
+                , {publication, "Father Knows Best"}
+                , {publication, "Fibber McGee and Molly"}
+                , {publication, "The Fred Allen Show"}
+                , {publication, "George Burns and Gracie Allen"}
+                , {publication, "Life of Riley"}
+                , {publication, "The Red Skelton Show"}
+                ]
+              }
+            , { {category, "Westerns"}
+              , [ {publication, "The Cisco Kid"}
+                , {publication, "Gun Smoke"}
+                , {publication, "The Lone Ranger"}
+                , {publication, "Tales of the Texas Rangers"}
+                ]
+              }
+            , { {category, "Science fiction and fantasy"}
+              , [ {publication, "The Blue Beetle"}
+                , {publication, "Escape"}
+                , {publication, "The Green Hornet"}
+                , {publication, "X Minus 1"}
+                ]
+              }
+            , { {category, "Commercials"}
+              , [ {publication, "Commercials"}
+                ]
+              }
+            ]
+          } % }}-
         ]
-      }
+      } % main category
     ].
 % }}-
 
@@ -664,15 +785,15 @@ make_id() ->
 % {digraph,#Ref<0.3770885502.3804626945.151678>,
 %          #Ref<0.3770885502.3804626945.151679>,
 %          #Ref<0.3770885502.3804626945.151680>,true}
-% 202> ets:tab2list(V).                
+% 202> ets:tab2list(V).
 % []
-% 203> digraph:add_vertex(G, A, D).                                       
+% 203> digraph:add_vertex(G, A, D).
 % {#Ref<0.3770885502.3804495875.151576>,1587669065273556493}
 % 204> digraph:add_vertex(G, B, E).
 % {#Ref<0.3770885502.3804495875.151577>,1587669065273569069}
 % 205> digraph:add_vertex(G, C, F).
 % {#Ref<0.3770885502.3804495875.151578>,1587669065273579919}
-% 206> ets:tab2list(V).            
+% 206> ets:tab2list(V).
 % [{{#Ref<0.3770885502.3804495875.151577>,1587669065273569069},
 %   #{"id" => 6,"items" => [],"periodicity" => "weekly",
 %     "tags" => ["flyer","ads"],
@@ -701,10 +822,10 @@ make_id() ->
 %     "title" => "Raley's","type" => "publication"}}]
 
 % `ets:match/2` can be used to return only certain fields. For example, return all the available publications. (Adding a category vertex to as all the current ones are publications.)
-% 213> digraph:add_vertex(G, 1, #{"type" => "category", "title" => "Grocery stores"}).                                                   
-% 1                                                                                                                                      
-% 214> ets:match(V, {'_', #{ "title" => '$1'}}).                                                                                         
-% [["La Superior"],                                 
+% 213> digraph:add_vertex(G, 1, #{"type" => "category", "title" => "Grocery stores"}).
+% 1
+% 214> ets:match(V, {'_', #{ "title" => '$1'}}).
+% [["La Superior"],
 %  ["Grocery stores"],
 %  ["Food Source"],
 %  ["Raley's"]]
