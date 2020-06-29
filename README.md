@@ -1,5 +1,19 @@
 # Phone service to reach Access News content
 
+## Reminder: How to start working on this project
+
+```text
+$ shell.nix nix_shell/shell.nix
+$ ssh-agent vim -S Session.vim
+```
+
+Once in Vim, issue `:ssh-add`.
+
+(`ssh-agent`  and `ssh-add`  are  for using  `netrw`
+to  explore  remote  files   on  the  dev  and  prod
+servers without Vim always  asking for the ssh key's
+passphrase.)
+
 ## Scratch notes
 
 ```erlang

@@ -1,22 +1,26 @@
+# `shell.nix` for the phone-server project (a.k.a. TR2)
 > **Note**
 > The   main   source   of    truth   is   always   in
 > [`shell.nix`](./shell.nix), with lots  of details in
 > the comments.
 
+This project  is like a  hammer; all i needed  is to
+get a  development environment ready  fast, whenever
+starting to hack away on a project.
+
 ## 0. start
 
 ```text
 $ nix-shell
+
+# or, if `shell.nix` is in another directory
+$ nix-shell path/to/shell.nix
 ```
 
 The  resulting shell  will have  all the  Rebar3 and
 Erlang executables available.
 
 ### 0.0 words of caution
-
-this project  is like a  hammer; all i needed  is to
-get a  development environment ready  fast, whenever
-starting to hack away on a project.
 
 for  a  more  sophisticated and  granular  approach,
 please take a look at the
@@ -25,7 +29,7 @@ repo. it is also very  educational when one wants to
 learn  more  about  nix  and  how  to  organize  nix
 scripts.
 
-### 0.3 add environment variables
+## 1. Add environment variables and shell commands
 
 for example, needed google cloud storage for one project, and just added the following somewhere below `shellhook =`:
 
@@ -44,3 +48,11 @@ shellhook = ''
   # ...
   ''
 ```
+
+## 2. Dependencies
+
+Most of the dependencies listed are for the TTS shell scripts, and only the BEAM packages are need for the phone-server to run.
+
+## 3. Questions, TODOs
+
++ Look up how the `LOCALE_ARCHIVE` variable works at the end of `shell.nix`

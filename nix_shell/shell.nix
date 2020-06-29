@@ -11,11 +11,16 @@
 pkgs.mkShell {
 
   buildInputs = with pkgs; [
+    # No clue which package has this command, and not sure
+    # how  to figure  it out.  Asked it  on NixOS  IRC, no
+    # response, so TODO: figure it out.
+    # base64
     beam.packages.erlangR22.erlang
     beam.packages.erlangR22.rebar3
+    curl
     git
-    jq
     google-cloud-sdk
+    jq
   ];
 
   # Where would be the best place for this?
