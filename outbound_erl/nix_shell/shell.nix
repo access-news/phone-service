@@ -14,7 +14,14 @@ pkgs.mkShell {
     beam.packages.erlangR22.erlang
     beam.packages.erlangR22.rebar3
     git
+    jq
+    google-cloud-sdk
   ];
+
+  # Where would be the best place for this?
+  shellHook = ''
+    export ERL_AFLAGS="-kernel shell_history enabled"
+  '';
 
   ####################################################################
   # Without  this, almost  everything  fails with  locale issues  when

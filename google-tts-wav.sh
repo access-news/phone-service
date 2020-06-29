@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # DESCRIPTION
 # Generate TTS  audio from input text  ($1) with speed
@@ -9,7 +9,17 @@
 
 # Note: All links below have been saved to web.archive.org on 2020/05/23.
 
-# DEPENDENCIES: gcloud, curl, jq, base64
+# DEPENDENCIES
+#
+# + gcloud
+# + curl
+# + jq
+# + base64
+#
+# There is  a `shell.nix` in the  project, and running
+# it   with  `nix-shell   ./shell.nix`  will   install
+# everthing needed.
+
 
 # Easiest way to install them is using Nix:
 # # straightforward:
