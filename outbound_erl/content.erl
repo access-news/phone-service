@@ -2,6 +2,7 @@
 -behaviour(gen_server).
 
 -define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").
+-define(PUBLICATION_ROOT, "/home/toraritte/clones/phone-service/publications/").
 % -define(CONTENT_ROOT, {category, 0, "Main category"}).
 
 -export(
@@ -17,12 +18,12 @@
     % public API
     , pick/2
     , root/0
-    , refresh/0
+    , redraw/0
     , add_label/2
     , get_label/1
 
     % private functions
-    % , load_content_graph/1
+    % , draw_content_graph/1
     % , refresh_content_graph/1
     % TODO Make this part of the public API
     , realize/0
@@ -46,25 +47,22 @@ start() ->
     Pid.
 
 init(_Args) -> % {{-
-    % 1> c("outbound_erl/content").
-    % 2> content:start().
-    % 3> R = content:pick(content_root, 27).
-    % 4> [C|_] = content:pick(children, R).
-    % 5> R = content:pick(parent, C).
     % TODO PROD How to set up the graph? ("do not overthink" notes below) {{-
     % It `realize/0`s the dir structure at the moment if it does not exit, but in subsequent phases the graph will be based on a remote cloud storage - it is cheap to redraw the entire graph by reading local files, but that will not cut it later. The graph will need to be de-serialized and kept up to date via messages, then saved to disk on startup.
     % }}-
+
+    % Doesn't throw so if exists then things go on.
+    file:make_dir(?PUBLICATION_ROOT),
+
+    % There is no subtle diffing algorithm: when the content menu structure changes, recreate the entire directory hierarchy.
+    os:cmd("rm -r " ++ ?CONTENT_ROOT_DIR),
+    realize(?CONTENT_ROOT_DIR),
+
+
     ContentRootDir =
         filename:join(?CONTENT_ROOT_DIR, "00"),
-
-    case file:list_dir(ContentRootDir) of
-        {error, enoent} ->
-            realize();
-        {ok, _} ->
-            noop
-    end,
-
-    Graph = load_content_graph({from_dir, ContentRootDir}),
+    Graph =
+        draw_content_graph({from_dir, ContentRootDir}),
 
     {ok, Graph}.
 % }}-
@@ -91,7 +89,7 @@ handle_cast({add_label, Vertex, Label}, Graph) when is_map(Vertex) ->
     digraph:add_vertex(Graph, Vertex, Label),
     {noreply, Graph};
 
-handle_cast(regraph, Graph) ->
+handle_cast(redraw, Graph) ->
     {ok, NewGraph} = refresh_content_graph(Graph),
     {noreply, NewGraph}.
 
@@ -130,41 +128,6 @@ process_call(Graph, Vertex, children) ->
 process_call(Graph, Vertex, Direction) ->
     % TODO These are the only 2 options here, and if this does crash it means there's a logical error somewhere in this module.
     get_vertex(Graph, Vertex, Direction).
-    % case get_vertex(Graph, Vertex, Direction) of
-        % This means that the current vertex does not have that specific direction. E.g., articles won't have child, first, last edges.
-        % [] ->
-        %     nothing;
-        % [_Vertex] = Result ->
-        %     Result
-        % % [Vx] -> Vx
-    % end.
-
-% process_call(Graph, go_to, Direction)
-%   when Direction =:= children;
-%        Direction =:= invalid_action
-% ->
-%     invalid_action;
-
-% process_call(Graph, go_to, Vertex)
-%   when erlang:is_tuple(Vertex)
-% ->
-%     update_history(Graph, Vertex),
-%     Vertex;
-
-% process_call(Graph, go_to, Direction) ->
-%     % TODO
-%     % http://blog.sigfpe.com/2006/08/you-could-have-invented-monads-and.html
-%     Vertex = process_action(Graph, get, Direction),
-%     process_action(Graph, go_to, Vertex).
-
-% handle_cast(reload_db = Request, _PhoneNumberSet) ->
-%     log(debug, [reload_db, Request]),
-%     NewPhoneNumberSet = load_phone_numbers(),
-%     {noreply, NewPhoneNumberSet}.
-
-% terminate(Reason, _Graph) ->
-%     log(debug, [terminate_making_sure, Reason]),
-%     filog:remove_singleton_handler(?MODULE).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Public API                                                         %%
@@ -178,34 +141,16 @@ process_call(Graph, Vertex, Direction) ->
 % ContentType =
 %     category | publication | article
 pick(Direction, CurrentVertex) -> % List Content | []
-    % { ContentType
-    % , _Selection
-    % , #{ anchor := AnchorText }
-    % } =
-    % Result =
     gen_server:call
         ( ?MODULE
         , {pick, Direction, CurrentVertex}
         ).
-    % case Result of
-    %     [Vertex] -> Vertex; % all except `children`
-    %     [_|_] -> Result;    % `children`
-    %     [] -> none       % Vertex has no specified direction (i.e., it is the last item without a `next` edge, content root was called with parent/next/etc and so on)
-    % end.
-    % content:process_action
-      % ( get(content_graph)
-      % ( content
-      % , CurrentVertex
-      % , Direction
-      % ).
-        % call_content(get, current),
-    % Data#{ anchor := AnchorText }.
 
 root() ->
     pick(content_root, ignore).
 
-refresh() ->
-    gen_server:cast(?MODULE, regraph).
+redraw() ->
+    gen_server:cast(?MODULE, redraw).
 
 add_label(Vertex, Label) ->
     gen_server:cast
@@ -273,25 +218,60 @@ get_label(Vertex) ->
 % , [ItemA, ItemB | Rest] = Items
 % ) ->
 
+% #{selection => 0,title => "Main category",type => category}
+% #{selection => 1,title => "Store sales advertising",type => category}
+% #{selection => 1,title => "Grocery stores",type => category}
+% #{selection => 1,title => "Safeway",type => publication}
+
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
-load_content_graph({from_dir, ContentRootDir}) -> % {{-
+draw_content_graph() ->
     Graph =
         digraph:new([cyclic, protected]), % default values made explicit
-    RootMeta =
-        get_meta(ContentRootDir),
 
-    digraph:add_vertex(Graph, RootMeta),
-    % NOTE Theoretically it is not necessary because `get_vertex/2` returns [] for non-existing edges
-    % [ digraph:add_edge
-    %     ( Graph
-    %     , {Edge, RootMeta}
-    %     , RootMeta
-    %     , RootMeta
-    %     , []
-    %     )
-    % || Edge <- [parent, prev, next]
-    % ],
+    do_category
+      ( Graph
+      , 0
+      , publication_guide()
+      ).
+
+draw_content_graph
+( [ { {category, _} = ContentItem
+    , [_|_] = SubItems
+    }
+  ]
+, 0
+) ->
+    [ ContentRoot ] =
+        make_meta(ContentItem, 0),
+
+    do_category(Graph, ContentRoot, SubItems, 1)
+
+% TODO Ez az vegkirterium nem stimmel
+draw_content_graph(_Graph, _ParentVertex, [], _ItemNumber) ->
+    done;
+
+draw_content_graph([{publication, _, _} = Publication | Rest], Path) ->
+    make_dir_and_meta_file(Publication, Path),
+    realize(Rest, Path).
+
+do_category
+( Graph
+, ItemNumber
+, [ { {category, ContentTitle} = ContentItem
+    , [_|_] = SubItems
+    }
+    | Rest
+  ]
+)
+(
+) -> % {{-
+    do_subitems(Graph, ParentVertex
+    [ ItemVertex ] =
+        make_meta(ContentItem, ItemNumber),
+
+    digraph:add_vertex(Graph, ItemVertex),
+
     do_make(Graph, ContentRootDir),
     Graph.
 % }}-
@@ -355,15 +335,13 @@ do_make(Graph, Dir) ->
             done;
         {ok, List} ->
             % TODO order articles by date, newest first
+            % 7> string:lexemes(os:cmd("ls -t"), [$\n]).
             % Current workaround: add datetime to filename and sort
             % https://erlang-questions.erlang.narkive.com/j5wggu6l/external-sorting-for-large-files-in-erlang
             % NOTE rationale {{-
             % When new recordings are added to a publication, the graph is either re-created from scratch (`refresh_content_graph/2`), or new recordings are copied in the publication directory and added by hand. This is going to change fundamentally once Access News Core is up and running so too much effort is a waste of time.
             % }}-
             OrderedDirList =
-                % The issue with this is that it is ordering strings, and long dirlists will have order of ["1", "10"]. Could have done an elaborate sorting scheme, but this is temporary anyway, and it is just easier to rename one digit selection strings in the publication guide to absolute 2 digit ones.
-               % EEEE WRONG: the publication_guide has integer values, the directories (made with `realize/[0,1]`) will have to conform to the absolute values
-               % COROLLARY TODO when adding recordings to publications, make sure to name them in a way that the below function orders them the way we want it (and thus will get linked with prev/next edges properly).
                 ordsets:from_list(List),
             % If ContentType =:= publication then DirList will consist entirely of files (meta.erl + audio files)
             % {ContentType, _, _} = Meta =
@@ -377,31 +355,6 @@ do_make(Graph, Dir) ->
                 ),
             do_dirlist(Graph, Meta, [first|MetaPathTuples])
     end.
-
-% add_meta_vertices_and_edges(Graph, Vertex, Map) ->
-%     MetaMap =
-%         maps:filter
-%           ( fun(Key, _) ->
-%                 not(lists:member(Key, ["title", "id", "items"]))
-%             end
-%           , Map
-%           ),
-%     [  do_add_meta(Graph, Vertex, MapElem)
-%     || MapElem <- maps:to_list(MetaMap)
-%     ].
-
-% do_add_meta(Graph, Vertex, {_Key, _Value} = Tuple) ->
-%     do_add_meta(Graph, Vertex, [Tuple]);
-
-% do_add_meta(_Graph, _Vertex, []) ->
-%     done;
-
-% do_add_meta(Graph, Vertex, [{Key, Value}|Rest]) ->
-%     Meta = #{ Key => Value },
-%     digraph:add_vertex(Graph, Meta),
-%     add_edge(Graph, meta, Meta, Vertex),
-%     do_add_meta(Graph, Vertex, Rest).
-
 
 
 do_dirlist(_Graph, _ParentMeta, []) ->
@@ -570,14 +523,14 @@ publication_guide() -> % {{-
           } % }}-
         , { {category, "Northern California newspapers"} % {{-
           , [ { {category, "Sacramento newspapers and magazines"}
-              , [ { {category, "Sacramento Bee sections"}
-                  , [ {publication, "Sports"}
-                    , {publication, "News"}
-                    , {publication, "Obituaries"}
-                    ]
-                  }
-                , { {category, "Sacramento newspapers"}
-                  , [ {publication, "Sacramento News & Review"}
+              , [ { {category, "Sacramento newspapers"} % {{-
+                  , [ { {category, "Sacramento Bee sections"} % {{-
+                      , [ {publication, "Sports"}
+                        , {publication, "News"}
+                        , {publication, "Obituaries"}
+                        ]
+                      } % }}-
+                    , {publication, "Sacramento News & Review"}
                     , {publication, "Sacramento Press"}
                     , {publication, "Sacramento Business Journal"}
                     , {publication, "Sacramento Observer"}
@@ -586,13 +539,13 @@ publication_guide() -> % {{-
                     , {publication, "The Land Park News"}
                     , {publication, "The Pocket News"}
                     ]
-                  }
-                , { {category, "Sacramento magazines"}
+                  } % }}-
+                , { {category, "Sacramento magazines"} % {{-
                   , [ {publication, "Comstocks"}
                     , {publication, "SacTown"}
                     , {publication, "Sacramento Magazine"}
                     ]
-                  }
+                  } % }}-
                 ]
               }
 
@@ -643,9 +596,20 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { {category, "Blindness resources"} % {{-
-          , [ { {category, "Newsletters"}
-              , [ {publication, "Society for the Blind"}
-                , {publication, "SFB Connection"}
+          % , [ { {category, "Newsletters"}
+          %     , [ {publication, "Society for the Blind"}
+          %       , {publication, "SFB Connection"}
+          %       , {publication, "The Earle Baum Center"}
+          %       , {publication, "Sierra Services for the Blind"}
+          %       , {publication, "California Council of the Blind"}
+          %       ]
+          %     }
+          , [ { {category, "Blindness organizations"}
+              , [ { {category, "Society for the Blind"}
+                  , [ {publication, "SFB Connection"}
+                    , {publication, "Monthly newsletter"}
+                    ]
+                  }
                 , {publication, "The Earle Baum Center"}
                 , {publication, "Sierra Services for the Blind"}
                 , {publication, "California Council of the Blind"}
@@ -763,21 +727,21 @@ publication_guide() -> % {{-
 % Yes, this could have been just the one string below, but it is not.
 % string:join([ erlang:integer_to_list(erlang:system_time()) | tl(string:lexemes(erlang:ref_to_list(erlang:make_ref()), ".>"))], "-")
 % TODO So what was the point of this? {{-
-make_id() ->
-    NowString =
-        f:pipe(
-          [ erlang:system_time()
-          , fun erlang:integer_to_list/1
-          ]
-        ),
-    RefNumbers =
-        f:pipe(
-          [ erlang:make_ref()
-          , fun erlang:ref_to_list/1
-          , (f:cflip(fun string:lexemes/2))(".>")
-          ]
-        ),
-    string:join([NowString|tl(RefNumbers)], "-").
+% make_id() ->
+%     NowString =
+%         f:pipe(
+%           [ erlang:system_time()
+%           , fun erlang:integer_to_list/1
+%           ]
+%         ),
+%     RefNumbers =
+%         f:pipe(
+%           [ erlang:make_ref()
+%           , fun erlang:ref_to_list/1
+%           , (f:cflip(fun string:lexemes/2))(".>")
+%           ]
+%         ),
+%     string:join([NowString|tl(RefNumbers)], "-").
 % }}-
 
 % digraph ets query notes {{-
@@ -1158,7 +1122,7 @@ make_id() ->
 % % }}-
 
 write_meta_file
-  ( {ContentType, Selection, Title} = _Category
+  ( {ContentType, Selection, Title} = _ContentItem
   , Dir
   )
 -> % {{-
@@ -1181,10 +1145,10 @@ write_meta_file
 metafile_name() ->
     "meta.erl".
 
-get_meta(CategoryDir) -> % {{-
+get_meta(ContentItemDir) -> % {{-
     MetaPath =
         filename:join(
-          CategoryDir,
+          ContentItemDir,
           metafile_name()
         ),
     {ok, Meta} =
@@ -1217,25 +1181,47 @@ get_meta(CategoryDir) -> % {{-
 %     ordsets:from_list(MetaList).
 % % }}-
 
-make_dir_and_meta_file({_, N, _} = Category, Path) -> % {{-
-    SubDir =
-        case integer_to_list(N) of
-            S when length(S) =:= 1 ->
-                "0" ++ S;
-            S ->
-                S
-        end,
-    Dir =
-        filename:join(
-          Path,
-          SubDir
-        ),
-    file:make_dir(Dir),
-    write_meta_file(Category, Dir).
-% }}-
+% make_dir_and_meta_file
+make_meta
+( { publication, ContentTitle } = ContentItem
+, ItemNumber
+) -> % {{-
+    publicationDir =
+        filename:join(?PUBLICATION_ROOT, ContentTitle),
 
-realize() ->
-    realize(?CONTENT_ROOT_DIR).
+    % no fuss if exists, won't throw
+    file:make_dir(publicationDir),
+
+    % TODO read articles (ls -t)
+
+
+make_meta
+( { category, ContentTitle } = ContentItem
+% , Path
+, ItemNumber
+) -> % {{-
+    Meta =
+        #{ type      => ContentType
+         , selection => ItemNumber
+         , title     => ContentTitle
+         },
+    [ Meta ].
+    % case ContentType of
+
+    %     category ->
+    %         SubDir =
+    %             integer_to_list(ItemNumber),
+    %         Dir =
+    %             filename:join(Path, SubDir),
+
+    %         file:make_dir(Dir);
+
+    %     publication ->
+    %         file:make_dir(
+
+    % end,
+    % write_meta_file(ContentItem, Dir).
+% }}-
 
 realize(ContentRoot) -> % {{-
     case file:make_dir(ContentRoot) of
@@ -1244,25 +1230,26 @@ realize(ContentRoot) -> % {{-
             %   ?CONTENT_ROOT,
             %   ContentRoot
             % ),
-            realize(publication_guide(), ContentRoot);
+            realize(publication_guide(), ContentRoot, 0);
         {error, _} = Error ->
             Error
     end.
 % }}-
 
-realize( % {{-
-  [ { {category, _, _} = Category
-    , [_|_] = SubCategories
+realize % {{-
+( [ { {category, _, _} = ContentItem
+    , [_|_] = SubItems
     }
     | Rest
-  ],
-  Path
+  ]
+, Path
+, ItemNumber
 )
 ->
     NewPath =
-        make_dir_and_meta_file(Category, Path),
+        make_dir_and_meta_file(ContentItem, Path, ItemNumber),
 
-    realize(SubCategories, NewPath),
+    realize(SubItems, NewPath),
     realize(Rest, Path);
 % }}-
 
