@@ -57,7 +57,7 @@
 #            requires editing  whenever the service  account JSON
 #            file is replaced.
 # }}-
-export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/your-service-account.json"
+export GOOGLE_APPLICATION_CREDENTIALS="./IDEAlists-abf8168ce4cc.json"
 
 # For the available REST request options, see
 # https://cloud.google.com/text-to-speech/docs/reference/rest/v1beta1/text/synthesize
