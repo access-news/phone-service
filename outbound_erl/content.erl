@@ -266,7 +266,7 @@ do_category
 )
 (
 ) -> % {{-
-    do_subitems(Graph, ParentVertex
+    do_subitems(Graph, ParentVertex, [first|SubItems])
     [ ItemVertex ] =
         make_meta(ContentItem, ItemNumber),
 
