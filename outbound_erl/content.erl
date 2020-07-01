@@ -191,7 +191,7 @@ get_label(Vertex) ->
 % ->
 %     Vertex   = #{ "title" => Title, "id" => ID }
 % ,   digraph:add_vertex(Graph, Vertex)
-% ,   add_hierarcy_edges(Graph, ParentVertex, Vertex)
+% ,   add_hierarchy_edges(Graph, ParentVertex, Vertex)
 
 % ,   add_meta_vertices_and_edges(Graph, Vertex, Map)
 % ,   do_items(Graph, Vertex, [first|ItemList])
@@ -226,26 +226,39 @@ get_label(Vertex) ->
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
 draw_content_graph() ->
-    Graph =
-        digraph:new([cyclic, protected]), % default values made explicit
+    [ { {category, _} = ContentItem
+      , [_|_] = SubItems
+      }
+    ] =
+        publication_guide(),
 
-    do_category
-      ( Graph
-      , 0
-      , publication_guide()
-      ).
-
-draw_content_graph
-( [ { {category, _} = ContentItem
-    , [_|_] = SubItems
-    }
-  ]
-, 0
-) ->
     [ ContentRoot ] =
         make_meta(ContentItem, 0),
 
-    do_category(Graph, ContentRoot, SubItems, 1)
+    Graph =
+        digraph:new([cyclic, protected]), % default values made explicit
+
+    digraph:add_vertex(Graph, ContentRoot),
+
+    do_draw
+      ( [first|SubItems]
+      , Graph
+      , ContentRoot
+      ),
+
+    Graph.
+
+do_draw
+( [ { {category, ContentTitle} = ContentItem
+    , [_|_] = SubItems
+    }
+  | Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    SubVertices =
 
 % TODO Ez az vegkirterium nem stimmel
 draw_content_graph(_Graph, _ParentVertex, [], _ItemNumber) ->
@@ -255,26 +268,169 @@ draw_content_graph([{publication, _, _} = Publication | Rest], Path) ->
     make_dir_and_meta_file(Publication, Path),
     realize(Rest, Path).
 
-do_category
-( Graph
-, ItemNumber
-, [ { {category, ContentTitle} = ContentItem
-    , [_|_] = SubItems
+do_draw([], _Graph, _ParentVertex) ->
+    % TODO add `last` edge!
+    done;
+
+% TODO handle empty category? i.e., [first]
+
+do_draw
+( [], _Graph, _ParentVertex) ->
+    done;
+
+do_draw
+( [ first
+  , { {category, ContentTitle} = ContentItem
+    , [_|_] = SubItems % Explicitly disallow empty categories
     }
-    | Rest
+  | Rest
   ]
+, Graph
+, ParentVertex
 )
-(
-) -> % {{-
-    do_subitems(Graph, ParentVertex, [first|SubItems])
-    [ ItemVertex ] =
-        make_meta(ContentItem, ItemNumber),
-
-    digraph:add_vertex(Graph, ItemVertex),
-
-    do_make(Graph, ContentRootDir),
-    Graph.
+-> % {{-
+    draw_item
+      ( first
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , 1
+      , SubItems
+      );
 % }}-
+
+do_draw
+( [ first
+  , { {category, ContentTitle} = ContentItem
+    , [_|_] = SubItems % Explicitly disallow empty categories
+    }
+  | []
+  ]
+, Graph
+, ParentVertex
+)
+-> % {{-
+    draw_item
+      ( first_and_last
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , 1
+      , SubItems
+      );
+% }}-
+
+do_draw
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , { {category, ContentTitle} = ContentItem
+    , [_|_] = SubItems % Explicitly disallow empty categories
+    }
+  | [_|_] = Rest
+  ]
+, Graph
+, ParentVertex
+)
+-> % {{-
+    draw_item
+      ( PrevItemVertex
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , ItemNumber + 1
+      , SubItems
+      );
+% }}-
+
+do_draw
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , { {category, ContentTitle} = ContentItem
+    , [_|_] = SubItems % Explicitly disallow empty categories
+    }
+  | [] = Rest
+  ]
+, Graph
+, ParentVertex
+)
+-> % {{-
+    draw_item
+      ( {PrevItemVertex, last}
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , ItemNumber + 1
+      , SubItems
+      );
+% }}-
+
+do_draw
+( [ first
+  , {publication, ContentTitle} = ContentItem
+  | Rest
+  ]
+, Graph
+, ParentVertex
+)
+-> % {{-
+    draw_publication
+      ( first
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , 1
+      );
+    % PublicationVertex =
+    %     make_meta(ContentItem, 1),
+
+    % RecordingVertices =
+    %     futil:pipe
+    %       ([ ContentItem
+    %        , fun make_publication_dir/1
+    %        , fun list_recording_vertices/1
+    %        ]),
+
+    % digraph:add_vertex(Graph, PublicationVertex),
+    % add_hierarchy_edges(Graph, ParentVertex, PublicationVertex),
+
+    % add_edge(Graph, first, ParentVertex, PublicationVertex),
+
+    % do_draw([first|RecordingVertices], Graph, PublicationVertex),
+    % do_draw([PublicationVertex|Rest], Graph, ParentVertex);
+% }}-
+
+do_draw
+( [ #{ selection := ItemNumber } = ContentVertexPrev
+  , {publication, ContentTitle} = ContentItem
+  | Rest
+  ]
+, Graph
+, ParentVertex
+)
+-> % {{-
+    draw_publication
+      ( not_first
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , ItemNumber + 1
+      );
+    % PublicationVertex =
+    %     make_meta(ContentItem, ItemNumber + 1),
+
+    % RecordingVertices =
+    %     futil:pipe
+    %       ([ ContentItem
+    %        , fun make_publication_dir/1
+    %        , fun list_recording_vertices/1
+    %        ]),
+
+    % digraph:add_vertex(Graph, PublicationVertex),
+    % add_hierarchy_edges(Graph, ParentVertex, PublicationVertex),
+
+    % add_edge(Graph, prev, PublicationVertex, ContentVertexPrev),
+    % add_edge(Graph, next, ContentVertexPrev, PublicationVertex),
+
+    % do_draw([first|RecordingVertices], Graph, PublicationVertex),
+    % do_draw([PublicationVertex|Rest], Graph, ParentVertex);
 
 refresh_content_graph(Graph) ->
     digraph:delete(Graph),
@@ -295,7 +451,7 @@ add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
       []                     % label
     ).
 
-add_hierarcy_edges(Graph, ParentVertex, ChildVertex) -> % {{-
+add_hierarchy_edges(Graph, ParentVertex, ChildVertex) -> % {{-
     add_edge(Graph, child,  ParentVertex, ChildVertex),
     add_edge(Graph, parent, ChildVertex, ParentVertex).
 % }}-
@@ -380,7 +536,7 @@ do_dirlist( % {{-
     digraph:add_vertex(Graph, Meta),
     % digraph:add_edge(Graph, {first, Meta}, ParentMeta, Meta, []),
     add_edge(Graph, first, ParentMeta, Meta),
-    add_hierarcy_edges(Graph, ParentMeta, Meta),
+    add_hierarchy_edges(Graph, ParentMeta, Meta),
     % add_vertex_and_parent_edge(Graph, ParentMeta, Meta),
     case Rest of
         [] ->
@@ -407,7 +563,7 @@ do_dirlist( % {{-
     % add_vertex_and_parent_edge(Graph, ParentMeta, MetaB),
     % digraph:add_vertex(Graph, MetaB, VertexBLabel),
     digraph:add_vertex(Graph, MetaB),
-    add_hierarcy_edges(Graph, ParentMeta, MetaB),
+    add_hierarchy_edges(Graph, ParentMeta, MetaB),
     % add_prev_edge(Graph, MetaB, MetaA),
     % add_next_edge(Graph, MetaA, MetaB),
     add_edge(Graph, prev, MetaB, MetaA),
@@ -1181,18 +1337,115 @@ get_meta(ContentItemDir) -> % {{-
 %     ordsets:from_list(MetaList).
 % % }}-
 
-% make_dir_and_meta_file
-make_meta
+make_publication_dir
 ( { publication, ContentTitle } = ContentItem
-, ItemNumber
-) -> % {{-
-    publicationDir =
+)
+-> % {{-
+    PublicationDir =
         filename:join(?PUBLICATION_ROOT, ContentTitle),
 
     % no fuss if exists, won't throw
-    file:make_dir(publicationDir),
+    file:make_dir(PublicationDir),
+    PublicationDir.
 
-    % TODO read articles (ls -t)
+list_recording_vertices(PublicationDir) ->
+    % Only  MP3s  and  WAVs are  supported  by  FreeSWITCH
+    % out-of-the-box. Also, could've  just simply `ls` the
+    % publication folder, and crash on unsupported formats
+    % but  I'm an  idiot,  and this  is  may help  prevent
+    % disasters. (Or cause some more.)
+    Filter =
+        fun (Filename) ->
+            case filename:extension(Filename) of
+                ".wav" -> true;
+                ".mp3" -> true;
+                _ -> false
+            end
+        end,
+
+    Map =
+        fun (Filename) ->
+            futil:pipe
+              ([ Filename
+               , (futil:cflip(fun filename:absname/2))(PublicationDir)
+               , fun make_recording_meta/1
+               ])
+        end,
+
+    futil:pipe
+      ([ os:cmd("ls -t " ++ PublicationDir)
+       , (futil:cflip(fun string:lexemes/2))([$\n])
+       , (futil:curry(fun lists:filter/2))(Filter)
+       , (futil:curry(fun lists:map/2))(Map)
+       ]).
+
+draw_publication
+( Where
+, Graph
+, ParentVertex
+, ContentItem
+, ItemNumber
+)
+->
+    RecordingVertices =
+        futil:pipe
+          ([ ContentItem
+           , fun make_publication_dir/1
+           , fun list_recording_vertices/1
+           ]),
+
+    draw_item
+      ( Where
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , ItemNumber
+      , RecordingVertices
+      ).
+
+% was lazy to create a `draw_category/6` for this
+% because that's what it does
+draw_item
+( Where
+, Graph
+, ParentVertex
+, ContentItem
+, ItemNumber
+, SubItems
+)
+->
+    ItemVertex =
+        make_meta(ContentItem, ItemNumber),
+
+    digraph:add_vertex(Graph, ItemVertex),
+    add_hierarchy_edges(Graph, ParentVertex, ItemVertex),
+
+    case Direction of
+        first -> 
+            add_edge(Graph, first, ParentVertex, ItemVertex);
+        last ->
+            add_edge(Graph, last, ParentMeta, MetaB);
+        first_and_last ->
+            add_edge(Graph, first, ParentVertex, ItemVertex);
+            add_edge(Graph, last, ParentMeta, MetaB)
+        PrevItemVertex when is_map(PrevItemVertex) ->
+            add_edge(Graph, prev, ItemVertex, ContentVertexPrev),
+            add_edge(Graph, next, ContentVertexPrev, ItemVertex);
+        {PrevItemVertex, last} ->
+            add_edge(Graph, prev, ItemVertex, ContentVertexPrev),
+            add_edge(Graph, next, ContentVertexPrev, ItemVertex);
+            add_edge(Graph, last, ParentMeta, MetaB);
+
+    end,
+
+    do_draw([first|SubItems], Graph, ItemVertex),
+    do_draw([ItemVertex|Rest], Graph, ParentVertex).
+
+make_recording_meta(AbsFilename) ->
+    #{ type  => article
+     , path  => AbsFilename
+     , title => ""
+     }.
 
 
 make_meta
@@ -1200,12 +1453,10 @@ make_meta
 % , Path
 , ItemNumber
 ) -> % {{-
-    Meta =
-        #{ type      => ContentType
-         , selection => ItemNumber
-         , title     => ContentTitle
-         },
-    [ Meta ].
+    #{ type      => ContentType
+     , selection => ItemNumber
+     , title     => ContentTitle
+     }.
     % case ContentType of
 
     %     category ->
@@ -1222,6 +1473,8 @@ make_meta
     % end,
     % write_meta_file(ContentItem, Dir).
 % }}-
+
+% convert_items(ContentItems, ItemNumber) ->
 
 realize(ContentRoot) -> % {{-
     case file:make_dir(ContentRoot) of
