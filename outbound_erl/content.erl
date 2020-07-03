@@ -1,7 +1,5 @@
--module(content).
--behaviour(gen_server).
-
--define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").
+-module(content).  -behaviour(gen_server).
+% -define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").
 -define(PUBLICATION_ROOT, "/home/toraritte/clones/phone-service/publications/").
 % -define(CONTENT_ROOT, {category, 0, "Main category"}).
 
@@ -21,15 +19,16 @@
     , redraw/0
     , add_label/2
     , get_label/1
+    , publication_guide/0
 
     % private functions
-    % , draw_content_graph/1
+    % , draw_content_graph/0
     % , refresh_content_graph/1
     % TODO Make this part of the public API
-    , realize/0
+    % , realize/0
     , get_vertex/3
     , process_call/3
-    , get_meta/1
+    % , get_meta/1
     % , current/1
     % , update_history/2
     ]).
@@ -51,18 +50,16 @@ init(_Args) -> % {{-
     % It `realize/0`s the dir structure at the moment if it does not exit, but in subsequent phases the graph will be based on a remote cloud storage - it is cheap to redraw the entire graph by reading local files, but that will not cut it later. The graph will need to be de-serialized and kept up to date via messages, then saved to disk on startup.
     % }}-
 
-    % Doesn't throw so if exists then things go on.
-    file:make_dir(?PUBLICATION_ROOT),
-
     % There is no subtle diffing algorithm: when the content menu structure changes, recreate the entire directory hierarchy.
-    os:cmd("rm -r " ++ ?CONTENT_ROOT_DIR),
-    realize(?CONTENT_ROOT_DIR),
+    % os:cmd("rm -r " ++ ?CONTENT_ROOT_DIR),
+    % realize(?CONTENT_ROOT_DIR),
 
 
-    ContentRootDir =
-        filename:join(?CONTENT_ROOT_DIR, "00"),
+    % ContentRootDir =
+    %     filename:join(?CONTENT_ROOT_DIR, "00"),
     Graph =
-        draw_content_graph({from_dir, ContentRootDir}),
+        draw_content_graph(),
+        % draw_content_graph({from_dir, ContentRootDir}),
 
     {ok, Graph}.
 % }}-
@@ -168,71 +165,20 @@ get_label(Vertex) ->
 %% Private functions                                                  %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% CONTENT GRAPH {{-
-% import(PublicationGuide) ->
-%     Graph =
-%         digraph:new([cyclic, protected]), % default values made explicit
-%     % "no_parent" means that when adding edges (child, parent, etc) will fail with an `error` tuple, but it will not crash
-%     add_content_vertex(Graph, "no_parent", PublicationGuide),
-
-%     % do_items(Graph, ItemList),
-%     Graph.
-
-% add_content_vertex
-% ( Graph
-% , ParentVertex
-% , #{  "type" := Type
-%    , "title" := Title
-%    , "id"    := ID
-%    % This presumes that the canonical form of each content map has an `"items"` key (with empty list if no children)
-%    , "items" := ItemList
-%    } = Map
-% )
-% ->
-%     Vertex   = #{ "title" => Title, "id" => ID }
-% ,   digraph:add_vertex(Graph, Vertex)
-% ,   add_hierarchy_edges(Graph, ParentVertex, Vertex)
-
-% ,   add_meta_vertices_and_edges(Graph, Vertex, Map)
-% ,   do_items(Graph, Vertex, [first|ItemList])
-% ,   Vertex
-% .
-
-% do_items(Graph, ParentVertex, [LastItem]) ->
-
-% do_items(_Graph, _ParentVertex, [first]) ->
-%     done;
-
-% do_items
-% ( Graph
-% , ParentVertex
-% , [ first | [FirstItem|_] = Itemlist]
-% )
-% ->
-%     add_content_vertex(Graph, ParentVertex, FirstItem),
-%     do_add_meta(Graph, First
-
-% do_items
-% ( Graph
-% , ParentVertex
-% , [ItemA, ItemB | Rest] = Items
-% ) ->
-
-% #{selection => 0,title => "Main category",type => category}
-% #{selection => 1,title => "Store sales advertising",type => category}
-% #{selection => 1,title => "Grocery stores",type => category}
-% #{selection => 1,title => "Safeway",type => publication}
-
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
 draw_content_graph() ->
+
+    % Doesn't throw so if exists then things go on.
+    file:make_dir(?PUBLICATION_ROOT),
+
     [ { {category, _} = ContentItem
       , [_|_] = SubItems
       }
     ] =
         publication_guide(),
 
-    [ ContentRoot ] =
+    ContentRoot =
         make_meta(ContentItem, 0),
 
     Graph =
@@ -248,81 +194,52 @@ draw_content_graph() ->
 
     Graph.
 
-do_draw
-( [ { {category, ContentTitle} = ContentItem
-    , [_|_] = SubItems
+% TODO Don't think this is possible
+do_draw([], _Graph, _ParentVertex) ->
+    done;
+
+% Empty publications end condition
+do_draw([first], _Graph, ParentVertex) ->
+%     erlang:display([done, [first], ParentVertex]),
+    done;
+
+% End condition for all other loops
+do_draw  % ContentType, [ PrevItemVertex ] {{-
+( [ #{} = _PrevItemVertex
+  | [] = _Rest
+  ]
+, _Graph
+, _ParentVertex
+)
+->
+    done;
+% }}-
+
+do_draw  % category, [          first, ContentItem | []    = Rest ] {{-
+( [ first
+  , { {category, _ContentTitle} = ContentItem
+    , [_|_] = SubItems % Explicitly disallow empty categories
     }
-  | Rest
+  | [] = _Rest
   ]
 , Graph
 , ParentVertex
 )
 ->
-    SubVertices =
-
-% TODO Ez az vegkirterium nem stimmel
-draw_content_graph(_Graph, _ParentVertex, [], _ItemNumber) ->
-    done;
-
-draw_content_graph([{publication, _, _} = Publication | Rest], Path) ->
-    make_dir_and_meta_file(Publication, Path),
-    realize(Rest, Path).
-
-do_draw([], _Graph, _ParentVertex) ->
-    % TODO add `last` edge!
-    done;
-
-% TODO handle empty category? i.e., [first]
-
-do_draw
-( [], _Graph, _ParentVertex) ->
-    done;
-
-do_draw
-( [ first
-  , { {category, ContentTitle} = ContentItem
-    , [_|_] = SubItems % Explicitly disallow empty categories
-    }
-  | Rest
-  ]
-, Graph
-, ParentVertex
-)
--> % {{-
-    draw_item
-      ( first
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , 1
-      , SubItems
-      );
-% }}-
-
-do_draw
-( [ first
-  , { {category, ContentTitle} = ContentItem
-    , [_|_] = SubItems % Explicitly disallow empty categories
-    }
-  | []
-  ]
-, Graph
-, ParentVertex
-)
--> % {{-
-    draw_item
+    draw_category
       ( first_and_last
       , Graph
       , ParentVertex
       , ContentItem
       , 1
       , SubItems
+      , []
       );
-% }}-
 
-do_draw
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  , { {category, ContentTitle} = ContentItem
+% }}-
+do_draw  % category, [          first, ContentItem | [_|_] = Rest ] {{-
+( [ first
+  , { {category, _ContentTitle} = ContentItem
     , [_|_] = SubItems % Explicitly disallow empty categories
     }
   | [_|_] = Rest
@@ -330,107 +247,209 @@ do_draw
 , Graph
 , ParentVertex
 )
--> % {{-
-    draw_item
-      ( PrevItemVertex
+->
+    draw_category
+      ( first
       , Graph
       , ParentVertex
       , ContentItem
-      , ItemNumber + 1
+      , 1
       , SubItems
+      , Rest
       );
-% }}-
 
-do_draw
+% }}-
+do_draw  % category, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
 ( [ #{ selection := ItemNumber } = PrevItemVertex
-  , { {category, ContentTitle} = ContentItem
+  , { {category, _ContentTitle} = ContentItem
     , [_|_] = SubItems % Explicitly disallow empty categories
     }
-  | [] = Rest
+  | [] = _Rest
   ]
 , Graph
 , ParentVertex
 )
--> % {{-
-    draw_item
+->
+    draw_category
       ( {PrevItemVertex, last}
       , Graph
       , ParentVertex
       , ContentItem
       , ItemNumber + 1
       , SubItems
+      , []
       );
-% }}-
 
-do_draw
-( [ first
-  , {publication, ContentTitle} = ContentItem
-  | Rest
+% }}-
+do_draw  % category, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , { {category, _ContentTitle} = ContentItem
+    , [_|_] = SubItems % Explicitly disallow empty categories
+    }
+  | [_|_] = Rest
   ]
 , Graph
 , ParentVertex
 )
--> % {{-
+->
+    draw_category
+      ( PrevItemVertex
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , ItemNumber + 1
+      , SubItems
+      , Rest
+      );
+% }}-
+
+do_draw  % publication, [          first, ContentItem | []    = Rest ] {{-
+( [ first
+  , {publication, _ContentTitle} = ContentItem
+  | [] = _Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_publication
+      ( first_and_last
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , 1
+      , []
+      );
+
+% }}-
+do_draw  % publication, [          first, ContentItem | [_|_] = Rest ] {{-
+( [ first
+  , {publication, _ContentTitle} = ContentItem
+  | [_|_] = Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
     draw_publication
       ( first
       , Graph
       , ParentVertex
       , ContentItem
       , 1
+      , Rest
       );
-    % PublicationVertex =
-    %     make_meta(ContentItem, 1),
 
-    % RecordingVertices =
-    %     futil:pipe
-    %       ([ ContentItem
-    %        , fun make_publication_dir/1
-    %        , fun list_recording_vertices/1
-    %        ]),
-
-    % digraph:add_vertex(Graph, PublicationVertex),
-    % add_hierarchy_edges(Graph, ParentVertex, PublicationVertex),
-
-    % add_edge(Graph, first, ParentVertex, PublicationVertex),
-
-    % do_draw([first|RecordingVertices], Graph, PublicationVertex),
-    % do_draw([PublicationVertex|Rest], Graph, ParentVertex);
 % }}-
-
-do_draw
-( [ #{ selection := ItemNumber } = ContentVertexPrev
-  , {publication, ContentTitle} = ContentItem
-  | Rest
+do_draw  % publication, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , {publication, _ContentTitle} = ContentItem
+  | [] = _Rest
   ]
 , Graph
 , ParentVertex
 )
--> % {{-
+->
     draw_publication
-      ( not_first
+      ( {PrevItemVertex, last}
       , Graph
       , ParentVertex
       , ContentItem
       , ItemNumber + 1
+      , []
       );
-    % PublicationVertex =
-    %     make_meta(ContentItem, ItemNumber + 1),
 
-    % RecordingVertices =
-    %     futil:pipe
-    %       ([ ContentItem
-    %        , fun make_publication_dir/1
-    %        , fun list_recording_vertices/1
-    %        ]),
+% }}-
+do_draw  % publication, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , {publication, _ContentTitle} = ContentItem
+  | [_|_] = Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_publication
+      ( PrevItemVertex
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , ItemNumber + 1
+      , Rest
+      );
+% }}-
 
-    % digraph:add_vertex(Graph, PublicationVertex),
-    % add_hierarchy_edges(Graph, ParentVertex, PublicationVertex),
+do_draw  % article, [          first, ItemVertex | []    = Rest ]      {{-
+( [ first
+  , #{ type := article} = ItemVertex
+  | [] = _Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_article
+      ( first_and_last
+      , Graph
+      , ParentVertex
+      , ItemVertex
+      , [] % Rest
+      );
 
-    % add_edge(Graph, prev, PublicationVertex, ContentVertexPrev),
-    % add_edge(Graph, next, ContentVertexPrev, PublicationVertex),
+% }}-
+do_draw  % article, [          first, ItemVertex | [_|_] = Rest ]      {{-
+( [ first
+  , #{ type := article} = ItemVertex
+  | [_|_] = Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_article
+      ( first_and_last
+      , Graph
+      , ParentVertex
+      , ItemVertex
+      , Rest
+      );
 
-    % do_draw([first|RecordingVertices], Graph, PublicationVertex),
-    % do_draw([PublicationVertex|Rest], Graph, ParentVertex);
+% }}-
+do_draw  % article, [ PrevItemVertex, ItemVertex | []    = Rest ]      {{-
+( [ #{ type := article} = PrevItemVertex
+  , #{ type := article} = ItemVertex
+  | [] = _Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_article
+      ( {PrevItemVertex, last}
+      , Graph
+      , ParentVertex
+      , ItemVertex
+      , [] % Rest
+      );
+
+% }}-
+do_draw  % article, [ PrevItemVertex, ItemVertex | [_|_] = Rest ]      {{-
+( [ #{ type := article} = PrevItemVertex
+  , #{ type := article} = ItemVertex
+  | [_|_] = Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_article
+      ( PrevItemVertex
+      , Graph
+      , ParentVertex
+      , ItemVertex
+      , Rest
+      ).
+% }}-
 
 refresh_content_graph(Graph) ->
     digraph:delete(Graph),
@@ -455,139 +474,6 @@ add_hierarchy_edges(Graph, ParentVertex, ChildVertex) -> % {{-
     add_edge(Graph, child,  ParentVertex, ChildVertex),
     add_edge(Graph, parent, ChildVertex, ParentVertex).
 % }}-
-
-% add_next_edge(Graph, From, To) ->
-%     digraph:add_edge(Graph, {next, To}, From, To, []).
-
-% add_prev_edge(Graph, From, To) ->
-%     digraph:add_edge(Graph, {prev, To}, From, To, []).
-
-add_meta_to_path(_ContentType, _Dir, "meta.erl") -> % {{-
-    % logger:notice("meta"),
-    false;
-
-add_meta_to_path(ContentType, Dir, Path) ->
-    % logger:notice(#{path => Path, ct => ContentType}),
-    FullPath = filename:join(Dir, Path),
-    Meta =
-        case ContentType of
-               category -> get_meta(FullPath);
-            % TODO the anchor text should hold the name of the article's title
-            % TODO previous todo also implies that each article should alsw have a metafile, requiring extensive rewrite
-            publication ->
-                #{ type => article
-                 , path => FullPath
-                 , title => "" % formerly known as "anchortext"
-                 % FORGET ABOUT MUTABLE STATE IN VERTEX!
-                 % , offset => -1
-                 }
-        end,
-    {true, {Meta, FullPath}}.
-% }}-
-
-do_make(Graph, Dir) ->
-    case file:list_dir(Dir) of
-        {error, _} ->
-            done;
-        {ok, List} ->
-            % TODO order articles by date, newest first
-            % 7> string:lexemes(os:cmd("ls -t"), [$\n]).
-            % Current workaround: add datetime to filename and sort
-            % https://erlang-questions.erlang.narkive.com/j5wggu6l/external-sorting-for-large-files-in-erlang
-            % NOTE rationale {{-
-            % When new recordings are added to a publication, the graph is either re-created from scratch (`refresh_content_graph/2`), or new recordings are copied in the publication directory and added by hand. This is going to change fundamentally once Access News Core is up and running so too much effort is a waste of time.
-            % }}-
-            OrderedDirList =
-                ordsets:from_list(List),
-            % If ContentType =:= publication then DirList will consist entirely of files (meta.erl + audio files)
-            % {ContentType, _, _} = Meta =
-            #{ type := ContentType } = Meta =
-                get_meta(Dir),
-            MetaPathTuples =
-                lists:filtermap(
-                  % ((curry(fun add_meta_to_path/3))(ContentType))(Dir),
-                  fun(Path) -> add_meta_to_path(ContentType, Dir, Path) end,
-                  OrderedDirList
-                ),
-            do_dirlist(Graph, Meta, [first|MetaPathTuples])
-    end.
-
-
-do_dirlist(_Graph, _ParentMeta, []) ->
-    done;
-
-% do_dirlist(Graph, ParentMeta, [{_, "meta.erl"}|Rest]) ->
-%     do_dirlist(Graph, ParentMeta, Rest);
-
-do_dirlist(_Graph, _ParentMeta, [first]) ->
-    empty_dir;
-
-do_dirlist( % {{-
-  Graph,
-  ParentMeta,
-  [ first
-  , {Meta, FullPath} = MetaPath
-  | Rest
-  ]
-) ->
-    % logger:notice(#{ first => MetaPath }),
-    % add_vertex_and_parent_edge(Graph, ParentMeta, Meta, first),
-    % digraph:add_vertex(Graph, Meta, first),
-    digraph:add_vertex(Graph, Meta),
-    % digraph:add_edge(Graph, {first, Meta}, ParentMeta, Meta, []),
-    add_edge(Graph, first, ParentMeta, Meta),
-    add_hierarchy_edges(Graph, ParentMeta, Meta),
-    % add_vertex_and_parent_edge(Graph, ParentMeta, Meta),
-    case Rest of
-        [] ->
-            add_edge(Graph, last, ParentMeta, Meta),
-            done;
-        [_|_] ->
-            do_make(Graph, FullPath),
-            do_dirlist(Graph, ParentMeta, [MetaPath|Rest])
-    end;
-% }}-
-
-do_dirlist( % {{-
-  Graph,
-  ParentMeta,
-  [ {MetaA, _} = M
-  , {MetaB, FullPathB} = MetaPath
-  | Rest
-  ]
-) ->
-    % logger:notice(#{ metapath_a => M, metapath_b => MetaPath}),
-    % { NewDirList
-    % , VertexBLabel
-    % } =
-    % add_vertex_and_parent_edge(Graph, ParentMeta, MetaB),
-    % digraph:add_vertex(Graph, MetaB, VertexBLabel),
-    digraph:add_vertex(Graph, MetaB),
-    add_hierarchy_edges(Graph, ParentMeta, MetaB),
-    % add_prev_edge(Graph, MetaB, MetaA),
-    % add_next_edge(Graph, MetaA, MetaB),
-    add_edge(Graph, prev, MetaB, MetaA),
-    add_edge(Graph, next, MetaA, MetaB),
-    do_make(Graph, FullPathB),
-
-    NewDirList =
-        case Rest =:= [] of
-            true ->
-                % digraph:add_edge(Graph, {last, MetaB}, ParentMeta, MetaB, []),
-                add_edge(Graph, last, ParentMeta, MetaB),
-                [];
-            false ->
-                [MetaPath|Rest]
-        end,
-    do_dirlist(Graph, ParentMeta, NewDirList).
-% }}-
-% }}-
-
-% Graph -> Vertex
-% current(Graph) ->
-%     {current, history, Current, _History} =
-%         digraph:edge(Graph, current),
-%     Current.
 
 % Graph -> Direction -> List Vertex
 % TODO Direction is misleading because it means smth else in different contexts
@@ -619,28 +505,6 @@ get_vertex(Graph, Vertex, Direction) ->
     %    <- EdgeResults
     % ].
 
-% Graph -> Vertex -> current | noop
-% update_history(Graph, With) ->
-%     { current % edge name
-%     , history % from
-%     , Current % to
-%     , History % edge label
-%     } =
-%         digraph:edge(Graph, current),
-
-    % case With =:= Current of
-    %     true ->
-    %         noop;
-    %     false ->
-    %         digraph:del_edge(Graph, current),
-    %         digraph:add_edge
-    %             ( Graph
-    %             , current        % edge name
-    %             , history        % from vertex
-    %             , With           % to
-    %             , [With|History] % label, moonlighting as history stack
-    %             )
-    % end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% INTERNAL MODEL OF THE YET TO BE BUILT ACCESS NEWS WEB SERVICE      %%
@@ -978,374 +842,16 @@ publication_guide() -> % {{-
 
 % }}-
 
-% publication_guide2() -> % {{-
-%     #{ "type"  => "category"
-%      , "title" => "Main category"
-%      , "id"    => 1
-%      , "items" =>
-%          [ #{ "type"  => "category"
-%             , "title" => "Store sales advertising"
-%             , "id"    => 2
-%             , "items" =>
-%                 [ #{ "type"  => "category"
-%                    , "title" => "Grocery stores"
-%                    , "id"    => 3
-%                    , "items" =>
-%                           % TODO "type" are going to be nodes of #{ type => type, name => value}
-%                           % TODO find specific type vertices
-%                           % [V || V <- digraph:vertices(G), maps:find(type, V) =:= {ok, publication}]
-%                        [ #{ "type"  => "publication"
-%                           , "title" => "Safeway"
-%                           , "id"    => 4
-%                           % TODO "tags" are going to be nodes of #{ type => tag, name => value}
-%                           , "tags"  => ["flyer", "ads"]
-%                           % TODO "periodicity" are going to be nodes of #{ type => periodicity, name => value}
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Raley's"
-%                           , "id"    => 5
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "La Superior"
-%                           , "id"    => 6
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Food Source"
-%                           , "id"    => 7
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Savemart"
-%                           , "id"    => 8
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Foods Co"
-%                           , "id"    => 9
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Trader Joe's"
-%                           , "id"    => 10
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Sprouts"
-%                           , "id"    => 11
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Lucky Supermarkets"
-%                           , "id"    => 12
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        ]
-%                    }
-%                 , #{ "type"  => "category"
-%                    , "title" => "Drug stores"
-%                    , "id"    => 13
-%                    , "items" =>
-%                        [ #{ "type"  => "publication"
-%                           , "title" => "CVS"
-%                           , "id"    => 14
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Rite Aid"
-%                           , "id"    => 15
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Walgreen's"
-%                           , "id"    => 16
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        ]
-%                    }
-%                 , #{ "type"  => "category"
-%                    , "title" => "Discount stores"
-%                    , "id"    => 17
-%                    , "items" =>
-%                        [ #{ "type"  => "publication"
-%                           , "title" => "Target"
-%                           , "id"    => 18
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Walmart"
-%                           , "id"    => 19
-%                           , "tags"  => ["flyer", "ads"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        ]
-%                    }
-%                 ]
-%             }
-%          , #{ "type"  => "category"
-%             , "title" => "Sacramento newspapers and magazines"
-%             , "id"    => 20
-%             , "items" =>
-%                 [ #{ "type"  => "category"
-%                    , "title" => "Sacramento newspapers"
-%                    , "id"    => 21
-%                    , "items" =>
-%                           % TODO "type" are going to be nodes of #{ type => type, name => value}
-%                           % TODO find specific type vertices
-%                           % [V || V <- digraph:vertices(G), maps:find(type, V) =:= {ok, publication}]
-%                        [ #{ "type"  => "publication"
-%                           , "title" => "Sacramento Bee"
-%                           % TODO "tags" are going to be nodes of #{ type => tag, name => value}
-%                           , "id"    => 22
-%                           , "tags"  => ["general"]
-%                           , "publication_type" => "newspaper"
-%                           % TODO add "location" and "publisher" to others as well
-%                           , "location" => ["Sacramento", "Sacramento Valley", "Sacramento County"] % TODO What else?
-%                           , "publisher" => "McClatchy Company"
-%                           % TODO "periodicity" are going to be nodes of #{ type => periodicity, name => value}
-%                           , "periodicity" => "daily"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Sacramento News and Review"
-%                           , "id"    => 23
-%                           , "tags"  => ["alternative", "free", "general"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Sacramento Press"
-%                           , "id"    => 24
-%                           , "tags"  => ["general"]
-%                           , "periodicity" => "daily"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Sacramento Business Journal"
-%                           , "id"    => 25
-%                           , "tags"  => ["business"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "East Sacramento News"
-%                           , "id"    => 26
-%                           , "tags"  => ["small community news", "general"]
-%                           , "publisher" => "Valley Community Newspapers"
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Land Park News"
-%                           , "id"    => 27
-%                           , "tags"  => ["small community news", "general"]
-%                           , "publisher" => "Valley Community Newspapers"
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Pocket News"
-%                           , "id"    => 28
-%                           , "tags"  => ["small community news", "general"]
-%                           , "publisher" => "Valley Community Newspapers"
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        ]
-%                    }
-%                 , #{ "type"  => "category"
-%                    , "title" => "Sacramento magazines"
-%                    , "id"    => 29
-%                    , "items" =>
-%                        [ #{ "type"  => "publication"
-%                           , "title" => "Comstock's"
-%                           , "id"    => 30
-%                           , "tags"  => ["magazine"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "SacTown"
-%                           , "id"    => 31
-%                           , "tags"  => ["magazine"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        , #{ "type"  => "publication"
-%                           , "title" => "Sacramento Magazine"
-%                           , "id"    => 32
-%                           , "tags"  => ["magazine"]
-%                           , "periodicity" => "weekly"
-%                           , "items" => []
-%                           }
-%                        ]
-%                    }
-%                 ]
-%             }
-%          , #{ "type"  => "category"
-%             , "title" => "Greater Sacramento area newspapers"
-%             , "id"    => 33
-%             , "items" =>
-%                 [ #{ "type"  => "publication"
-%                    , "title" => "Carmichael Times"
-%                    , "id"    => 34
-%                    , "tags"  => ["newspaper"]
-%                    , "periodicity" => "weekly"
-%                    , "items" => []
-%                    }
-%                 , #{ "type"  => "publication"
-%                    , "title" => "Arden Carmichael News"
-%                    , "id"    => 35
-%                    , "tags"  => ["small community news", "general"]
-%                    , "publisher" => "Valley Community Newspapers"
-%                    , "periodicity" => "weekly"
-%                    , "items" => []
-%                    }
-%                 , #{ "type"  => "publication"
-%                    , "title" => "Davis Enterprise"
-%                    , "id"    => 36
-%                    , "tags"  => ["newspaper"]
-%                    , "periodicity" => "weekly"
-%                    , "items" => []
-%                    }
-%                 , #{ "type"  => "publication"
-%                    , "title" => "Rosevill Press Tribune"
-%                    , "id"    => 37
-%                    , "tags"  => ["newspaper"]
-%                    , "periodicity" => "weekly"
-%                    , "items" => []
-%                    }
-%                 , #{ "type"  => "publication"
-%                    , "title" => "Woodland Daily Democrat"
-%                    , "id"    => 38
-%                    , "tags"  => ["newspaper"]
-%                    , "periodicity" => "weekly"
-%                    , "items" => []
-%                    }
-%                 , #{ "type"  => "publication"
-%                    , "title" => "Auburn Journal"
-%                    , "id"    => 39
-%                    , "tags"  => ["newspaper"]
-%                    , "periodicity" => "weekly"
-%                    , "items" => []
-%                    }
-%                 , #{ "type"  => "publication"
-%                    , "title" => "The Union"
-%                    , "id"    => 40
-%                    , "location"  => ["Grass Valley", "Nevada City"]
-%                    , "periodicity" => "weekly"
-%                    , "items" => []
-%                    }
-%                 , #{ "type"  => "publication"
-%                    , "title" => "Mountain Democrat"
-%                    , "id"    => 41
-%                    , "location"  => ["Placerville", "El Dorado County"]
-%                    , "periodicity" => "weekly"
-%                    , "items" => []
-%                    }
-%                 ]
-%             }
-%         ]
-%      }.
-% % }}-
-
-write_meta_file
-  ( {ContentType, Selection, Title} = _ContentItem
-  , Dir
-  )
--> % {{-
-    MetaFilePath =
-        filename:join(Dir, metafile_name()),
-    Content =
-        stringify(
-          #{ type => ContentType
-           , selection => Selection
-           , title => Title
-           }
-        ),
-    file:write_file(
-      MetaFilePath,
-      Content ++ "."
-    ),
-    Dir.
-% }}-
-
-metafile_name() ->
-    "meta.erl".
-
-get_meta(ContentItemDir) -> % {{-
-    MetaPath =
-        filename:join(
-          ContentItemDir,
-          metafile_name()
-        ),
-    {ok, Meta} =
-        file:script(MetaPath),
-    Meta.
-% }}-
-
-% TODO Again, what was the point of this?
-% list_category_entries(CategoryDir) -> % {{-
-%     { ok
-%     , SubCategoryDirectories
-%     } =
-%         file:list_dir(CategoryDir),
-%     MetaList =
-%         lists:map(
-%           fun(SubDir) ->
-%               MetaPath =
-%                   filename:join([CategoryDir, SubDir, metafile_name()]),
-%               {ok, {_, N, SubCategory} } =
-%                   file:script(MetaPath),
-
-%               "Press "
-%               ++ integer_to_list(N)
-%               ++ " for "
-%               ++ SubCategory
-%               ++ "."
-%           end,
-%           SubCategoryDirectories -- [metafile_name()]
-%         ),
-%     ordsets:from_list(MetaList).
-% % }}-
-
 make_publication_dir
-( { publication, ContentTitle } = ContentItem
+( { publication, ContentTitle } = _ContentItem
 )
--> % {{-
+->
     PublicationDir =
         filename:join(?PUBLICATION_ROOT, ContentTitle),
 
     % no fuss if exists, won't throw
     file:make_dir(PublicationDir),
+%     erlang:display([make_publication_dir, PublicationDir]),
     PublicationDir.
 
 list_recording_vertices(PublicationDir) ->
@@ -1354,7 +860,7 @@ list_recording_vertices(PublicationDir) ->
     % publication folder, and crash on unsupported formats
     % but  I'm an  idiot,  and this  is  may help  prevent
     % disasters. (Or cause some more.)
-    Filter =
+    Extensions =
         fun (Filename) ->
             case filename:extension(Filename) of
                 ".wav" -> true;
@@ -1363,7 +869,7 @@ list_recording_vertices(PublicationDir) ->
             end
         end,
 
-    Map =
+    MakeMeta =
         fun (Filename) ->
             futil:pipe
               ([ Filename
@@ -1372,19 +878,37 @@ list_recording_vertices(PublicationDir) ->
                ])
         end,
 
+%         erlang:display([list_recording_vertices, enter, PublicationDir]),
     futil:pipe
-      ([ os:cmd("ls -t " ++ PublicationDir)
+         % NOTE The extra  quotes are  needed because  otherwise the
+         %      special  characters  in   `PublicationDir`  will  be
+         %      treated literally by the shell.
+         % ``` text
+         % $ ls Raley's
+         % # VS
+         % $ ls "Raley's"
+         % ```
+      ([ os:cmd("ls -t \"" ++ PublicationDir ++ "\"")
+%        , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        , (futil:cflip(fun string:lexemes/2))([$\n])
-       , (futil:curry(fun lists:filter/2))(Filter)
-       , (futil:curry(fun lists:map/2))(Map)
+%        , fun (X) -> erlang:display([list_recording_vertices, X]), X end
+       , (futil:curry(fun lists:filter/2))(Extensions)
+%        , fun (X) -> erlang:display([list_recording_vertices, X]), X end
+       % NOTE It would have made more logical sense to put this in
+       % `draw_item/7`  but it  would have  been a  hassle to
+       % figure  out `PublicationDir`  - plus  it would  have
+       % been an extra loop
+       , (futil:curry(fun lists:map/2))(MakeMeta)
+%        , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        ]).
 
 draw_publication
-( Where
+( Direction
 , Graph
 , ParentVertex
-, ContentItem
+, {publication, _Title} = ContentItem
 , ItemNumber
+, Rest
 )
 ->
     RecordingVertices =
@@ -1394,48 +918,101 @@ draw_publication
            , fun list_recording_vertices/1
            ]),
 
+%     erlang:display(RecordingVertices),
+
+    ItemVertex =
+        make_meta(ContentItem, ItemNumber),
+
     draw_item
-      ( Where
+      ( Direction
       , Graph
       , ParentVertex
-      , ContentItem
-      , ItemNumber
+      , ItemVertex
       , RecordingVertices
+      , Rest
       ).
 
-% was lazy to create a `draw_category/6` for this
-% because that's what it does
-draw_item
-( Where
+draw_category % {{-
+( Direction
 , Graph
 , ParentVertex
-, ContentItem
+, {category, _Title} = ContentItem
 , ItemNumber
 , SubItems
+, Rest
 )
 ->
     ItemVertex =
         make_meta(ContentItem, ItemNumber),
 
+    draw_item
+      ( Direction
+      , Graph
+      , ParentVertex
+      , ItemVertex
+      , SubItems
+      , Rest
+      ).
+
+% }}-
+draw_article % {{-
+( Direction
+, Graph
+, ParentVertex
+, #{} = ItemVertex
+, Rest
+)
+->
+    draw_item
+      ( Direction
+      , Graph
+      , ParentVertex
+      , ItemVertex
+      , []
+      , Rest
+      ).
+
+% }}-
+draw_item
+( Direction
+, Graph
+, ParentVertex
+, #{} = ItemVertex
+, SubItems
+, Rest
+)
+->
+%     % erlang:display([draw_item, #{direction => Direction}]),
+%     % erlang:display([draw_item, #{ parent => ParentVertex}]),
+%     % erlang:display([draw_item, #{ item => ItemVertex}]),
+%     % erlang:display([draw_item, #{ subitems => SubItems}]),
+%     % erlang:display([draw_item, #{ rest => Rest}]),
+
     digraph:add_vertex(Graph, ItemVertex),
     add_hierarchy_edges(Graph, ParentVertex, ItemVertex),
 
     case Direction of
-        first -> 
+        first ->
             add_edge(Graph, first, ParentVertex, ItemVertex);
-        last ->
-            add_edge(Graph, last, ParentMeta, MetaB);
-        first_and_last ->
-            add_edge(Graph, first, ParentVertex, ItemVertex);
-            add_edge(Graph, last, ParentMeta, MetaB)
-        PrevItemVertex when is_map(PrevItemVertex) ->
-            add_edge(Graph, prev, ItemVertex, ContentVertexPrev),
-            add_edge(Graph, next, ContentVertexPrev, ItemVertex);
-        {PrevItemVertex, last} ->
-            add_edge(Graph, prev, ItemVertex, ContentVertexPrev),
-            add_edge(Graph, next, ContentVertexPrev, ItemVertex);
-            add_edge(Graph, last, ParentMeta, MetaB);
 
+        % NOTE Not possible, because the being the last will always
+        %      involve  other  edges  as well;  either  `first`  or
+        %      `prev` and `next` respectively.
+        % last ->
+        %     add_edge(Graph, last, ParentMeta, MetaB);
+
+        first_and_last ->
+            add_edge(Graph, first, ParentVertex, ItemVertex),
+            add_edge(Graph, last, ParentVertex, ItemVertex);
+
+        PrevItemVertex when is_map(PrevItemVertex) ->
+            add_edge(Graph, prev, ItemVertex, PrevItemVertex),
+            add_edge(Graph, next, PrevItemVertex, ItemVertex);
+
+        {PrevItemVertex, last} ->
+            add_edge(Graph, prev, ItemVertex, PrevItemVertex),
+            add_edge(Graph, next, PrevItemVertex, ItemVertex),
+            add_edge(Graph, last, ParentVertex, ItemVertex)
     end,
 
     do_draw([first|SubItems], Graph, ItemVertex),
@@ -1447,104 +1024,15 @@ make_recording_meta(AbsFilename) ->
      , title => ""
      }.
 
-
 make_meta
-( { category, ContentTitle } = ContentItem
+( { ContentType, ContentTitle } = _ContentItem
 % , Path
 , ItemNumber
-) -> % {{-
+) ->
     #{ type      => ContentType
      , selection => ItemNumber
      , title     => ContentTitle
      }.
-    % case ContentType of
-
-    %     category ->
-    %         SubDir =
-    %             integer_to_list(ItemNumber),
-    %         Dir =
-    %             filename:join(Path, SubDir),
-
-    %         file:make_dir(Dir);
-
-    %     publication ->
-    %         file:make_dir(
-
-    % end,
-    % write_meta_file(ContentItem, Dir).
-% }}-
-
-% convert_items(ContentItems, ItemNumber) ->
-
-realize(ContentRoot) -> % {{-
-    case file:make_dir(ContentRoot) of
-        ok ->
-            % write_meta_file(
-            %   ?CONTENT_ROOT,
-            %   ContentRoot
-            % ),
-            realize(publication_guide(), ContentRoot, 0);
-        {error, _} = Error ->
-            Error
-    end.
-% }}-
-
-realize % {{-
-( [ { {category, _, _} = ContentItem
-    , [_|_] = SubItems
-    }
-    | Rest
-  ]
-, Path
-, ItemNumber
-)
-->
-    NewPath =
-        make_dir_and_meta_file(ContentItem, Path, ItemNumber),
-
-    realize(SubItems, NewPath),
-    realize(Rest, Path);
-% }}-
-
-realize([], _Path) ->
-    done;
-
-realize([{publication, _, _} = Publication | Rest], Path) ->
-    make_dir_and_meta_file(Publication, Path),
-    realize(Rest, Path).
-
-% TODO Another mystery function
-% add_recordings(FromDir, ToDir) -> % {{-
-%     {ok, FileList} =
-%         file:list_dir(FromDir),
-%     MoveAndRenameFile =
-%         fun (File) ->
-%             FromPath =
-%                 filename:join(FromDir, File),
-%             NewBaseFileName =
-%                 integer_to_list(os:system_time()),
-%             OldFileExt =
-%                 filename:extension(File),
-%             ToPath =
-%                 filename:join(
-%                   ToDir,
-%                   NewBaseFileName ++ OldFileExt
-%                 ),
-%             file:copy(FromPath, ToPath)
-%         end,
-%     lists:foreach(
-%       MoveAndRenameFile,
-%       FileList
-%     ).
-% % }}-
-
-stringify(Term) ->
-    R = io_lib:format("~p",[Term]),
-    lists:flatten(R).
-% }}-
-
-% log(Level, ValueList) ->
-%     filog:log(Level, ?MODULE, ValueList).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
