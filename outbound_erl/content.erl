@@ -1,4 +1,5 @@
--module(content).  -behaviour(gen_server).
+-module(content).
+-behaviour(gen_server).
 % -define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").
 -define(PUBLICATION_ROOT, "/home/toraritte/clones/phone-service/publications/").
 % -define(CONTENT_ROOT, {category, 0, "Main category"}).
@@ -22,7 +23,8 @@
     , publication_guide/0
 
     % private functions
-    % , draw_content_graph/0
+    , draw_content_graph/0
+    , publication_guide/0
     % , refresh_content_graph/1
     % TODO Make this part of the public API
     % , realize/0
@@ -318,7 +320,7 @@ do_draw  % publication, [          first, ContentItem | []    = Rest ] {{-
       , ParentVertex
       , ContentItem
       , 1
-      , []
+      , [] % Rest
       );
 
 % }}-
@@ -356,7 +358,7 @@ do_draw  % publication, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
       , ParentVertex
       , ContentItem
       , ItemNumber + 1
-      , []
+      , [] % Rest
       );
 
 % }}-
@@ -407,7 +409,7 @@ do_draw  % article, [          first, ItemVertex | [_|_] = Rest ]      {{-
 )
 ->
     draw_article
-      ( first_and_last
+      ( first
       , Graph
       , ParentVertex
       , ItemVertex
@@ -888,18 +890,25 @@ list_recording_vertices(PublicationDir) ->
          % # VS
          % $ ls "Raley's"
          % ```
-      ([ os:cmd("ls -t \"" ++ PublicationDir ++ "\"")
-%        , fun (X) -> erlang:display([list_recording_vertices, X]), X end
+
+         % NOTE Calling `ls`  without any  modifiers means  that the
+         %      order  of the  returned list  depends on  consistent
+         %      file naming!
+         % TODO Make  an upload  mechanism  that takes  care of  the
+         %      naming  based on  given  parameters  (e.g., sort  by
+         %      time, numbering, etc.).
+      ([ os:cmd("ls \"" ++ PublicationDir ++ "\"")
+       % , fun (X) -> case X =/= [] of true -> erlang:display([list_recording_vertices, PublicationDir,  X]); false -> noop end, X end
        , (futil:cflip(fun string:lexemes/2))([$\n])
-%        , fun (X) -> erlang:display([list_recording_vertices, X]), X end
+%      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        , (futil:curry(fun lists:filter/2))(Extensions)
-%        , fun (X) -> erlang:display([list_recording_vertices, X]), X end
+%      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        % NOTE It would have made more logical sense to put this in
        % `draw_item/7`  but it  would have  been a  hassle to
        % figure  out `PublicationDir`  - plus  it would  have
        % been an extra loop
        , (futil:curry(fun lists:map/2))(MakeMeta)
-%        , fun (X) -> erlang:display([list_recording_vertices, X]), X end
+%      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        ]).
 
 draw_publication
