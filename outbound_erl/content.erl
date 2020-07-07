@@ -174,14 +174,14 @@ draw_content_graph() ->
     % Doesn't throw so if exists then things go on.
     file:make_dir(?PUBLICATION_ROOT),
 
-    [ { {category, _} = ContentItem
-      , [_|_] = SubItems
+    [ { [category, _] = RootContentItem
+      , [_|_] = MainMenuItems
       }
     ] =
         publication_guide(),
 
     ContentRoot =
-        make_meta(ContentItem, 0),
+        make_meta(RootContentItem, 0),
 
     Graph =
         digraph:new([cyclic, protected]), % default values made explicit
@@ -189,7 +189,7 @@ draw_content_graph() ->
     digraph:add_vertex(Graph, ContentRoot),
 
     do_draw
-      ( [first|SubItems]
+      ( [first|MainMenuItems]
       , Graph
       , ContentRoot
       ),
@@ -219,7 +219,7 @@ do_draw  % ContentType, [ PrevItemVertex ] {{-
 
 do_draw  % category, [          first, ContentItem | []    = Rest ] {{-
 ( [ first
-  , { {category, _ContentTitle} = ContentItem
+  , { [category|_] = ContentItem
     , [_|_] = SubItems % Explicitly disallow empty categories
     }
   | [] = _Rest
@@ -241,7 +241,7 @@ do_draw  % category, [          first, ContentItem | []    = Rest ] {{-
 % }}-
 do_draw  % category, [          first, ContentItem | [_|_] = Rest ] {{-
 ( [ first
-  , { {category, _ContentTitle} = ContentItem
+  , { [category|_] = ContentItem
     , [_|_] = SubItems % Explicitly disallow empty categories
     }
   | [_|_] = Rest
@@ -263,7 +263,7 @@ do_draw  % category, [          first, ContentItem | [_|_] = Rest ] {{-
 % }}-
 do_draw  % category, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
 ( [ #{ selection := ItemNumber } = PrevItemVertex
-  , { {category, _ContentTitle} = ContentItem
+  , { [category|_] = ContentItem
     , [_|_] = SubItems % Explicitly disallow empty categories
     }
   | [] = _Rest
@@ -285,7 +285,7 @@ do_draw  % category, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
 % }}-
 do_draw  % category, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
 ( [ #{ selection := ItemNumber } = PrevItemVertex
-  , { {category, _ContentTitle} = ContentItem
+  , { [category|_] = ContentItem
     , [_|_] = SubItems % Explicitly disallow empty categories
     }
   | [_|_] = Rest
@@ -305,9 +305,20 @@ do_draw  % category, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
       );
 % }}-
 
+% The   `do_draw/3`  for   publications  is   slightly
+% different in that  they accept a 3-tuple  as well in
+% the `publication_guide/0`.  The rationale is  that a
+% publication  may be  divided into  section and  thus
+% the sub-sections become  the publication-tuples that
+% in  turn will  become  the publication  directories.
+% Other  publications divided  into  section may  also
+% hold  a  sub-section  with   the  same  name  (e.g.,
+% News, Obituaries)  so that  is a possible  source of
+% conflict. The  last element of the  3-tuple is meant
+% to be a naming prefix to fix this.
 do_draw  % publication, [          first, ContentItem | []    = Rest ] {{-
 ( [ first
-  , {publication, _ContentTitle} = ContentItem
+  , [publication|_] = ContentItem
   | [] = _Rest
   ]
 , Graph
@@ -326,7 +337,7 @@ do_draw  % publication, [          first, ContentItem | []    = Rest ] {{-
 % }}-
 do_draw  % publication, [          first, ContentItem | [_|_] = Rest ] {{-
 ( [ first
-  , {publication, _ContentTitle} = ContentItem
+  , [publication|_] = ContentItem
   | [_|_] = Rest
   ]
 , Graph
@@ -345,7 +356,7 @@ do_draw  % publication, [          first, ContentItem | [_|_] = Rest ] {{-
 % }}-
 do_draw  % publication, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
 ( [ #{ selection := ItemNumber } = PrevItemVertex
-  , {publication, _ContentTitle} = ContentItem
+  , [publication|_] = ContentItem
   | [] = _Rest
   ]
 , Graph
@@ -364,7 +375,7 @@ do_draw  % publication, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
 % }}-
 do_draw  % publication, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
 ( [ #{ selection := ItemNumber } = PrevItemVertex
-  , {publication, _ContentTitle} = ContentItem
+  , [publication|_] = ContentItem
   | [_|_] = Rest
   ]
 , Graph
@@ -516,223 +527,223 @@ get_vertex(Graph, Vertex, Direction) ->
 % The publication guide below is just a representation of future data of the yet-to-be-implemented core web service, and its data may not contain such IDs, but that could be done on this end by ordering and adding that via a script.
 
 publication_guide() -> % {{-
-    [ { {category, "Main category"}
-      , [ { {category, "Store sales advertising"} % {{-
-          , [ { {category, "Grocery stores"}
-              , [ {publication, "Safeway"}
-                , {publication, "Raley's"}
-                , {publication, "La Superior"}
-                , {publication, "Food source"}
-                , {publication, "Savemart"}
-                , {publication, "Foods Co"}
-                , {publication, "Trader Joe's"}
-                , {publication, "Sprouts"}
-                , {publication, "Lucky Supermarkets"}
+    [ { [category, "Main category"]
+      , [ { [category, "Store sales advertising"] % {{-
+          , [ { [category, "Grocery stores"]
+              , [ [publication, "Safeway"]
+                , [publication, "Raley's"]
+                , [publication, "La Superior"]
+                , [publication, "Food source"]
+                , [publication, "Savemart"]
+                , [publication, "Foods Co"]
+                , [publication, "Trader Joe's"]
+                , [publication, "Sprouts"]
+                , [publication, "Lucky Supermarkets"]
                 ]
               }
-            , { {category, "Drug stores"}
-              , [ {publication, "CVS"}
-                , {publication, "Rite Aid"}
-                , {publication, "Walgreen's"}
+            , { [category, "Drug stores"]
+              , [ [publication, "CVS"]
+                , [publication, "Rite Aid"]
+                , [publication, "Walgreen's"]
                 ]
               }
-            , { {category, "Discount stores"}
-              , [ {publication, "Target"}
-                , {publication, "Walmart"}
+            , { [category, "Discount stores"]
+              , [ [publication, "Target"]
+                , [publication, "Walmart"]
                 ]
               }
             ]
           } % }}-
-        , { {category, "Northern California newspapers"} % {{-
-          , [ { {category, "Sacramento newspapers and magazines"}
-              , [ { {category, "Sacramento newspapers"} % {{-
-                  , [ { {category, "Sacramento Bee sections"} % {{-
-                      , [ {publication, "Sports"}
-                        , {publication, "News"}
-                        , {publication, "Obituaries"}
+        , { [category, "Northern California newspapers"] % {{-
+          , [ { [category, "Sacramento newspapers and magazines"]
+              , [ { [category, "Sacramento newspapers"] % {{-
+                  , [ { [category, "Sacramento Bee sections"] % {{-
+                      , [ [publication, "Sports", ]
+                        , [publication, "News"]
+                        , [publication, "Obituaries"]
                         ]
                       } % }}-
-                    , {publication, "Sacramento News & Review"}
-                    , {publication, "Sacramento Press"}
-                    , {publication, "Sacramento Business Journal"}
-                    , {publication, "Sacramento Observer"}
-                    , {publication, "Sacramento City Express"}
-                    , {publication, "East Sacramento News"}
-                    , {publication, "The Land Park News"}
-                    , {publication, "The Pocket News"}
+                    , [publication, "Sacramento News & Review"]
+                    , [publication, "Sacramento Press"]
+                    , [publication, "Sacramento Business Journal"]
+                    , [publication, "Sacramento Observer"]
+                    , [publication, "Sacramento City Express"]
+                    , [publication, "East Sacramento News"]
+                    , [publication, "The Land Park News"]
+                    , [publication, "The Pocket News"]
                     ]
                   } % }}-
-                , { {category, "Sacramento magazines"} % {{-
-                  , [ {publication, "Comstocks"}
-                    , {publication, "SacTown"}
-                    , {publication, "Sacramento Magazine"}
+                , { [category, "Sacramento magazines"] % {{-
+                  , [ [publication, "Comstocks"]
+                    , [publication, "SacTown"]
+                    , [publication, "Sacramento Magazine"]
                     ]
                   } % }}-
                 ]
               }
 
-            , { {category, "Greater Sacramento area newspapers"}
-              , [ {publication, "Carmichael Times"}
-                , {publication, "Arden Carmichael News"}
-                , {publication, "Davis Enterprise"}
-                , {publication, "Roseville Press Tribune"}
-                , {publication, "Woodland Daily Democrat"}
-                , {publication, "Elk Grove Citizen"}
-                , {publication, "Auburn Journal"}
-                , {publication, "Grass Valley-Nevada City Union"}
-                , {publication, "El Dorado County Mountain Democrat"}
+            , { [category, "Greater Sacramento area newspapers"]
+              , [ [publication, "Carmichael Times"]
+                , [publication, "Arden Carmichael News"]
+                , [publication, "Davis Enterprise"]
+                , [publication, "Roseville Press Tribune"]
+                , [publication, "Woodland Daily Democrat"]
+                , [publication, "Elk Grove Citizen"]
+                , [publication, "Auburn Journal"]
+                , [publication, "Grass Valley-Nevada City Union"]
+                , [publication, "El Dorado County Mountain Democrat"]
                 ]
               }
 
-            , { {category, "San Francisco and Bay Area newspapers"}
-              , [ {publication, "Vallejo Times Herald"}
-                , {publication, "Santa Rosa Press Democrat"}
-                , {publication, "SF Gate"}
-                , {publication, "San Francisco Bay Guardian"}
-                , {publication, "East Bay Times"}
-                , {publication, "SF Weekly"}
-                , {publication, "KQED Bay Area Bites"}
+            , { [category, "San Francisco and Bay Area newspapers"]
+              , [ [publication, "Vallejo Times Herald"]
+                , [publication, "Santa Rosa Press Democrat"]
+                , [publication, "SF Gate"]
+                , [publication, "San Francisco Bay Guardian"]
+                , [publication, "East Bay Times"]
+                , [publication, "SF Weekly"]
+                , [publication, "KQED Bay Area Bites"]
                 ]
               }
 
-            , { {category, "Central California newspapers"}
-              , [ {publication, "Modesto Bee"}
-                , {publication, "Stockton Record"}
+            , { [category, "Central California newspapers"]
+              , [ [publication, "Modesto Bee"]
+                , [publication, "Stockton Record"]
                 ]
               }
 
-            , { {category, "Mendocino county newspapers"}
-              , [ {publication, "Fort Bragg Advocate News"}
-                , {publication, "The Mendocino Beacon"}
+            , { [category, "Mendocino county newspapers"]
+              , [ [publication, "Fort Bragg Advocate News"]
+                , [publication, "The Mendocino Beacon"]
                 ]
               }
 
-            , { {category, "Humboldt & Trinity county newspapers"}
-              , [ {publication, "Humboldt Senior Resource Center's Senior News"}
-                , {publication, "North Coast Journal"}
-                , {publication, "Eureka Times Standard"}
-                , {publication, "Ferndale Enterprise"}
-                , {publication, "Mad River Union"}
+            , { [category, "Humboldt & Trinity county newspapers"]
+              , [ [publication, "Humboldt Senior Resource Center's Senior News"]
+                , [publication, "North Coast Journal"]
+                , [publication, "Eureka Times Standard"]
+                , [publication, "Ferndale Enterprise"]
+                , [publication, "Mad River Union"]
                 ]
               }
             ]
           } % }}-
-        , { {category, "Blindness resources"} % {{-
-          % , [ { {category, "Newsletters"}
-          %     , [ {publication, "Society for the Blind"}
-          %       , {publication, "SFB Connection"}
-          %       , {publication, "The Earle Baum Center"}
-          %       , {publication, "Sierra Services for the Blind"}
-          %       , {publication, "California Council of the Blind"}
+        , { [category, "Blindness resources"] % {{-
+          % , [ { [category, "Newsletters"]
+          %     , [ [publication, "Society for the Blind"]
+          %       , [publication, "SFB Connection"]
+          %       , [publication, "The Earle Baum Center"]
+          %       , [publication, "Sierra Services for the Blind"]
+          %       , [publication, "California Council of the Blind"]
           %       ]
           %     }
-          , [ { {category, "Blindness organizations"}
-              , [ { {category, "Society for the Blind"}
-                  , [ {publication, "SFB Connection"}
-                    , {publication, "Monthly newsletter"}
+          , [ { [category, "Blindness organizations"]
+              , [ { [category, "Society for the Blind"]
+                  , [ [publication, "SFB Connection"]
+                    , [publication, "Monthly newsletter"]
                     ]
                   }
-                , {publication, "The Earle Baum Center"}
-                , {publication, "Sierra Services for the Blind"}
-                , {publication, "California Council of the Blind"}
+                , [publication, "The Earle Baum Center"]
+                , [publication, "Sierra Services for the Blind"]
+                , [publication, "California Council of the Blind"]
                 ]
               }
             , { { category, "Publications" }
-              , [ {publication, "Braille Monitor"}
-                , {publication, "Client Assistence Program"}
+              , [ [publication, "Braille Monitor"]
+                , [publication, "Client Assistence Program"]
                 ]
               }
             ]
           } % }}-
-        , { {category, "Educational materials"} % {{-
-          , [ {publication, "Society for the Blind's student handbook"}
-            , {publication, "Balance exercises"}
-            , {publication, "Achieve a healthy weight by UC Davis"}
+        , { [category, "Educational materials"] % {{-
+          , [ [publication, "Society for the Blind's student handbook"]
+            , [publication, "Balance exercises"]
+            , [publication, "Achieve a healthy weight by UC Davis"]
             ]
           } % }}-
-        , { {category, "General information"} % {{-
-          , [ {publication, "Yuba-Sutter Meals On Wheels"}
+        , { [category, "General information"] % {{-
+          , [ [publication, "Yuba-Sutter Meals On Wheels"]
             ]
           } % }}-
-        , { {category, "Popular magazines"} % {{-
-          , [ {publication, "Newsweek"}
-            , {publication, "Fortune"}
-            , {publication, "Capital Public Radio"}
-            , {publication, "Travel & Leisure"}
-            , {publication, "Entertainment Weekly"}
-            , {publication, "Mental Floss"}
-            , {publication, "Atlas Obscura"}
-            , {publication, "New Scientist"}
+        , { [category, "Popular magazines"] % {{-
+          , [ [publication, "Newsweek"]
+            , [publication, "Fortune"]
+            , [publication, "Capital Public Radio"]
+            , [publication, "Travel & Leisure"]
+            , [publication, "Entertainment Weekly"]
+            , [publication, "Mental Floss"]
+            , [publication, "Atlas Obscura"]
+            , [publication, "New Scientist"]
             ]
           } % }}-
-        , { {category, "Games"} % {{-
-          , [ {publication, "Crosswords"}
-            , {publication, "Trivia"}
+        , { [category, "Games"] % {{-
+          , [ [publication, "Crosswords"]
+            , [publication, "Trivia"]
             ]
           } % }}-
-        , { {category, "Community content"} % {{-
-          , [ { {category, "Podcasts"}
-              , [ {publication, "Society for the Blind"}
-                , {publication, "SFB Connection"}
-                , {publication, "The Earle Baum Center"}
-                , {publication, "Sierra Services for the Blind"}
-                , {publication, "California Council of the Blind"}
+        , { [category, "Community content"] % {{-
+          , [ { [category, "Podcasts"]
+              , [ [publication, "Society for the Blind"]
+                , [publication, "SFB Connection"]
+                , [publication, "The Earle Baum Center"]
+                , [publication, "Sierra Services for the Blind"]
+                , [publication, "California Council of the Blind"]
                 ]
               }
             , { { category, "Poetry" }
-              , [ {publication, "Brad Buchanan"}
-                , {publication, "Writer's on the air"}
+              , [ [publication, "Brad Buchanan"]
+                , [publication, "Writer's on the air"]
                 ]
               }
             ]
           } % }}-
-        , { {category, "Old Time Radio Theater"} % {{-
-          , [ { {category, "Mystery and drama"}
-              , [ {publication, "Broadway's my Beet"}
-                , {publication, "Black Stone the Magic Detective"}
-                , {publication, "Boston Blacky"}
-                , {publication, "Crime Does Not Pay"}
-                , {publication, "Drag Net"}
-                , {publication, "Gang Busters"}
-                , {publication, "Inner Sanctum"}
-                , {publication, "Mercury Radio Theater"}
-                , {publication, "Mystery Traveler"}
-                , {publication, "Richard Diamond Private Detective"}
-                , {publication, "Adventures of Sam Spaid"}
-                , {publication, "The Shadow"}
-                , {publication, "Suspense"}
-                , {publication, "The Whistler"}
-                , {publication, "Light's Out"}
+        , { [category, "Old Time Radio Theater"] % {{-
+          , [ { [category, "Mystery and drama"]
+              , [ [publication, "Broadway's my Beet"]
+                , [publication, "Black Stone the Magic Detective"]
+                , [publication, "Boston Blacky"]
+                , [publication, "Crime Does Not Pay"]
+                , [publication, "Drag Net"]
+                , [publication, "Gang Busters"]
+                , [publication, "Inner Sanctum"]
+                , [publication, "Mercury Radio Theater"]
+                , [publication, "Mystery Traveler"]
+                , [publication, "Richard Diamond Private Detective"]
+                , [publication, "Adventures of Sam Spaid"]
+                , [publication, "The Shadow"]
+                , [publication, "Suspense"]
+                , [publication, "The Whistler"]
+                , [publication, "Light's Out"]
                 ]
               }
-            , { {category, "Comedy"}
-              , [ {publication, "Abbot and Costello"}
-                , {publication, "The Adventures of Ozzie and Harriet"}
-                , {publication, "The Bickerson's"}
-                , {publication, "Father Knows Best"}
-                , {publication, "Fibber McGee and Molly"}
-                , {publication, "The Fred Allen Show"}
-                , {publication, "George Burns and Gracie Allen"}
-                , {publication, "Life of Riley"}
-                , {publication, "The Red Skelton Show"}
+            , { [category, "Comedy"]
+              , [ [publication, "Abbot and Costello"]
+                , [publication, "The Adventures of Ozzie and Harriet"]
+                , [publication, "The Bickerson's"]
+                , [publication, "Father Knows Best"]
+                , [publication, "Fibber McGee and Molly"]
+                , [publication, "The Fred Allen Show"]
+                , [publication, "George Burns and Gracie Allen"]
+                , [publication, "Life of Riley"]
+                , [publication, "The Red Skelton Show"]
                 ]
               }
-            , { {category, "Westerns"}
-              , [ {publication, "The Cisco Kid"}
-                , {publication, "Gun Smoke"}
-                , {publication, "The Lone Ranger"}
-                , {publication, "Tales of the Texas Rangers"}
+            , { [category, "Westerns"]
+              , [ [publication, "The Cisco Kid"]
+                , [publication, "Gun Smoke"]
+                , [publication, "The Lone Ranger"]
+                , [publication, "Tales of the Texas Rangers"]
                 ]
               }
-            , { {category, "Science fiction and fantasy"}
-              , [ {publication, "The Blue Beetle"}
-                , {publication, "Escape"}
-                , {publication, "The Green Hornet"}
-                , {publication, "X Minus 1"}
+            , { [category, "Science fiction and fantasy"]
+              , [ [publication, "The Blue Beetle"]
+                , [publication, "Escape"]
+                , [publication, "The Green Hornet"]
+                , [publication, "X Minus 1"]
                 ]
               }
-            , { {category, "Commercials"}
-              , [ {publication, "Commercials"}
+            , { [category, "Commercials"]
+              , [ [publication, "Commercials"]
                 ]
               }
             ]
@@ -845,11 +856,19 @@ publication_guide() -> % {{-
 % }}-
 
 make_publication_dir
-( { publication, ContentTitle } = _ContentItem
+( [ publication, ContentTitle | OptionalPrefix ] = ContentItem
 )
 ->
+    Publication =
+        case OptionalPrefix of
+            [] ->
+                ContentTitle;
+            [Prefix] ->
+                Prefix ++ "-" ++ ContentTitle
+        end,
+
     PublicationDir =
-        filename:join(?PUBLICATION_ROOT, ContentTitle),
+        filename:join(?PUBLICATION_ROOT, Publication),
 
     % no fuss if exists, won't throw
     file:make_dir(PublicationDir),
@@ -915,7 +934,7 @@ draw_publication
 ( Direction
 , Graph
 , ParentVertex
-, {publication, _Title} = ContentItem
+, [publication|_] = ContentItem
 , ItemNumber
 , Rest
 )
@@ -945,7 +964,7 @@ draw_category % {{-
 ( Direction
 , Graph
 , ParentVertex
-, {category, _Title} = ContentItem
+, [ category | OptionalPrefix ] = ContentItem
 , ItemNumber
 , SubItems
 , Rest
