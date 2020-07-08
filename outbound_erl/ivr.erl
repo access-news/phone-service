@@ -1453,6 +1453,8 @@ is_user_registered(CallerNumber) -> %% {{-
     user_db:look_up(PhoneNumber).
 %% }}-
 
+% !!! Keeps the content  graph (`content.erl`) and the
+%     IVR state machine (`ivr.er.`) decoupled!
 derive_state(#{ current_content := Content } = _Data) -> % {{-
     derive_state(Content);
 
@@ -1463,6 +1465,8 @@ derive_state(#{ type := _ } = Content) ->
         #{ type := article } ->
             % Implies that ARTICLE_INTRO is always played (even if article is resumed)
             article_intro;
+        #{ type := sectioned_publication } ->
+            category;
         #{ type := ContentType } ->
             ContentType
     end.
