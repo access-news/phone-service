@@ -147,6 +147,23 @@ pick(Direction, CurrentVertex) -> % List Content | []
 root() ->
     pick(content_root, ignore).
 
+% TODO No diff algo involved so `publications` directory has
+%      to be  manually renamed  if one  would like  to have
+%      changes in `publication_guide/0` to take effect!
+%
+%      BEST CURRENT USE CASE
+%      Audio files  have been  added to  the `publications`
+%      directory, and this will  re-read the directory, and
+%      add `article` vertices to the content graph.
+%
+%      At  the  moment,  the  only way  to  add  new  audio
+%      files, on  initial setup  or after  a change  in the
+%      publication guide, is to to
+%
+%      1. Move old `publications` directory
+%      2. `content:redraw()`
+%      3. Place files in the desired publications
+%      4. `content:redraw()`
 redraw() ->
     gen_server:cast(?MODULE, redraw).
 
@@ -170,7 +187,9 @@ get_label(Vertex) ->
 %      Refactor when the web service is ready (or usable).
 draw_content_graph() ->
 
-    % Doesn't throw so if exists then things go on.
+    % Doesn't throw so if exists  then things will just go
+    % on.
+    % Read TODO at `redraw/0`
     file:make_dir(?PUBLICATION_ROOT),
 
     [ { { category, _ } = RootContentItem
@@ -564,18 +583,28 @@ publication_guide() -> % {{-
                         ]
                       } % }}-
                     , {publication, "Sacramento News & Review"}
-                    , { { sectioned_publication
-                        , "Test section"
-                        , {dir_prefix, "test"}
-                        }
-                      , [ {section, "TEST1"}
-                        , {section, "TEST2"}
-                        ]
-                      }
+                    % , { { sectioned_publication
+                    %     , "Test section"
+                    %     , {dir_prefix, "test"}
+                    %     }
+                    %   , [ {section, "TEST1"}
+                    %     , {section, "TEST2"}
+                    %   , [ {section, "A meaningful name"}
+                    %     , {section, "This is not"}
+                    %     ]
+                    %   }
                     , {publication, "Sacramento Press"}
                     , {publication, "Sacramento Business Journal"}
                     , {publication, "Sacramento Observer"}
                     , {publication, "Sacramento City Express"}
+                    % , { { sectioned_publication
+                    %     , "Another test"
+                    %     , {dir_prefix, "another"}
+                    %     }
+                    %   , [ {section, "One section one"}
+                    %     , {section, "Two section two"}
+                    %     ]
+                    %   }
                     , {publication, "East Sacramento News"}
                     , {publication, "The Land Park News"}
                     , {publication, "The Pocket News"}
@@ -901,9 +930,11 @@ list_recording_vertices(PublicationDir) -> % {{-
                ])
         end,
 
+    % FoldrFun
+
 %         erlang:display([list_recording_vertices, enter, PublicationDir]),
     futil:pipe
-      % NOTE The extra  quotes are  needed because  otherwise the
+      % NOTE The extra  quotes are  needed because  otherwise the {{-
       %      special  characters  in   `PublicationDir`  will  be
       %      treated literally by the shell.
       % ``` text
@@ -914,6 +945,7 @@ list_recording_vertices(PublicationDir) -> % {{-
       % Also,  `-r` because  right  now  the recordings  are
       % numbered, and  the higher  the number the  newer the
       % recording.
+      % }}-
 
       % NOTE Calling `ls`  without any  modifiers means  that the
       %      order  of the  returned list  depends on  consistent
