@@ -15,9 +15,10 @@ pkgs.mkShell {
     # how  to figure  it out.  Asked it  on NixOS  IRC, no
     # response, so TODO: figure it out.
     # base64
-    beam.packages.erlangR23.erlang
-    beam.packages.erlangR23.rebar3
+    beam.packages.erlangR22.erlang
+    beam.packages.erlangR22.rebar3
     curl
+    ffmpeg
     git
     google-cloud-sdk
     jq
