@@ -946,6 +946,35 @@ list_recording_vertices(PublicationDir) -> % {{-
                ])
         end,
 
+    % Using `lists:map/2` would have been easier, but will
+    % need to filter unsupported  extensions at one point,
+    % just do not know which yet
+    Filsert = % filter/insert
+        fun(BaseFilename, Acc) ->
+
+            AbsFilename =
+                filename:absname(BaseFilename, PublicationDir),
+
+            RecordingFullPath =
+                case filename:extension(AbsFilename) of
+                    % ".wav" -> true;
+                    ".mp3" -> 
+                        AbsFilename;
+                    Ext ->
+                        OutFilename = filename:rootname(AbsFilename) ++ ".mp3",
+                        os:cmd
+                          (    "ffmpeg -i "
+                            ++ AbsFilename
+                            ++ " "
+                            ++ OutFilename
+                          ),
+                        os:cmd("rm " ++ AbsFilename),
+                        OutFilename
+                end,
+
+            [ make_recording_meta(RecordingFullPath) | Acc ]
+        end,
+
 %         erlang:display([list_recording_vertices, enter, PublicationDir]),
     futil:pipe
       % NOTE The extra  quotes are  needed because  otherwise the {{-
@@ -970,13 +999,15 @@ list_recording_vertices(PublicationDir) -> % {{-
       ([ os:cmd("ls -r \"" ++ PublicationDir ++ "\"")
        , (futil:cflip(fun string:lexemes/2))([$\n])
 %      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
-       , (futil:curry(fun lists:filter/2))(Extensions)
+       % , (futil:curry(fun lists:filter/2))(Extensions)
 %      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        % NOTE It would have made more logical sense to put this in
        % `draw_item/7`  but it  would have  been a  hassle to
        % figure  out `PublicationDir`  - plus  it would  have
        % been an extra loop
-       , (futil:curry(fun lists:map/2))(MakeMeta)
+       % , (futil:curry(fun lists:map/2))(MakeMeta)
+       , ((futil:curry(fun lists:foldl/3))(Filsert))([])
+       , fun lists:reverse/1
 %      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        ]).
 % }}-
