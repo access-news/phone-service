@@ -573,7 +573,7 @@ publication_guide() -> % {{-
         , { {category, "Northern California newspapers"} % {{-
           , [ { {category, "Sacramento newspapers and magazines"}
               , [ { {category, "Sacramento newspapers"} % {{-
-                  , [ { { sectioned_publication % => changed to `sectioned_publication` in the graph
+                  , [ { { sectioned_publication
                         , "Sacramento Bee sections"
                         , {dir_prefix, "sacramento-bee"}
                         } % {{-
@@ -629,6 +629,7 @@ publication_guide() -> % {{-
                 , {publication, "Auburn Journal"}
                 , {publication, "Grass Valley-Nevada City Union"}
                 , {publication, "El Dorado County Mountain Democrat"}
+                , {publication, "Loomis News"}
                 ]
               }
 
@@ -675,12 +676,39 @@ publication_guide() -> % {{-
           %       ]
           %     }
           , [ { {category, "Blindness organizations"}
-              , [ { { sectioned_publication
-                    , "Society for the Blind"
-                    , {dir_prefix, "sftb"}
-                    }
-                  , [ {section, "SFB Connection"}
-                    , {section, "Monthly newsletter"}
+                % NOTE LINKING
+                % 1. Use  the exact  same  publication  name anywhere  to
+                %    link  to  the  same folder  (`ContentTitle`  IS  the
+                %    directory name;  except in  case of the  presence of
+                %    `dir_prefix`, see 2. below)
+                %
+                % 2. If the publication, that needs to be linked, is ever
+                %    specified in  the context of `dir_prefix`  it has to
+                %    be supplied  anywhere else, otherwise there  will be
+                %    different  directories  created during  drawing  the
+                %    content graph.
+                %
+                %    For example, to link the student handbook below,
+                %    ```erlang
+                %    , [ { { category, "Society for the Blind", {dir_prefix, "sftb"}}
+                %        , [ {publication, "SFB Connection"}
+                %          , {publication, "Monthly newsletter"}
+                %          , {publication, "Society for the Blind's student handbook"}
+                %          ]
+                %        }
+                %    ```
+                %    declare it in the alternative way where it should be
+                %    linked:
+                %    ```erlang
+                %    , { {category, "Educational materials"} % {{-
+                %        % {publication, [Prefix, Title ]}
+                %      , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
+                %
+                %    ```
+              , [ { { category, "Society for the Blind", {dir_prefix, "sftb"}}
+                  , [ {publication, "SFB Connection"}
+                    , {publication, "Monthly newsletter"}
+                    , {publication, "Society for the Blind's student handbook"}
                     ]
                   }
                 , {publication, "The Earle Baum Center"}
@@ -696,8 +724,7 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { {category, "Educational materials"} % {{-
-            % TODO link this to sftb
-          , [ {publication, "Society for the Blind's student handbook"}
+          , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
             , {publication, "Balance exercises"}
             , {publication, "Achieve a healthy weight by UC Davis"}
             ]
@@ -917,7 +944,7 @@ list_recording_vertices(PublicationDir) -> % {{-
                 ".wav" -> true;
                 ".mp3" -> true;
                 % TODO ffmpeg
-                _ -> false 
+                _ -> false
             end
         end,
 
@@ -929,8 +956,6 @@ list_recording_vertices(PublicationDir) -> % {{-
                , fun make_recording_meta/1
                ])
         end,
-
-    % FoldrFun
 
 %         erlang:display([list_recording_vertices, enter, PublicationDir]),
     futil:pipe
@@ -998,25 +1023,31 @@ draw_publication % {{-
       ).
 
 % }}-
+% `SubItems` needs  to be checked whether  `_Title` is
+% string or a  list of lists - as  this function calls
+% itself, this can turn into a nasty crash fast.
+% https://stackoverflow.com/questions/1406173/how-can-i-determine-if-a-list-is-a-just-a-string-or-a-list-of-strings
 draw_content_with_subitems % {{-
 ( Direction
 , Graph
 , ParentVertex
-, { sectioned_publication = ContentType
+, { ContentType
   , ContentTitle
   , {dir_prefix, Prefix}
   }
 , ItemNumber
-, [ {section, _Title}|_] = SubSections
+, [ { SubItem, [H|_] = _Title }|_] = SubItems
 , Rest
 )
+when is_integer(H), SubItem =:= section
+   ; is_integer(H), SubItem =:= publication
 ->
 
     % ItemVertex =
     %     make_meta(ContentItem, ItemNumber),
 
-    SubItems =
-        sections_to_publications(SubSections, Prefix),
+    PrefixedSubItems =
+        prefix_publications(SubItems, Prefix),
 
     draw_content_with_subitems
       ( Direction
@@ -1024,7 +1055,7 @@ draw_content_with_subitems % {{-
       , ParentVertex
       , { ContentType, ContentTitle }
       , ItemNumber
-      , SubItems
+      , PrefixedSubItems
       , Rest
       );
 
@@ -1038,52 +1069,6 @@ draw_content_with_subitems % {{-
     %   ).
 
 % }}-
-
-% The use of `{dir_prefix,  "string"}` only has affect
-% when  a publication  is broken  into sections;  that
-% is, the  publication is  elevated to  `category` and
-% sub-sections take up the mantle of `publication`. It
-% will be ignored in any other scenario.
-% TODO
-% If  this  will  remain a  permanent  feature  (e.g.,
-% because  this  repo  will  also be  available  as  a
-% standalone application)  make the  publication guide
-% labels more descriptive.
-% For example,
-% , [ { [category, "Blindness organizations"]
-%     , [ { [publication, "Society for the Blind", {dir_prefix, "sftb"}]
-%         , [ [sub_section, "SFB Connection"]
-%           , [sub_section, "Monthly newsletter"]
-%           ]
-%         }
-%       , [publication, "The Earle Baum Center"]
-% draw_content_with_subitems % {{-
-% ( Direction
-% , Graph
-% , ParentVertex
-% , [ category, _ContentTitle | _MaybePrefix ] = ContentItem
-% , ItemNumber
-% , [ { [category|_]
-%     , _ 
-%     }
-%   | _RestOfSubItems
-%   ] = SubItems
-% , Rest
-% )
-% ->
-%     ItemVertex =
-%         make_meta(ContentItem, ItemNumber),
-
-%     draw_item
-%       ( Direction
-%       , Graph
-%       , ParentVertex
-%       , ItemVertex
-%       , SubItems
-%       , Rest
-%       );
-
-% % }}-
 draw_content_with_subitems % {{-
 ( Direction
 , Graph
@@ -1092,7 +1077,7 @@ draw_content_with_subitems % {{-
 , { _ContentType, _ContentTitle } = ContentItem
 , ItemNumber
 % Empty categories are disallowed thus this is permitted
-% , [ [publication, _] 
+% , [ [publication, _]
 %   | _RestOfSubItems
 %   ] = SubItems
 , SubItems
@@ -1176,10 +1161,12 @@ draw_item
     do_draw([ItemVertex|Rest], Graph, ParentVertex).
 
 make_recording_meta(AbsFilename) ->
-    #{ type  => article
-     , path  => AbsFilename
-     , title => ""
-     }.
+    BaseMeta =
+        #{ type  => article
+         , path  => AbsFilename
+         , title => ""
+         },
+    add_id(BaseMeta).
 
 make_meta
 ( { publication, [Prefix, Title] } = _ContentItem
@@ -1211,30 +1198,47 @@ make_meta
 % , Path
 , ItemNumber
 ) ->
-    #{ type      => ContentType
-     , selection => ItemNumber
-     , title     => ContentTitle
-     }.
+    BaseMeta =
+        #{ type      => ContentType
+         , selection => ItemNumber
+         , title     => ContentTitle
+         },
+    add_id(BaseMeta).
 
-sections_to_publications
-( [ {publication, _}
-  |_
+% This is what makes linking the same  publication  in
+% different categories possible.  Without IDs the same
+% `publication`  item   in  the  `publication_guide/0`
+% would link  to multiple categories, that  is, create
+% loop, and content graph would not be a tree anymore.
+add_id(BaseMeta) ->
+    BaseMeta#{id => erlang:make_ref()}.
+
+prefix_publications
+( [ {publication, [_, _]}
+  | _
   ] = SectionedPublications
 , _Prefix
 ) ->
     SectionedPublications;
 
-sections_to_publications
+prefix_publications
 ( [ {section, Title}
   | Rest
   ]
 , Prefix
 ) ->
+    prefix_publications([{publication, Title}|Rest], Prefix);
+
+prefix_publications
+( [ {SubItemType, Title}
+  | Rest
+  ]
+, Prefix
+) ->
     NewRest =
-        Rest ++ [{publication, [Prefix, Title]}],
+        Rest ++ [{SubItemType, [Prefix, Title]}],
 
-    sections_to_publications(NewRest, Prefix).
-
+    prefix_publications(NewRest, Prefix).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:

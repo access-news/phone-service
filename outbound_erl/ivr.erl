@@ -1140,6 +1140,7 @@ when Application =:= "speak"
         % 3
         % STATES (that stopped naturally) TO BE LOOPED
         % ------------------------------------------
+        % (It is kinda just a fluke that this construct works here.)
         _ when StoppedPlayback =:= State
              , IsStopped =:= false
              , State =:= main_menu
