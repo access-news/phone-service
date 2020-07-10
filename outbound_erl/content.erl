@@ -583,28 +583,10 @@ publication_guide() -> % {{-
                         ]
                       } % }}-
                     , {publication, "Sacramento News & Review"}
-                    % , { { sectioned_publication
-                    %     , "Test section"
-                    %     , {dir_prefix, "test"}
-                    %     }
-                    %   , [ {section, "TEST1"}
-                    %     , {section, "TEST2"}
-                    %   , [ {section, "A meaningful name"}
-                    %     , {section, "This is not"}
-                    %     ]
-                    %   }
                     , {publication, "Sacramento Press"}
                     , {publication, "Sacramento Business Journal"}
                     , {publication, "Sacramento Observer"}
                     , {publication, "Sacramento City Express"}
-                    % , { { sectioned_publication
-                    %     , "Another test"
-                    %     , {dir_prefix, "another"}
-                    %     }
-                    %   , [ {section, "One section one"}
-                    %     , {section, "Two section two"}
-                    %     ]
-                    %   }
                     , {publication, "East Sacramento News"}
                     , {publication, "The Land Park News"}
                     , {publication, "The Pocket News"}
@@ -667,16 +649,8 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { {category, "Blindness resources"} % {{-
-          % , [ { {category, "Newsletters"}
-          %     , [ {publication, "Society for the Blind"}
-          %       , {publication, "SFB Connection"}
-          %       , {publication, "The Earle Baum Center"}
-          %       , {publication, "Sierra Services for the Blind"}
-          %       , {publication, "California Council of the Blind"}
-          %       ]
-          %     }
           , [ { {category, "Blindness organizations"}
-                % NOTE LINKING
+                % NOTE LINKING % {{-
                 % 1. Use  the exact  same  publication  name anywhere  to
                 %    link  to  the  same folder  (`ContentTitle`  IS  the
                 %    directory name;  except in  case of the  presence of
@@ -700,11 +674,12 @@ publication_guide() -> % {{-
                 %    declare it in the alternative way where it should be
                 %    linked:
                 %    ```erlang
-                %    , { {category, "Educational materials"} % {{-
+                %    , { {category, "Educational materials"} %
                 %        % {publication, [Prefix, Title ]}
                 %      , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
                 %
                 %    ```
+                % }}-
               , [ { { category, "Society for the Blind", {dir_prefix, "sftb"}}
                   , [ {publication, "SFB Connection"}
                     , {publication, "Monthly newsletter"}
@@ -725,6 +700,8 @@ publication_guide() -> % {{-
           } % }}-
         , { {category, "Educational materials"} % {{-
           , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
+            , {publication, ["sacramento-bee", "Obituaries", "Sacramento Bee obituaries"]}
+            , {publication, ["",  "Yuba-Sutter Meals On Wheels", "Meals on wheels"]}
             , {publication, "Balance exercises"}
             , {publication, "Achieve a healthy weight by UC Davis"}
             ]
@@ -920,8 +897,8 @@ publication_guide() -> % {{-
 
 % }}-
 
-make_publication_dir([ Prefix, Title ]) ->
-    make_publication_dir(Prefix ++ "-" ++ Title);
+make_publication_dir([ Prefix, Title | _]) when is_list(Prefix) ->
+    make_publication_dir(Prefix ++ Title);
 
 make_publication_dir(PublicationTitle) -> % {{-
     PublicationDir =
@@ -1167,6 +1144,16 @@ make_recording_meta(AbsFilename) ->
          , title => ""
          },
     add_id(BaseMeta).
+
+make_meta
+( { publication, [Prefix, PublicationDir, Title] } = _ContentItem
+% , Path
+, ItemNumber
+) ->
+    make_meta
+      ( { publication, Title }
+      , ItemNumber
+      );
 
 make_meta
 ( { publication, [Prefix, Title] } = _ContentItem
