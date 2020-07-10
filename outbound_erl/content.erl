@@ -684,6 +684,7 @@ publication_guide() -> % {{-
                   , [ {publication, "SFB Connection"}
                     , {publication, "Monthly newsletter"}
                     , {publication, "Society for the Blind's student handbook"}
+                    , {publication, "Beyond Barriers Project"}
                     ]
                   }
                 , {publication, "The Earle Baum Center"}
@@ -700,25 +701,35 @@ publication_guide() -> % {{-
           } % }}-
         , { {category, "Educational materials"} % {{-
           , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
-            , {publication, ["sacramento-bee", "Obituaries", "Sacramento Bee obituaries"]}
-            , {publication, ["",  "Yuba-Sutter Meals On Wheels", "Meals on wheels"]}
+            % , {publication, ["sacramento-bee", "Obituaries", "Sacramento Bee obituaries"]}
+            % This form can also be used to specify directory name, and then the prompt to be read
+            % TODO make this explicit (i.e., dir_prefix, dir, title)
+            % Only 2 places need to be amended, by simply a matching for tuples
+            % + `make_publication_dir/1`
+            % + `make_meta/2`
+            % Maybe add both forms
+            % TODO FAVORITES
+            % Linking can now be used to add publications to your favorites!
+            % , {publication, ["",  "Yuba-Sutter Meals On Wheels", "Meals on wheels"]}
             , {publication, "Balance exercises"}
             , {publication, "Achieve a healthy weight by UC Davis"}
             ]
           } % }}-
         , { {category, "General information"} % {{-
           , [ {publication, "Yuba-Sutter Meals On Wheels"}
+            , {publication, "Client Assistence Program"}
             ]
           } % }}-
         , { {category, "Popular magazines"} % {{-
-          , [ {publication, "Newsweek"}
-            , {publication, "Fortune"}
+          , [ {publication, "Atlas Obscura"}
+            , {publication, "Braille Monitor"}
             , {publication, "Capital Public Radio"}
-            , {publication, "Travel & Leisure"}
             , {publication, "Entertainment Weekly"}
+            , {publication, "Fortune"}
             , {publication, "Mental Floss"}
-            , {publication, "Atlas Obscura"}
             , {publication, "New Scientist"}
+            , {publication, "Newsweek"}
+            , {publication, "Travel & Leisure"}
             ]
           } % }}-
         , { {category, "Games"} % {{-
@@ -729,7 +740,7 @@ publication_guide() -> % {{-
         , { {category, "Community content"} % {{-
           , [ { {category, "Podcasts"}
                 % TODO link this to sftb
-              , [ {publication, "Beyond Barriers Project"}
+              , [ {publication, ["sftb", "Beyond Barriers Project"]}
                 ]
               }
             , { { category, "Poetry" }
@@ -784,10 +795,11 @@ publication_guide() -> % {{-
                 , {publication, "X Minus 1"}
                 ]
               }
-            , { {category, "Commercials"}
-              , [ {publication, "Commercials"}
-                ]
-              }
+            , {publication, "Commercials"}
+            % , { {category, "Commercials"}
+            %   , [ {publication, "Commercials"}
+            %     ]
+            %   }
             ]
           } % }}-
         ]
