@@ -107,6 +107,7 @@ reload() ->
 load_phone_numbers() ->
     {ok, FileBin} = file:read_file(?USER_FILE),
     BinStrings = string:split(FileBin, "\n", all),
+    Filtered = lists:filter(fun(<<"#",_/binary>>) -> false; (_) -> true end, BinStrings),
     sets:from_list(BinStrings).
 
 log(Level, ValueList) ->
