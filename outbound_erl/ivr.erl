@@ -13,8 +13,14 @@
 
     ]).
 
-% TODO goes to README
+% NOTE document this somewhere, but it's silly to use things like this. Use a proper application scaffold (e.g., with rebar3) or just very very early in the project
 % erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -sname access_news -setcookie OldTimeRadio
+
+% NOTE (TODO?) This entire project could have been written in Elixir from the get-go but wasn't that familiar with FreeSWITCH (or Erlang) and wasn't sure how `mod_erlang_event` would call it. For posterity: FreeSWITCH calls out to an erlang node with an MFA so if an Elixir node is started with the proper shortname and cookie (`erl -sname access_news -setcookie OldTimeRadio`), it would have worked just as well as the underlying infrastructure is Erlang. Once the connection is up, the rest is just message passing to the FreeSWITCH C-node.
+
+% TODO reporting/stats
+% Add logs to identify demo mode callers!
+% What else? (There's plenty...)
 
 % NOTE On timeouts {{-
 
@@ -707,7 +713,7 @@ handle_event(
             end;
 
         % }}-
-        % === LEAVE_MESSAGE (-> (loop)) {{-
+        % === LEAVE_MESSAGE (loop) {{-
         leave_message ->
 
             case Digit of
@@ -726,7 +732,7 @@ handle_event(
 
         % NOTE This  clause  will never  come  into  play; as  soon
         %      as  recording is  started the  control is  hijacked,
-        %      and  no  events will  be  sent  towards through  the
+        %      and  no  events will  be  sent  through  the
         %      event socket. That  is why `playback_terminators` is
         %      set  to `any`,  and  when that  stops the  recording
         %      the  generated  CHANNEL_EXECUTE_COMPLETE event  will
@@ -826,15 +832,63 @@ handle_event(
                 "#" ->
                     next_content(next, State, Data);
                 % }}-
-                % TODO PROD handle no articles
-                % DONE? test
+                % 1         {{- => Play FIRST article
+                "1" ->
+                    next_content(first, State, Data);
+                % }}-
+                % TODO FEATURE list articles
+                % 2         {{- => publication_help
+                "2" ->
+                    {next_state, publication_help, Data};
+                % }}-
+                % 3         {{- => Play LAST article
+                "3" ->
+                    next_content(last, State, Data);
+                % }}-
+                % 4-8       {{- => UNASSIGNED (keep_state_and_data)
+                "4" -> keep_state_and_data;
+                % TODO FEATURE play where_am_i
+                "5" -> keep_state_and_data;
+                % TODO FEATURE list articles (basically a shortcut for "*" to emphasize that one can just do that to listen to available publications in a category)
+                "6" -> keep_state_and_data;
+                "7" -> keep_state_and_data;
+                % TODO FEATURE "continue from last time"
+                "8" -> keep_state_and_data;
+                % }}-
+                % 9         {{- => PREVIOUS publication
+                "9" ->
+                    next_content(prev, State, Data)
+                % }}-
+            end;
+
+        % }}-
+        % === PUBLICATION_HELP (loop) {{-
+        publication_help ->
+            case Digit of
+                % * (star)  {{- <- Go back (current content)
+                "*" ->
+                    { next_state
+                    , derive_state(Data)
+                    , Data
+                    };
+                % }}-
+                % 0          {{- => main_menu
+                "0" ->
+                    {next_state, main_menu, Data};
+                % }}-
+                % #          {{- => next publication (i.e., next sibling)
+                "#" ->
+                    next_content(next, State, Data);
+                % }}-
                 % 1         {{- => Play FIRST article
                 "1" ->
                     next_content(first, State, Data);
                 % }}-
                 % TODO FEATURE list articles
                 % 2         {{- => UNASSIGNED (keep_state_and_data)
-                "2" -> keep_state_and_data;
+                % "2" -> keep_state_and_data;
+                "2" ->
+                    keep_state_and_data;
                 % }}-
                 % 3         {{- => Play LAST article
                 "3" ->
@@ -932,26 +986,26 @@ handle_event(
                     fs:uuid_fileman(UUID, "seek:+10000"),
                     keep_state_and_data;
                 % }}-
-                % 4          {{- => slow_down
+                % 4          {{- => restart
                 "4" ->
-                    change_speed("-", Data);
+                    fs:uuid_fileman(UUID, "restart"),
+                    {keep_state, Data};
                 % }}-
-                % 5          {{- => volume_down
+                % 5          {{- => slow_down
                 "5" ->
-                    % TODO PROD figure out the right amount
-                    fs:uuid_fileman(UUID, "volume:-2"),
-                    keep_state_and_data;
+                    change_speed("-", Data);
                 % }}-
                 % 6          {{- => speed_up
                 "6" ->
                     change_speed("+", Data);
                 % }}-
-                % TODO FEATURE add to favourites
-                % 7          {{- => restart
+                % 7          {{- => volume_down
                 "7" ->
-                    fs:uuid_fileman(UUID, "restart"),
-                    {keep_state, Data};
+                    % TODO PROD figure out the right amount
+                    fs:uuid_fileman(UUID, "volume:-2"),
+                    keep_state_and_data;
                 % }}-
+                % TODO FEATURE add to favourites
                 % 8          {{- => volume_up
                 "8" ->
                     fs:uuid_fileman(UUID, "volume:+2"),
@@ -1140,7 +1194,7 @@ when Application =:= "speak"
         % 3
         % STATES (that stopped naturally) TO BE LOOPED
         % ------------------------------------------
-        % (It is kinda just a fluke that this construct works here.)
+        % TODO It is kinda just a fluke that this construct works here. Investigate and document to avoid future surprises.
         _ when StoppedPlayback =:= State
              , IsStopped =:= false
              , State =:= main_menu
@@ -1149,6 +1203,7 @@ when Application =:= "speak"
              ; State =:= category
              ; State =:= article_help
              ; State =:= leave_message
+             ; State =:= publication_help
         ->
             {repeat_state, NewData};
 

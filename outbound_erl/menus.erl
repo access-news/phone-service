@@ -35,6 +35,7 @@ play(init, Data) -> Data;
 play(incoming_call, Data) -> Data;
 play(collect_digits, Data) -> Data;
 
+% greeting/announcement
 play % GREETING {{-
 ( greeting = State
 , #{ auth_status := AuthStatus } = Data
@@ -45,23 +46,25 @@ play % GREETING {{-
     % GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
     % }}-
 
-    IsRegistered =
-        case AuthStatus of
-            registered ->
-            fun(D) -> D end;
-            unregistered ->
-                q(greeting_demo_warning)
-        end,
+    % IsRegistered =
+    %     case AuthStatus of
+    %         registered ->
+    %             fun(D) -> D end;
+    %         unregistered ->
+    %             q(greeting_demo_warning)
+    %     end,
 
     menu_queue
       ( State
       , Data
       % , [ curried_comfort(250)
+        % TODO !!!
         % , (cp(lofa))("https://accessnews.blob.core.windows.net/safeway/ro.mp3")
-      , [ q(greeting_welcome)
-        , q(to_main_menu)
-        , IsRegistered
-        , q(greeting_footer)
+      , [ q(greeting)
+         % q(greeting_welcome)
+        % , q(to_main_menu)
+        % , IsRegistered
+        % , q(greeting_footer)
         ]
       );
 
@@ -110,10 +113,21 @@ play % CONTENT_ROOT {{-
      } = Data
   )
 ->
+    IsRegistered =
+        case AuthStatus of
+            registered ->
+                fun(D) -> D end;
+            unregistered ->
+                q(demo_mode)
+        end,
+
     menu_queue
       ( State
       , Data
-      , [ title(CurrentContent)
+      , [ q(option_changes)
+        , IsRegistered
+        , q(get_help)
+        , title(CurrentContent)
         , selections(CurrentContent)
         , q(to_main_menu)
         ]
@@ -346,25 +360,27 @@ prompt(PromptName) -> % {{-
     case PromptName of
 
         % GREETING {{-
-        "greeting_welcome" ->
-            "Welcome  to  Access  News,  a  service  of"
-            "Society  For  The   Blind  in  Sacramento,"
-            "California,  for  blind,  low-vision,  and"
-            "print-impaired  individuals.  If you  know"
-            "your selection,  you may  enter it  at any"
-            "time, or  press pound to skip  to the main"
-            "categories.";
+        greeting ->
+            "Welcome to Access News!";
+        % "greeting_welcome" ->
+        %     "Welcome  to  Access  News,  a  service  of"
+        %     "Society  For  The   Blind  in  Sacramento,"
+        %     "California,  for  blind,  low-vision,  and"
+        %     "print-impaired  individuals.  If you  know"
+        %     "your selection,  you may  enter it  at any"
+        %     "time, or  press pound to skip  to the main"
+        %     "categories.";
 
-        "greeting_demo_warning" ->
-            "You are  currently in demo mode,  and have"
-            "approximately  5 minutes  to  try out  the"
-            "system before getting disconnected.";
+        % "greeting_demo_warning" ->
+        %     "You are  currently in demo mode,  and have"
+        %     "approximately  5 minutes  to  try out  the"
+        %     "system before getting disconnected.";
 
-        "greeting_footer" ->
-            "If  you have  any questions,  concerns, or"
-            "suggestions, please  call 916 889  7519 or"
-            "leave a message by  pressing zero and then"
-            "pound.";
+        % "greeting_footer" ->
+        %     "If  you have  any questions,  concerns, or"
+        %     "suggestions, please  call 916 889  7519 or"
+        %     "leave a message by  pressing zero and then"
+        %     "pound.";
 
         % }}-
         % MAIN_MENU {{-
@@ -399,6 +415,15 @@ prompt(PromptName) -> % {{-
         % }}-
         % CONTENT_ROOT (empty){{-
         % TODO add "Press pound to enter first category."
+        "option_changes" ->
+            "Please  listen carefully,  as  menu and  navigation
+            options have recently changed.";
+
+        "get_help" ->
+            "For help at any time, please press 0.";
+
+        "demo_mode" ->
+            "Please note that you are currently in demo mode.";
 
         % }}-
         % CATEGORY {{-
