@@ -17,6 +17,7 @@
     % public API
     , pick/2
     , root/0
+    , all_vertices/0
     , redraw/0
     , add_label/2
     , get_label/1
@@ -78,6 +79,9 @@ handle_call({pick, Direction, Vertex}, _From, Graph)
     , process_call(Graph, Vertex, Direction)
     , Graph
     };
+
+handle_call(all_vertices, _From, Graph) ->
+    {reply, digraph:vertices(Graph), Graph};
 
 handle_call({get_label, Vertex}, _From, Graph) when is_map(Vertex) ->
     {Vertex, Label} = digraph:vertex(Graph, Vertex),
@@ -146,6 +150,12 @@ pick(Direction, CurrentVertex) -> % List Content | []
 
 root() ->
     pick(content_root, ignore).
+
+all_vertices() ->
+    gen_server:call
+        ( ?MODULE
+        , all_vertices
+        ).
 
 % TODO No diff algo involved so `publications` directory has
 %      to be  manually renamed  if one  would like  to have
@@ -542,6 +552,7 @@ get_vertex(Graph, Vertex, Direction) ->
 % to avoid excessive amount of connections (and facing the problems updating them would cause), it will be done by finding the parent category, and adding/subtracting one from their "ID".
 % The publication guide below is just a representation of future data of the yet-to-be-implemented core web service, and its data may not contain such IDs, but that could be done on this end by ordering and adding that via a script.
 
+% TODO This is configuration data, thus it shouldn't be here.
 publication_guide() -> % {{-
     [ { {category, "Main category"}
       , [ { {category, "Store sales advertising"} % {{-
@@ -909,6 +920,11 @@ publication_guide() -> % {{-
 
 % }}-
 
+% TODO So this could safely be set to [], but need to make sure that it doesn't affect anything. At least, tried renaming it Rest, and use the 
+% logger:debug(#{make_publication_dir => Rest})
+% and the only thing that came up was []
+%                                      |
+%                                      V
 make_publication_dir([ Prefix, Title | _]) when is_list(Prefix) ->
     make_publication_dir(Prefix ++ Title);
 
@@ -1156,16 +1172,6 @@ make_recording_meta(AbsFilename) ->
          , title => ""
          },
     add_id(BaseMeta).
-
-make_meta
-( { publication, [Prefix, PublicationDir, Title] } = _ContentItem
-% , Path
-, ItemNumber
-) ->
-    make_meta
-      ( { publication, Title }
-      , ItemNumber
-      );
 
 make_meta
 ( { publication, [Prefix, Title] } = _ContentItem
