@@ -8,7 +8,7 @@
 % String -> String -> Integer (0 - 400)
 google_TTS_to_wav
 ({ Text
- , FileBasename
+ , AudioFilename
  , Speed
  }
 )
@@ -21,7 +21,7 @@ google_TTS_to_wav
         % ++ "0.87 > "
         ++ futil:stringify(Speed/100)
         ++ " > "
-        ++ menus:get_audiofilename(FileBasename, Speed)
+        ++ AudioFilename
     ).
 
 % vim: set fdm=marker:

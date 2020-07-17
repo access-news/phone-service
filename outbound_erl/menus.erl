@@ -5,13 +5,14 @@
       play/2
     , stop_playback/1
     , comfort_noise/1
-    , get_audiofilename/2
     ]).
 
 % TODO PROD don't forget to document this in the deployment instructions that these directories will have to be created!
 -define(PROMPT_DIR, "/home/toraritte/clones/phone-service/prompts/").
 % TODO PROD ?REC_DIR may be omitted altogether; try using just $$sound_prefix of FreeSWITCH and upload recordings directly to cloud storage
 -define(REC_DIR,    "/home/toraritte/clones/phone-service/recordings/").
+
+% TODO set verbosity levels in main_menu (0 - lean menus, 1 - help menus are added to all menus explicitly)
 
 % TODO Make menus more responsive on prompt-speed change {{-
 
@@ -61,6 +62,7 @@ play % GREETING {{-
         % TODO !!!
         % , (cp(lofa))("https://accessnews.blob.core.windows.net/safeway/ro.mp3")
       , [ q(greeting)
+        , q(option_changes)
          % q(greeting_welcome)
         % , q(to_main_menu)
         % , IsRegistered
@@ -71,13 +73,28 @@ play % GREETING {{-
 % }}-
 play % MAIN_MENU {{-
   ( main_menu = State
-  , Data
+  , #{ auth_status := AuthStatus } = Data
   )
 ->
-    menu_queue(State, Data);
+    IsRegistered =
+        case AuthStatus of
+            registered ->
+                fun(D) -> D end;
+            unregistered ->
+                q(help_menu_demo)
+        end,
+
+    menu_queue
+      ( State
+      , Data
+      , [ q(help_menu)
+        , IsRegistered
+        , q(help_menu_options)
+        ]
+      );
 
 % }}-
-play % MAIN_MENU {{-
+play % PROMPT_PLAYBACK_SPEED {{-
   ( prompt_playback_speed = State
   , Data
   )
@@ -98,7 +115,13 @@ play % IN_RECORDING {{-
   , Data
   )
 ->
-    % NOTE Cannot use `menu_queue/3` because it implicitly calls `endplay/?` and it would result in a crash (probably) in CHANNEL_EXECUTE_COMPLETE speak/play; this state is not listed in the looped states clause and state change only happens when recording stops and it is handled in its own CHANNEL_EXECUTE_COMPLETE record clause
+    % NOTE Cannot  use  `menu_queue/3`  because  it  implicitly
+    %      calls  `endplay/?` and  it would  result in  a crash
+    %      (probably)  in CHANNEL_EXECUTE_COMPLETE  speak/play;
+    %      this  state  is  not  listed in  the  looped  states
+    %      clause   and   state   change  only   happens   when
+    %      recording  stops  and  it  is  handled  in  its  own
+    %      CHANNEL_EXECUTE_COMPLETE record clause
     futil:pipe
       ([ Data
        , q(record_prompt)
@@ -110,6 +133,7 @@ play % CONTENT_ROOT {{-
   ( content_root = State
   , #{ current_content :=
        #{title := Title} = CurrentContent
+     , auth_status := AuthStatus
      } = Data
   )
 ->
@@ -124,12 +148,10 @@ play % CONTENT_ROOT {{-
     menu_queue
       ( State
       , Data
-      , [ q(option_changes)
+      , [ title(CurrentContent)
         , IsRegistered
         , q(get_help)
-        , title(CurrentContent)
         , selections(CurrentContent)
-        , q(to_main_menu)
         ]
       );
 
@@ -172,12 +194,30 @@ play % PUBLICATION {{-
       , Data
       , [ title(CurrentContent)
         , q("article-number-" ++ ArticleNumberString)
-        , q(go_up)
-        , q(next_publication)
-        , q(to_main_menu)
+        , q(to_publication_help)
+        ]
+      );
+
+% }}-
+play % PUBLICATION_HELP {{-
+  ( publication_help = State
+  , Data
+  )
+->
+    menu_queue
+      ( State
+      , Data
+      , [
+         % title(CurrentContent)
+        % , q("article-number-" ++ ArticleNumberString)
+          q(publication_help)
         , q(first_article)
         , q(last_article)
         , q(prev_publication)
+        , q(next_publication)
+        , q(go_up)
+        , q(to_main_menu)
+        , q(extra_publication_help)
         ]
       );
 
@@ -253,18 +293,18 @@ play % ARTICLE_HELP {{-
       ( State
       , Data
       , [ q(article_paused)
-        , q(go_up)
-        , q(next_article)
-        , q(to_main_menu)
         , q(skip_backward)
         , q(pause_resume)
         , q(skip_forward)
-        , q(slow_down)
-        , q(volume_down)
-        , q(speed_up)
         , q(restart)
+        , q(slow_down)
+        , q(speed_up)
+        , q(volume_down)
         , q(volume_up)
         , q(prev_article)
+        , q(go_up)
+        , q(to_main_menu)
+        , q(next_article)
         ]
       );
 
@@ -356,71 +396,83 @@ play % NO_NEXT_ITEM {{-
 
 % }}-
 % === STRINGS TO BE READ BY TTS ====================== {{-
+% TODO Also, if the `prompts` dir does not exist, nothing will fail and the app happily goes along without ever playing anything
 prompt(PromptName) -> % {{-
     case PromptName of
 
         % GREETING {{-
-        greeting ->
+        "greeting" ->
             "Welcome to Access News!";
+
+        "option_changes" ->
+            "Please  listen carefully,  as  menu and  navigation "
+            "options have recently changed.";
+
         % "greeting_welcome" ->
-        %     "Welcome  to  Access  News,  a  service  of"
-        %     "Society  For  The   Blind  in  Sacramento,"
-        %     "California,  for  blind,  low-vision,  and"
-        %     "print-impaired  individuals.  If you  know"
-        %     "your selection,  you may  enter it  at any"
-        %     "time, or  press pound to skip  to the main"
+        %     "Welcome  to  Access  News,  a  service  of "
+        %     "Society  For  The   Blind  in  Sacramento, "
+        %     "California,  for  blind,  low-vision,  and "
+        %     "print-impaired  individuals.  If you  know "
+        %     "your selection,  you may  enter it  at any "
+        %     "time, or  press pound to skip  to the main "
         %     "categories.";
 
         % "greeting_demo_warning" ->
-        %     "You are  currently in demo mode,  and have"
-        %     "approximately  5 minutes  to  try out  the"
+        %     "You are  currently in demo mode,  and have "
+        %     "approximately  5 minutes  to  try out  the "
         %     "system before getting disconnected.";
 
         % "greeting_footer" ->
-        %     "If  you have  any questions,  concerns, or"
-        %     "suggestions, please  call 916 889  7519 or"
-        %     "leave a message by  pressing zero and then"
+        %     "If  you have  any questions,  concerns, or "
+        %     "suggestions, please  call 916 889  7519 or "
+        %     "leave a message by  pressing zero and then "
         %     "pound.";
 
         % }}-
         % MAIN_MENU {{-
-        "main_menu" ->
-            "Main menu."
-            "Press star to go back."
-            "Press pound to record a message."
-            "Press 0 to jump to the main category."
+        "help_menu" ->
+            "Help and other options.";
+
+        "help_menu_options" ->
+            "Press star to go back. "
+            "Press pound to record a message. "
+            "Press 0 to jump to the main category. "
             "Press 2 to change prompt playback speed.";
+        
+        "help_menu_demo" ->
+            "You are  currently in demo mode,  and have "
+            "approximately  5 minutes  to  try out  the "
+            "system before getting disconnected. "
+            "If  you would like to register or have any "
+            "questions, please call 9 1 6, 8 8 9, 7 5 1 "
+            "9, or leave a message by pressing pound.; ";
 
         % }}-
         % PROMPT_PLAYBACK_SPEED {{-
         "prompt_playback_speed" ->
-            "Press star to go back."
-            "Press 1 to slow down prompts."
-            "Press 2 to reset."
+            "Press star to go back. "
+            "Press 1 to slow down prompts. "
+            "Press 2 to reset. "
             "Press 3 to speed up prompts.";
 
         % }}-
         % LEAVE_MESSAGE {{-
         "leave_message" ->
-            "Press star to go back."
+            "Press star to go back. "
             "Press any other button to start recording.";
 
         % }}-
         % IN_RECORDING {{-
         % NOTE Deliberately avoiding naming this "in_recording" as it would trigger something unexpected (or just crash) in CHANNEL_EXECUTE_COMPLETE speak/play
         "record_prompt" ->
-            "Recording will start after the beep."
+            "Recording will start after the beep. "
             "To stop recording press any button.";
 
         % }}-
         % CONTENT_ROOT (empty){{-
         % TODO add "Press pound to enter first category."
-        "option_changes" ->
-            "Please  listen carefully,  as  menu and  navigation
-            options have recently changed.";
-
         "get_help" ->
-            "For help at any time, please press 0.";
+            "Press 0 for help at any time.";
 
         "demo_mode" ->
             "Please note that you are currently in demo mode.";
@@ -434,14 +486,24 @@ prompt(PromptName) -> % {{-
         % PUBLICATION {{-
         % number of articles {{-
         "article-number-0" ->
-            "No articles in this category";
+            "No articles in this publication.";
 
         "article-number-1" ->
-            "One article in this category.";
+            "One article in this publication.";
 
         "article-number-" ++ Number ->
             Number ++ " articles in this publication.";
         % }}-
+        % If they press 2 while still in publication -> PUBLICATION_HELP
+        % If the article already started playing -> ARTICLE_HELP
+        "to_publication_help" -> 
+            "Press two for help at any time.";
+
+        % }}-
+        % PUBLICATION_HELP {{-
+        "publication_help" ->
+            "The  following controls  are available  in "
+            "each publication: ";
 
         "next_publication" ->
             "Press pound to jump to the next publication.";
@@ -455,18 +517,33 @@ prompt(PromptName) -> % {{-
         "last_article" ->
             "Press three to start the oldest article.";
 
+        "extra_publication_help" ->
+            "The     newest   article     will    start "
+            "automatically   once   the  name   of  the "
+            "publication  and  the article  count  have "
+            "been announced. "
+            "Pressing  two while  listening an  article "
+            "will pause playback, and the upcoming menu "
+            "will tell you  about all available article "
+            "controls. ";
+
         % }}-
+        % TODO This should hold the article title at one point.
+        % TODO or, any kind of metadata, that could be customizeable.
+        % For example, user wants to hear the date of the article (recorded, written, or both) , and/or the name of the reader, whatever, and they should be able to customize this in `main_menu``
         % ARTICLE_INTRO {{-
         "article_intro" ->
-            "Press two for help at any time.";
+            % "Press two for help at any time.";
+            "";
 
         % }}-
         % ARTICLE (empty){{-
         % }}-
+        % TODO Either automatically read the article metadata (date recorded/written, name of reader, title, article author, etc), and have a submenu with the article controls (e.g. "Article paused. To listen to the available article playback controls, press x. For article information press y." or just straight up start reading article metadata).
         % ARTICLE_HELP {{-
         "article_paused" ->
-            "Article  paused. Press  2  to resume.  The"
-            "following  controls  are available  during"
+            "Article  paused. Press  2  to resume.  The "
+            "following  controls  are available  during "
             "playback.";
 
         "next_article" ->
@@ -485,19 +562,21 @@ prompt(PromptName) -> % {{-
             "Press 2 to pause or resume article.";
 
         "slow_down" ->
-            "Press 4 to slow down the recording.";
+            % "Press 4 to slow down the recording.";
+            "Press 5 to slow down the recording.";
 
         "speed_up" ->
             "Press 6 to speed up playback.";
 
         "volume_down" ->
-            "Press 5 to lower the volume.";
+            "Press 7 to lower the volume.";
 
         "volume_up" ->
             "Rress 8 to turn up the volume.";
 
         "restart" ->
-            "Press 7 to restart the article.";
+            % "Press 7 to restart the article.";
+            "Press 4 to restart the article.";
 
         % }}-
         % INVALID_SELECTION {{-
@@ -507,17 +586,17 @@ prompt(PromptName) -> % {{-
         % }}-
         % INACTIVITY_WARNING {{-
         "inactivity_warning" ->
-            "Please note that we haven't registered any"
-            "activity  from  you  for  some  time  now."
-            "Please press any  button  if you are still"
+            "Please note that we haven't registered any "
+            "activity  from  you  for  some  time  now. "
+            "Please press any  button  if you are still "
             "there.";
 
         % }}-
         % DEMO_HANGUP {{-
         "demo_hangup" ->
-            "End of demo session.  If you would like to"
-            "sign  up  for  Access News,  or  have  any"
-            "questions, please call 916-889-7519. Thank"
+            "End of demo session.  If you would like to "
+            "sign  up  for  Access News,  or  have  any "
+            "questions, please call 916-889-7519. Thank "
             "you, and have a wondeful day!";
 
         % }}-
@@ -614,19 +693,28 @@ queue_prompt
 , #{ prompt_speed := PromptSpeed } = Data
 )
 ->
+    Text =
+        prompt(PromptNameString),
+    ID =
+        id_from_hash(Text),
+        
     AudioFilename =
-        get_audiofilename(PromptNameString, PromptSpeed),
+        get_audiofilename(ID, PromptNameString, PromptSpeed),
 
     case filelib:is_file(AudioFilename) of
         true ->
             noop;
         false ->
-            Text = prompt(PromptNameString),
             % google_TTS_to_wav(Text, PromptNameString, PromptSpeed)
-            TTSEngine({Text, PromptNameString, PromptSpeed})
+            TTSEngine({Text, AudioFilename, PromptSpeed})
     end,
 
     playback(smarties_cereal, Data, AudioFilename).
+
+% https://gist.github.com/dch/bb33330a6d68b8149103 (archived as well)
+id_from_hash(Text) ->
+    <<Hash:256/big-unsigned-integer>> = crypto:hash(sha3_256, Text),
+    lists:flatten(io_lib:format("~64.16.0b", [Hash])).
 
 q(PromptName) when is_atom(PromptName) ->
     q(atom_to_list(PromptName));
@@ -926,7 +1014,9 @@ do_play_selection % {{-
 do_check  % {{-
 %        String -> Map -> String -> FileName
 ( Text
-, #{ title := Title} = Vertex
+, #{ id := VertexID
+   , title := Title
+   } = Vertex
 , LabelKey
 , PromptSpeed
 , TTSEngine
@@ -962,8 +1052,18 @@ do_check  % {{-
         ++ "-"
         ++ LabelKey,
 
+    % This ID shoud only change when the entire graph is redrawn.
+    % NOTE 
+    ID =
+        lists:filter
+          ( fun(C) when C =< 57, C >= 48 -> true;
+               (_) -> false
+            end,
+            futil:stringify(VertexID)
+          ),
+
     AudioFilename =
-        get_audiofilename(FileBasename, PromptSpeed),
+        get_audiofilename(ID, FileBasename, PromptSpeed),
 
     % Need to  check both  because vertex label  holds the
     % text while the filename has the speed.
@@ -977,7 +1077,7 @@ do_check  % {{-
         _ ->
             % 1. call the google tts script (and save the audio to ?PROMPT_DIR)
             % google_TTS_to_wav(Text, FileBasename, PromptSpeed),
-            TTSEngine({Text, FileBasename, PromptSpeed}),
+            TTSEngine({Text, AudioFilename, PromptSpeed}),
             % 2. save the text to vertex label
             content:add_label(Vertex, LabelMap#{ LabelKey => Text })
     end,
@@ -985,8 +1085,17 @@ do_check  % {{-
     AudioFilename.
 
 % }}-
-get_audiofilename(FileBasename, Speed) -> % {{-
+% NOTE why is the ID needed?
+% If the prompt-file already exists, changing the prompt text and recompiling won't take effect, so one either has to change the name of the case option in "STRINGS TO BE READ BY TTS", or delete the file (or entire "prompts" dir).
+% This would also cause "numbering" issues -> E.g., the publication_guide has changed and an item is at a different place, but because the prompt-file's name is only the publication name, it will just take the existing one.
+% -> detect changes
+% SOLUTION: just as vertices has names (to make linking possible), add unique references to the prompt-filenames as well
+%
+% `ID` could have been simply part of `FileBasename` but making it explicit
+get_audiofilename(ID, FileBasename, Speed) -> % {{-
        ?PROMPT_DIR
+    ++ ID
+    ++ "-"
     ++ integer_to_list(Speed)
     ++ "-"
     ++ FileBasename
