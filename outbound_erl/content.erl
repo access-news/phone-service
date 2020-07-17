@@ -554,7 +554,8 @@ get_vertex(Graph, Vertex, Direction) ->
 
 % TODO This is configuration data, thus it shouldn't be here.
 publication_guide() -> % {{-
-    [ { {category, "Main category"}
+    [ { {category, "Main menu"}
+    % [ { {category, "Main category"}
       , [ { {category, "Store sales advertising"} % {{-
           , [ { {category, "Grocery stores"}
               , [ {publication, "Safeway"}
@@ -581,13 +582,13 @@ publication_guide() -> % {{-
               }
             ]
           } % }}-
-        , { {category, "Northern California newspapers"} % {{-
-          , [ { {category, "Sacramento newspapers and magazines"}
+        , { {category, "Northern California newspapers and magazines"} % {{-
+          , [ { {category, "Sacramento newspapers and magazines"} % {{-
               , [ { {category, "Sacramento newspapers"} % {{-
                   , [ { { sectioned_publication
-                        , "Sacramento Bee sections"
+                        , "Sacramento Bee sections" % {{-
                         , {dir_prefix, "sacramento-bee"}
-                        } % {{-
+                        }
                       , [ {section, "Sports"}
                         , {section, "News"}
                         , {section, "Obituaries"}
@@ -610,9 +611,8 @@ publication_guide() -> % {{-
                     ]
                   } % }}-
                 ]
-              }
-
-            , { {category, "Greater Sacramento area newspapers"}
+              } % }}-
+            , { {category, "Greater Sacramento area newspapers"} % {{-
               , [ {publication, "Carmichael Times"}
                 , {publication, "Arden Carmichael News"}
                 , {publication, "Davis Enterprise"}
@@ -624,9 +624,8 @@ publication_guide() -> % {{-
                 , {publication, "El Dorado County Mountain Democrat"}
                 , {publication, "Loomis News"}
                 ]
-              }
-
-            , { {category, "San Francisco and Bay Area newspapers"}
+              } % }}-
+            , { {category, "San Francisco and Bay Area newspapers"} % {{-
               , [ {publication, "Vallejo Times Herald"}
                 , {publication, "Santa Rosa Press Democrat"}
                 , {publication, "SF Gate"}
@@ -635,20 +634,17 @@ publication_guide() -> % {{-
                 , {publication, "SF Weekly"}
                 , {publication, "KQED Bay Area Bites"}
                 ]
-              }
-
-            , { {category, "Central California newspapers"}
+              } % }}-
+            , { {category, "Central California newspapers"} 
               , [ {publication, "Modesto Bee"}
                 , {publication, "Stockton Record"}
                 ]
               }
-
             , { {category, "Mendocino county newspapers"}
               , [ {publication, "Fort Bragg Advocate News"}
                 , {publication, "The Mendocino Beacon"}
                 ]
               }
-
             , { {category, "Humboldt & Trinity county newspapers"}
               , [ {publication, "Humboldt Senior Resource Center's Senior News"}
                 , {publication, "North Coast Journal"}
@@ -657,78 +653,6 @@ publication_guide() -> % {{-
                 , {publication, "Mad River Union"}
                 ]
               }
-            ]
-          } % }}-
-        , { {category, "Blindness resources"} % {{-
-          , [ { {category, "Blindness organizations"}
-                % NOTE LINKING % {{-
-                % 1. Use  the exact  same  publication  name anywhere  to
-                %    link  to  the  same folder  (`ContentTitle`  IS  the
-                %    directory name;  except in  case of the  presence of
-                %    `dir_prefix`, see 2. below)
-                %
-                % 2. If the publication, that needs to be linked, is ever
-                %    specified in  the context of `dir_prefix`  it has to
-                %    be supplied  anywhere else, otherwise there  will be
-                %    different  directories  created during  drawing  the
-                %    content graph.
-                %
-                %    For example, to link the student handbook below,
-                %    ```erlang
-                %    , [ { { category, "Society for the Blind", {dir_prefix, "sftb"}}
-                %        , [ {publication, "SFB Connection"}
-                %          , {publication, "Monthly newsletter"}
-                %          , {publication, "Society for the Blind's student handbook"}
-                %          ]
-                %        }
-                %    ```
-                %    declare it in the alternative way where it should be
-                %    linked:
-                %    ```erlang
-                %    , { {category, "Educational materials"} %
-                %        % {publication, [Prefix, Title ]}
-                %      , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
-                %
-                %    ```
-                % }}-
-              , [ { { category, "Society for the Blind", {dir_prefix, "sftb"}}
-                  , [ {publication, "SFB Connection"}
-                    , {publication, "Monthly newsletter"}
-                    , {publication, "Society for the Blind's student handbook"}
-                    , {publication, "Beyond Barriers Project"}
-                    ]
-                  }
-                , {publication, "The Earle Baum Center"}
-                , {publication, "Sierra Services for the Blind"}
-                , {publication, "California Council of the Blind"}
-                ]
-              }
-            , { { category, "Publications" }
-              , [ {publication, "Braille Monitor"}
-                , {publication, "Client Assistence Program"}
-                ]
-              }
-            ]
-          } % }}-
-        , { {category, "Educational materials"} % {{-
-          , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
-            % , {publication, ["sacramento-bee", "Obituaries", "Sacramento Bee obituaries"]}
-            % This form can also be used to specify directory name, and then the prompt to be read
-            % TODO make this explicit (i.e., dir_prefix, dir, title)
-            % Only 2 places need to be amended, by simply a matching for tuples
-            % + `make_publication_dir/1`
-            % + `make_meta/2`
-            % Maybe add both forms
-            % TODO FAVORITES
-            % Linking can now be used to add publications to your favorites!
-            % , {publication, ["",  "Yuba-Sutter Meals On Wheels", "Meals on wheels"]}
-            , {publication, "Balance exercises"}
-            , {publication, "Achieve a healthy weight by UC Davis"}
-            ]
-          } % }}-
-        , { {category, "General information"} % {{-
-          , [ {publication, "Yuba-Sutter Meals On Wheels"}
-            , {publication, "Client Assistence Program"}
             ]
           } % }}-
         , { {category, "Popular magazines"} % {{-
@@ -741,24 +665,6 @@ publication_guide() -> % {{-
             , {publication, "New Scientist"}
             , {publication, "Newsweek"}
             , {publication, "Travel & Leisure"}
-            ]
-          } % }}-
-        , { {category, "Games"} % {{-
-          , [ {publication, "Crosswords"}
-            , {publication, "Trivia"}
-            ]
-          } % }}-
-        , { {category, "Community content"} % {{-
-          , [ { {category, "Podcasts"}
-                % TODO link this to sftb
-              , [ {publication, ["sftb", "Beyond Barriers Project"]}
-                ]
-              }
-            , { { category, "Poetry" }
-              , [ {publication, "Brad Buchanan"}
-                , {publication, "Writer's on the air"}
-                ]
-              }
             ]
           } % }}-
         , { {category, "Old Time Radio Theater"} % {{-
@@ -811,6 +717,100 @@ publication_guide() -> % {{-
             %   , [ {publication, "Commercials"}
             %     ]
             %   }
+            ]
+          } % }}-
+        , { {category, "Games"} % {{-
+          , [ {publication, "Crosswords"}
+            , {publication, "Trivia"}
+            ]
+          } % }}-
+        , { {category, "Community information and resources"} % {{-
+          , [ { {category, "Podcasts"}
+                % TODO link this to sftb
+              , [ {publication, ["sftb", "Beyond Barriers Project"]}
+                ]
+              }
+            , { { category, "Poetry" }
+              , [ {publication, "Brad Buchanan"}
+                , {publication, "Writer's on the air"}
+                ]
+              }
+            ]
+          } % }}-
+        , { {category, "Blindness information and resources"} % {{-
+          , [ { {category, "Blindness organizations"}
+                % NOTE LINKING % {{-
+                % 1. Use  the exact  same  publication  name anywhere  to
+                %    link  to  the  same folder  (`ContentTitle`  IS  the
+                %    directory name;  except in  case of the  presence of
+                %    `dir_prefix`, see 2. below)
+                %
+                % 2. If the publication, that needs to be linked, is ever
+                %    specified in  the context of `dir_prefix`  it has to
+                %    be supplied  anywhere else, otherwise there  will be
+                %    different  directories  created during  drawing  the
+                %    content graph.
+                %
+                %    For example, to link the student handbook below,
+                %    ```erlang
+                %    , [ { { category, "Society for the Blind", {dir_prefix, "sftb"}}
+                %        , [ {publication, "SFB Connection"}
+                %          , {publication, "Monthly newsletter"}
+                %          , {publication, "Society for the Blind's student handbook"}
+                %          ]
+                %        }
+                %    ```
+                %    declare it in the alternative way where it should be
+                %    linked:
+                %    ```erlang
+                %    , { {category, "Educational materials"} %
+                %        % {publication, [Prefix, Title ]}
+                %      , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
+                %
+                %    ```
+                % }}-
+              , [ { {category, "Society for the Blind", {dir_prefix, "sftb"}} % {{-
+                  , [ {publication, "SFB Connection"}
+                    , {publication, "Monthly newsletter"}
+                    , {publication, "Society for the Blind's student handbook"}
+                    , {publication, "Beyond Barriers Project"}
+                    ]
+                  } % }}-
+                , {publication, "The Earle Baum Center"}
+                , {publication, "Sierra Services for the Blind"}
+                , {publication, "California Council of the Blind"}
+                ]
+              }
+            , { { category, "Publications" }
+              , [ {publication, "Braille Monitor"}
+                , {publication, "Client Assistence Program"}
+                ]
+              }
+            ]
+          } % }}-
+        , { {category, "Education and resources"} % {{-
+          , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
+            % , {publication, ["sacramento-bee", "Obituaries", "Sacramento Bee obituaries"]}
+            % This form can also be used to specify directory name, and then the prompt to be read
+            % TODO make this explicit (i.e., dir_prefix, dir, title)
+            % Only 2 places need to be amended, by simply a matching for tuples
+            % + `make_publication_dir/1`
+            % + `make_meta/2`
+            % Maybe add both forms
+            % TODO FAVORITES
+            % Linking can now be used to add publications to your favorites!
+            % , {publication, ["",  "Yuba-Sutter Meals On Wheels", "Meals on wheels"]}
+            , {publication, "Balance exercises"}
+            , {publication, "Achieve a healthy weight by UC Davis"}
+            , {publication, "Yuba-Sutter Meals On Wheels"}
+            , {publication, "Client Assistence Program"}
+            ]
+          } % }}-
+        , { {category, "Society for the Blind", {dir_prefix, "sftb"}} % {{-
+          , [ {publication, "SFB Connection"}
+            , {publication, "Monthly newsletter"}
+            , {publication, "Society for the Blind's student handbook"}
+            , {publication, "Beyond Barriers Project"}
             ]
           } % }}-
         ]
