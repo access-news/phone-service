@@ -1523,6 +1523,8 @@ derive_state(#{ type := _ } = Content) ->
             article_intro;
         #{ type := sectioned_publication } ->
             category;
+        #{ type := section } ->
+            publication;
         #{ type := ContentType } ->
             ContentType
     end.

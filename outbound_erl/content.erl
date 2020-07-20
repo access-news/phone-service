@@ -211,18 +211,50 @@ draw_content_graph() ->
     ContentRoot =
         make_meta(RootContentItem, 0),
 
-    Graph =
+    FirstRunGraph =
         digraph:new([cyclic, protected]), % default values made explicit
 
-    digraph:add_vertex(Graph, ContentRoot),
+    digraph:add_vertex(FirstRunGraph, ContentRoot),
 
     do_draw
       ( [first|MainMenuItems]
-      , Graph
+      , FirstRunGraph
       , ContentRoot
       ),
 
-    Graph.
+    % NOTE Linking hack % {{-
+    % This silly solution is to make sure linking works in
+    % the  publication  guide.  On  first  go-round,  when
+    % `DirOptions` have  a `link`  tuple, but there  is no
+    % directory, it  is probably  because it has  not been
+    % created yet.  On the second run,  which is basically
+    % `refresh_content_graph/1`, the dir  should be there,
+    % and linking will take effect.
+    % 
+    % The  elegant  solution would  have  been  to send  a
+    % `redraw` message  at the  end of `init/0`  (to allow
+    % the process  to finish  starting) but this  setup is
+    % more than likely to be temporary anyway.
+    % 
+    % LINKING FAIL:
+    % If there  is none, or  more than one,  a "link_fail"
+    % directory is created; this will be deleted after the
+    % first  run, but  if  there is  still  one after  the
+    % second one, it  means that the `publication_guide/0`
+    % will need to be amended.
+    % }}-
+    digraph:delete(FirstRunGraph),
+    file:del_dir("link_fail"),
+    SecondRunGraph =
+        digraph:new([cyclic, protected]),
+    digraph:add_vertex(SecondRunGraph, ContentRoot),
+    do_draw
+      ( [first|MainMenuItems]
+      , SecondRunGraph
+      , ContentRoot
+      ),
+
+    SecondRunGraph.
 
 % TODO Don't think this is possible
 do_draw([], _Graph, _ParentVertex) ->
@@ -244,178 +276,6 @@ do_draw  % ContentType, [ PrevItemVertex ] {{-
 ->
     done;
 
-% }}-
-
-do_draw  % content_with_subitems, [          first, ContentItem | []    = Rest ] {{-
-( [ first
-  % , { {_ContentType, _Title} = ContentItem
-  , { ContentItem
-    , [_|_] = SubItems % Explicitly disallow empty categories or sectioned publications without sections
-    }
-  | [] = _Rest
-  ]
-, Graph
-, ParentVertex
-)
-when is_tuple(ContentItem)
-->
-    draw_content_with_subitems
-      ( first_and_last
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , 1
-      , SubItems
-      , []
-      );
-
-% }}-
-do_draw  % content_with_subitems, [          first, ContentItem | [_|_] = Rest ] {{-
-( [ first
-  % , { {_ContentType, _Title} = ContentItem
-  , { ContentItem
-    , [_|_] = SubItems % Explicitly disallow empty categories or sectioned publications without sections
-    }
-  | [_|_] = Rest
-  ]
-, Graph
-, ParentVertex
-)
-when is_tuple(ContentItem)
-->
-    draw_content_with_subitems
-      ( first
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , 1
-      , SubItems
-      , Rest
-      );
-
-% }}-
-do_draw  % content_with_subitems, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  % , { {_ContentType, _Title} = ContentItem
-  , { ContentItem
-    , [_|_] = SubItems % Explicitly disallow empty categories or sectioned publications without sections
-    }
-  | [] = _Rest
-  ]
-, Graph
-, ParentVertex
-)
-when is_tuple(ContentItem)
-->
-    draw_content_with_subitems
-      ( {PrevItemVertex, last}
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , ItemNumber + 1
-      , SubItems
-      , []
-      );
-
-% }}-
-do_draw  % content_with_subitems, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  % , { {_ContentType, _Title} = ContentItem
-  , { ContentItem
-    , [_|_] = SubItems % Explicitly disallow empty categories or sectioned publications without sections
-    }
-  | [_|_] = Rest
-  ]
-, Graph
-, ParentVertex
-)
-when is_tuple(ContentItem)
-->
-    draw_content_with_subitems
-      ( PrevItemVertex
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , ItemNumber + 1
-      , SubItems
-      , Rest
-      );
-% }}-
-
-do_draw  % publication, [          first, ContentItem | []    = Rest ] {{-
-( [ first
-  , {publication, _} = ContentItem
-  | [] = _Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_publication
-      ( first_and_last
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , 1
-      , [] % Rest
-      );
-
-% }}-
-do_draw  % publication, [          first, ContentItem | [_|_] = Rest ] {{-
-( [ first
-  , {publication, _} = ContentItem
-  | [_|_] = Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_publication
-      ( first
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , 1
-      , Rest
-      );
-
-% }}-
-do_draw  % publication, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  , {publication, _} = ContentItem
-  | [] = _Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_publication
-      ( {PrevItemVertex, last}
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , ItemNumber + 1
-      , [] % Rest
-      );
-
-% }}-
-do_draw  % publication, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  , {publication, _} = ContentItem
-  | [_|_] = Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_publication
-      ( PrevItemVertex
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , ItemNumber + 1
-      , Rest
-      );
 % }}-
 
 do_draw  % article, [          first, ItemVertex | []    = Rest ]      {{-
@@ -487,6 +347,173 @@ do_draw  % article, [ PrevItemVertex, ItemVertex | [_|_] = Rest ]      {{-
       , ParentVertex
       , ItemVertex
       , Rest
+      );
+% }}-
+
+do_draw  % content_with_subitems, [          first, ContentItem | []    = Rest ] {{-
+( [ first
+  , { ContentItem, SubItems }
+  | [] = _RestContentItemWithSubItems
+  ]
+, Graph
+, ParentVertex
+)
+% Would be nice for Erlang to have Haskell-like type system and then this guard would be unnecessary (as { A, [_|_] } then wouldn't mean both {A, "lofa"} and {A, [{a,b}, {c, d}]}...)
+when is_tuple(ContentItem)
+->
+    draw_content_with_subitems
+      ( first_and_last
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , 1
+      , SubItems
+      , []
+      );
+
+% }}-
+do_draw  % content_with_subitems, [          first, ContentItem | [_|_] = Rest ] {{-
+( [ first
+  , { ContentItem, SubItems }
+  | [_|_] = RestContenItemWithSubItems
+  ]
+, Graph
+, ParentVertex
+)
+when is_tuple(ContentItem)
+->
+    draw_content_with_subitems
+      ( first
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , 1
+      , SubItems
+      , RestContenItemWithSubItems
+      );
+
+% }}-
+do_draw  % content_with_subitems, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , { ContentItem, SubItems }
+  | [] = _RestContentItemWithSubItems
+  ]
+, Graph
+, ParentVertex
+)
+when is_tuple(ContentItem)
+->
+    draw_content_with_subitems
+      ( {PrevItemVertex, last}
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , ItemNumber + 1
+      , SubItems
+      , []
+      );
+
+% }}-
+do_draw  % content_with_subitems, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , { ContentItem, SubItems }
+  | [_|_] = RestContenItemWithSubItems
+  ]
+, Graph
+, ParentVertex
+)
+when is_tuple(ContentItem)
+->
+    draw_content_with_subitems
+      ( PrevItemVertex
+      , Graph
+      , ParentVertex
+      , ContentItem
+      , ItemNumber + 1
+      , SubItems
+      , RestContenItemWithSubItems
+      );
+% }}-
+
+% NOTE `leaf_item`s
+%      More like "pseudo-leaf" because these will appear as
+%      leaves  in  the  `publication_guide/0`  but  article
+%      recordings read by the  directories will be the real
+%      end vertices. (Unless they  have no recordings, then
+%      they are truly leaves.)
+do_draw  % leaf_item, [          first, ContentItem | []    = Rest ] {{-
+( [ first
+  , LeafContentItem
+  | [] = _Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_leaf_item
+      ( first_and_last
+      , Graph
+      , ParentVertex
+      , LeafContentItem
+      , 1
+      , [] % Rest
+      );
+
+% }}-
+do_draw  % leaf_item, [          first, ContentItem | [_|_] = Rest ] {{-
+( [ first
+  , LeafContentItem
+  | [_|_] = Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_leaf_item
+      ( first
+      , Graph
+      , ParentVertex
+      , LeafContentItem
+      , 1
+      , Rest
+      );
+
+% }}-
+do_draw  % leaf_item, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , LeafContentItem
+  | [] = _Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_leaf_item
+      ( {PrevItemVertex, last}
+      , Graph
+      , ParentVertex
+      , LeafContentItem
+      , ItemNumber + 1
+      , [] % Rest
+      );
+
+% }}-
+do_draw  % leaf_item, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
+( [ #{ selection := ItemNumber } = PrevItemVertex
+  , LeafContentItem
+  | [_|_] = Rest
+  ]
+, Graph
+, ParentVertex
+)
+->
+    draw_leaf_item
+      ( PrevItemVertex
+      , Graph
+      , ParentVertex
+      , LeafContentItem
+      , ItemNumber + 1
+      , Rest
       ).
 % }}-
 
@@ -553,264 +580,323 @@ get_vertex(Graph, Vertex, Direction) ->
 % The publication guide below is just a representation of future data of the yet-to-be-implemented core web service, and its data may not contain such IDs, but that could be done on this end by ordering and adding that via a script.
 
 % TODO This is configuration data, thus it shouldn't be here.
+% TODO could have written a simple title_to_proper_filename function to convert e.g., "The Bickerson's" to "the-bickersons" but it is not applicable everywhere, and did not figure out how to make one opt out (entirely or in certain cases only). Currently it is fully explicit
+% TODO NOTE LINKING % {{-
+% Linking currently only works if the directory has been created before (
+% }}-
+% TODO make this explicit (i.e., dir_prefix, dir, title)
+% Only 2 places need to be amended, by simply a matching for tuples
+% + `make_title_dir/1`
+% + `make_meta/2`
+% Maybe add both forms
+% TODO FAVORITES
+% Linking can now be used to add publications to your favorites!
+% , {publication, ["",  "Yuba-Sutter Meals On Wheels", "Meals on wheels"]}
 publication_guide() -> % {{-
     [ { {category, "Main menu"}
     % [ { {category, "Main category"}
-      , [ { {category, "Store sales advertising"} % {{-
-          , [ { {category, "Grocery stores"}
+      , [ { { category % ads {{-
+            , { "Store sales advertising"
+              , [ {dir_prefix, "ads"} ]
+              }
+            } 
+          , [ { { category % grocery stores % {{-
+                , { "Grocery stores"
+                  , [ {dir_prefix, "grocery"} ]
+                  }
+                }
               , [ {publication, "Safeway"}
-                , {publication, "Raley's"}
-                , {publication, "La Superior"}
-                , {publication, "Food source"}
+                , {publication, {"Raley's",            [{ alt, "raleys"      }]}}
+                , {publication, {"La Superior",        [{ alt, "la-superior" }]}}
+                , {publication, {"Food Source",        [{ alt, "food-source" }]}}
                 , {publication, "Savemart"}
-                , {publication, "Foods Co"}
-                , {publication, "Trader Joe's"}
+                , {publication, {"Food Co",            [{ alt, "foods-co"    }]}}
+                , {publication, {"Trader Joe's",       [{ alt, "trader-joes" }]}}
                 , {publication, "Sprouts"}
-                , {publication, "Lucky Supermarkets"}
+                , {publication, {"Lucky Supermarkets", [{ alt, "lucky"       }]}}
                 ]
-              }
-            , { {category, "Drug stores"}
+              } % }}-
+            , { { category % drug stores {{-
+                , { "Drug stores"
+                  , [ {dir_prefix, "drug"} ]
+                  }
+                }
               , [ {publication, "CVS"}
-                , {publication, "Rite Aid"}
-                , {publication, "Walgreen's"}
+                , {publication, {"Rite Aid",   [{ alt, "rite-aid"  }]}}
+                , {publication, {"Walgreen's", [{ alt, "walgreens" }]}}
                 ]
-              }
-            , { {category, "Discount stores"}
+              } % }}-
+            , { { category % discount stores {{-
+                , { "Discount stores" 
+                  , [ {dir_prefix, "discount"} ]
+                  }
+                }
               , [ {publication, "Target"}
                 , {publication, "Walmart"}
                 ]
-              }
+              } % }}-
             ]
           } % }}-
-        , { {category, "Northern California newspapers and magazines"} % {{-
-          , [ { {category, "Sacramento newspapers and magazines"} % {{-
-              , [ { {category, "Sacramento newspapers"} % {{-
-                  , [ { { sectioned_publication
-                        , "Sacramento Bee sections" % {{-
-                        , {dir_prefix, "sacramento-bee"}
+        , { { category % northern california newspapers and magazines {{-
+            , { "Northern California newspapers and magazines"
+              , [ {dir_prefix, "norcal"} ]
+              }
+            }
+          , [ { { category % sacramento newspapers and mags {{-
+                , { "Sacramento newspapers and magazines"
+                  , [ {dir_prefix, "sac"} ]
+                  }
+                }
+              , [ { { category % newspapers{{-
+                    , { "Sacramento newspapers"
+                      , [ {dir_prefix, "newspapers"} ]
+                      }
+                    }
+                  , [ { { sectioned_publication % sacramento bee {{-
+                        , { "Sacramento Bee sections"
+                          , [ {dir_prefix, "sacbee"} ]
+                          }
                         }
                       , [ {section, "Sports"}
                         , {section, "News"}
                         , {section, "Obituaries"}
                         ]
                       } % }}-
-                    , {publication, "Sacramento News & Review"}
-                    , {publication, "Sacramento Press"}
-                    , {publication, "Sacramento Business Journal"}
-                    , {publication, "Sacramento Observer"}
-                    , {publication, "Sacramento City Express"}
-                    , {publication, "East Sacramento News"}
-                    , {publication, "The Land Park News"}
-                    , {publication, "The Pocket News"}
+                    , {publication, {"Sacramento News & Review",    [{ alt, "SNR"              }]}}
+                    , {publication, {"Sacramento Press",            [{ alt, "sacramento-press" }]}}
+                    , {publication, {"Sacramento Business Journal", [{ alt, "business-journal" }]}}
+                    , {publication, {"Sacramento Observer",         [{ alt, "observer"         }]}}
+                    , {publication, {"Sacramento City Express",     [{ alt, "city-express"     }]}}
+                    , {publication, {"East Sacramento News",        [{ alt, "east-sac-news"    }]}}
+                    , {publication, {"The Land Park News",          [{ alt, "land-park-news"   }]}}
+                    , {publication, {"The Pocket News",             [{ alt, "pocket-news"      }]}}
                     ]
                   } % }}-
-                , { {category, "Sacramento magazines"} % {{-
+                , { { category  % magazines {{-
+                    , { "Sacramento magazines"
+                      , [ {dir_prefix, "magazines"} ]
+                      }
+                    }
                   , [ {publication, "Comstocks"}
                     , {publication, "SacTown"}
-                    , {publication, "Sacramento Magazine"}
+                    , {publication, {"Sacramento Magazine", [{alt, "sacramento-magazine"}]}}
                     ]
                   } % }}-
                 ]
               } % }}-
-            , { {category, "Greater Sacramento area newspapers"} % {{-
-              , [ {publication, "Carmichael Times"}
-                , {publication, "Arden Carmichael News"}
-                , {publication, "Davis Enterprise"}
-                , {publication, "Roseville Press Tribune"}
-                , {publication, "Woodland Daily Democrat"}
-                , {publication, "Elk Grove Citizen"}
-                , {publication, "Auburn Journal"}
-                , {publication, "Grass Valley-Nevada City Union"}
-                , {publication, "El Dorado County Mountain Democrat"}
-                , {publication, "Loomis News"}
+            , { { category  % greater sac {{-
+                , { "Greater Sacramento area newspapers"
+                  , [ {dir_prefix, "greater-sac"} ]
+                  }
+                }
+              , [ {publication, {"Carmichael Times",                   [{ alt, "carmichael-times"                   }]}}
+                , {publication, {"Arden Carmichael News",              [{ alt, "arden-carmichael-news"              }]}}
+                , {publication, {"Davis Enterprise",                   [{ alt, "davis-enterprise"                   }]}}
+                , {publication, {"Roseville Press Tribune",            [{ alt, "roseville-press-tribune"            }]}}
+                , {publication, {"Woodland Daily Democrat",            [{ alt, "woodland-daily-democrat"            }]}}
+                , {publication, {"Elk Grove Citizen",                  [{ alt, "elk-grove-citizen"                  }]}}
+                , {publication, {"Auburn Journal",                     [{ alt, "auburn-journal"                     }]}}
+                , {publication, {"Grass Valley-Nevada City Union",     [{ alt, "grass-valley-nevada-city-union"     }]}}
+                , {publication, {"El Dorado County Mountain Democrat", [{ alt, "el-dorado-county-mountain-democrat" }]}}
+                , {publication, {"Loomis News",                        [{ alt, "loomis-news"                        }]}}
                 ]
               } % }}-
-            , { {category, "San Francisco and Bay Area newspapers"} % {{-
-              , [ {publication, "Vallejo Times Herald"}
-                , {publication, "Santa Rosa Press Democrat"}
-                , {publication, "SF Gate"}
-                , {publication, "San Francisco Bay Guardian"}
-                , {publication, "East Bay Times"}
-                , {publication, "SF Weekly"}
-                , {publication, "KQED Bay Area Bites"}
+            , { { category  % sf and bay area {{-
+                , { "San Francisco and Bay Area newspapers" 
+                  , [ {dir_prefix, "bay-area"} ]
+                  }
+                } 
+              , [ {publication, {"Vallejo Times Herald",       [{ alt, "vallejo-times-herald"      }]}}
+                , {publication, {"Santa Rosa Press Democrat",  [{ alt, "santa-rosa-press-democrat" }]}}
+                , {publication, {"SF Gate",                    [{ alt, "sf-gate"                   }]}}
+                , {publication, {"San Francisco Bay Guardian", [{ alt, "sf-bay-guardian"           }]}}
+                , {publication, {"East Bay Times",             [{ alt, "east-bay-times"            }]}}
+                , {publication, {"SF Weekly",                  [{ alt, "sf-weekly"                 }]}}
+                , {publication, {"KQED Bay Area Bites",        [{ alt, "KQED-bay-area-bites"       }]}}
                 ]
               } % }}-
-            , { {category, "Central California newspapers"} 
-              , [ {publication, "Modesto Bee"}
-                , {publication, "Stockton Record"}
-                ]
+            , { { category % central california {{-
+                , { "Central California newspapers" 
+                  , [ {dir_prefix, "central-cal"} ]
+                  }
               }
-            , { {category, "Mendocino county newspapers"}
-              , [ {publication, "Fort Bragg Advocate News"}
-                , {publication, "The Mendocino Beacon"}
+              , [ {publication, {"Modesto Bee",     [{ alt, "modesto-bee"     }]}}
+                , {publication, {"Stockton Record", [{ alt, "stockton-record" }]}}
                 ]
+              } % }}-
+            , { { category % mendocino {{-
+                , { "Mendocino county newspapers" 
+                  , [ {dir_prefix, "mendocino"} ]
+                  }
               }
-            , { {category, "Humboldt & Trinity county newspapers"}
-              , [ {publication, "Humboldt Senior Resource Center's Senior News"}
-                , {publication, "North Coast Journal"}
-                , {publication, "Eureka Times Standard"}
-                , {publication, "Ferndale Enterprise"}
-                , {publication, "Mad River Union"}
+              , [ {publication, {"Fort Bragg Advocate News", [{ alt, "fort-bragg-advocate-news" }]}}
+                , {publication, {"The Mendocino Beacon",     [{ alt, "mendocino-beacon"         }]}}
                 ]
+              } % }}-
+            , { { category % humboldt and trinity counties {{-
+                , { "Humboldt & Trinity county newspapers" 
+                  , [ {dir_prefix, "humboldt-trinity"} ]
+                  }
               }
+              , [ {publication, {"Humboldt Senior Resource Center's Senior News", [{ alt, "senior-news"           }]}}
+                , {publication, {"North Coast Journal",                           [{ alt, "north-coast-journal"   }]}}
+                , {publication, {"Eureka Times Standard",                         [{ alt, "eureka-times-standard" }]}}
+                , {publication, {"Ferndale Enterprise",                           [{ alt, "ferndale-enterprise"   }]}}
+                , {publication, {"Mad River Union",                               [{ alt, "mad-river-union"       }]}}
+                ]
+              } % }}-
             ]
           } % }}-
-        , { {category, "Popular magazines"} % {{-
-          , [ {publication, "Atlas Obscura"}
-            , {publication, "Braille Monitor"}
-            , {publication, "Capital Public Radio"}
-            , {publication, "Entertainment Weekly"}
+        , { { category % popular magazines {{-
+            , { "Popular magazines" 
+              , [ {dir_prefix, "pop"} ]
+              }
+            }
+          , [ {publication, {"Braille Monitor",      [{ alt, "braille-monitor"    }]}}
+            , {publication, {"Capital Public Radio", [{ alt, "CPR"                }]}}
+            , {publication, {"Entertainment Weekly", [{ alt, "EW"                 }]}}
             , {publication, "Fortune"}
-            , {publication, "Mental Floss"}
-            , {publication, "New Scientist"}
+            , {publication, {"Mental Floss",         [{ alt, "mental-floss"       }]}}
+            , {publication, {"Atlas Obscura",        [{ alt, "atlas-obscura"      }]}}
+            , {publication, {"New Scientist",        [{ alt, "new-scientist"      }]}}
             , {publication, "Newsweek"}
-            , {publication, "Travel & Leisure"}
+            , {publication, {"Travel & Leisure",     [{ alt, "travel-and-leisure" }]}}
             ]
           } % }}-
-        , { {category, "Old Time Radio Theater"} % {{-
-          , [ { {category, "Mystery and drama"}
-              , [ {publication, "Broadway's my Beet"}
-                , {publication, "Black Stone the Magic Detective"}
-                , {publication, "Boston Blacky"}
-                , {publication, "Crime Does Not Pay"}
-                , {publication, "Drag Net"}
-                , {publication, "Gang Busters"}
-                , {publication, "Inner Sanctum"}
-                , {publication, "Mercury Radio Theater"}
-                , {publication, "Mystery Traveler"}
-                , {publication, "Richard Diamond Private Detective"}
-                , {publication, "Adventures of Sam Spaid"}
-                , {publication, "The Shadow"}
+        , { { category % old time radio {{-
+            , { "Old Time Radio Theater" 
+              , [ {dir_prefix, "OTR"} ]
+              }
+            }
+          , [ { {category, "Mystery and drama"} % {{-
+              , [ {publication, {"Broadway's my Beat",                [{ alt, "broadways-my-beat"     }]}}
+                , {publication, {"Black Stone the Magic Detective",   [{ alt, "black-stone"           }]}}
+                , {publication, {"Boston Blacky",                     [{ alt, "boston-blacky"         }]}}
+                , {publication, {"Crime Does Not Pay",                [{ alt, "crime-does-not-play"   }]}}
+                , {publication, "Dragnet"}
+                , {publication, {"Gang Busters",                      [{ alt, "gang-busters"          }]}}
+                , {publication, {"Inner Sanctum",                     [{ alt, "inner-sanctum"         }]}}
+                , {publication, {"Mercury Radio Theater",             [{ alt, "mercury-radio-theater" }]}}
+                , {publication, {"Mystery Traveler",                  [{ alt, "mystery-traveler"      }]}}
+                , {publication, {"Richard Diamond Private Detective", [{ alt, "richard-diamond"       }]}}
+                , {publication, {"Adventures of Sam Spade",           [{ alt, "sam-spade"             }]}}
+                , {publication, {"The Shadow",                        [{ alt, "the-shadow"            }]}}
                 , {publication, "Suspense"}
-                , {publication, "The Whistler"}
-                , {publication, "Light's Out"}
+                , {publication, {"The Whistler",                      [{ alt, "the-whistler"          }]}}
+                , {publication, {"Light's Out",                       [{ alt, "lights-out"            }]}}
                 ]
-              }
-            , { {category, "Comedy"}
-              , [ {publication, "Abbot and Costello"}
-                , {publication, "The Adventures of Ozzie and Harriet"}
-                , {publication, "The Bickerson's"}
-                , {publication, "Father Knows Best"}
-                , {publication, "Fibber McGee and Molly"}
-                , {publication, "The Fred Allen Show"}
-                , {publication, "George Burns and Gracie Allen"}
-                , {publication, "Life of Riley"}
-                , {publication, "The Red Skelton Show"}
+              } % }}-
+            , { {category, "Comedy"} % {{-
+              , [ {publication, {"Abbot and Costello",                  [{ alt, "abbot-and-costello"            }]}}
+                , {publication, {"The Adventures of Ozzie and Harriet", [{ alt, "ozzie-and-harriet"             }]}}
+                , {publication, {"The Bickerson's",                     [{ alt, "the-bickersons"                }]}}
+                , {publication, {"Father Knows Best",                   [{ alt, "father-knows-best"             }]}}
+                , {publication, {"Fibber McGee and Molly",              [{ alt, "fibber-mcgee-and-molly"        }]}}
+                , {publication, {"The Fred Allen Show",                 [{ alt, "the-fred-allen-show"           }]}}
+                , {publication, {"George Burns and Gracie Allen",       [{ alt, "george-burns-and-gracie-allen" }]}}
+                , {publication, {"Life of Riley",                       [{ alt, "life-of-riley"                 }]}}
+                , {publication, {"The Red Skelton Show",                [{ alt, "the-red-skelton-show"          }]}}
                 ]
-              }
-            , { {category, "Westerns"}
-              , [ {publication, "The Cisco Kid"}
-                , {publication, "Gun Smoke"}
-                , {publication, "The Lone Ranger"}
-                , {publication, "Tales of the Texas Rangers"}
+              } % }}-
+            , { {category, "Westerns"} % {{-
+              , [ {publication, {"The Cisco Kid",              [{ alt, "the-cisco-kid" }]}}
+                , {publication, {"Gun Smoke",                  [{ alt, "gun-smoke"     }]}}
+                , {publication, {"The Lone Ranger",            [{ alt, "lone-ranger"   }]}}
+                , {publication, {"Tales of the Texas Rangers", [{ alt, "texas-rangers" }]}}
                 ]
-              }
-            , { {category, "Science fiction and fantasy"}
-              , [ {publication, "The Blue Beetle"}
+              } % }}-
+            , { {category, "Science fiction and fantasy"} % {{-
+              , [ {publication, {"The Blue Beetle",  [{ alt, "blue-beetle"  }]}}
                 , {publication, "Escape"}
-                , {publication, "The Green Hornet"}
-                , {publication, "X Minus 1"}
+                , {publication, {"The Green Hornet", [{ alt, "green-hornet" }]}}
+                , {publication, {"X Minus 1",        [{ alt, "x-minus-1"    }]}}
                 ]
-              }
+              } % }}-
             , {publication, "Commercials"}
-            % , { {category, "Commercials"}
-            %   , [ {publication, "Commercials"}
-            %     ]
-            %   }
             ]
           } % }}-
-        , { {category, "Games"} % {{-
+        , { { category % games{{-
+            , { "Games" 
+              , [ {dir_prefix, "games"} ]
+              }
+            }
           , [ {publication, "Crosswords"}
             , {publication, "Trivia"}
             ]
           } % }}-
-        , { {category, "Community information and resources"} % {{-
-          , [ { {category, "Podcasts"}
-                % TODO link this to sftb
-              , [ {publication, ["sftb", "Beyond Barriers Project"]}
-                ]
+        , { { category % community {{-
+            , { "Community information and resources" 
+              , [ {dir_prefix, "community-resources"} ]
               }
-            , { { category, "Poetry" }
-              , [ {publication, "Brad Buchanan"}
-                , {publication, "Writer's on the air"}
+            }
+          , [ { { category, "Podcasts"} % {{-
+              , [ { publication
+                  , { "Beyond Barriers Project"
+                    , [ {dir_prefix, "SFTB"}
+                      , {alt, "beyond-barriers"}
+                      ]
+                    }
+                  }
+                , {publication, {"The Redacted Files Podcast", [{alt, "TRP"}]}}
                 ]
-              }
+              } % }}-
+            , { { category, "Poetry" } % {{-
+              , [ {publication, {"Brad Buchanan",       [{ alt, "brad-buchanan"      }]}}
+                , {publication, {"Writer's on the air", [{ alt, "writers-on-the-air" }]}}
+                ]
+              } % }}-
             ]
           } % }}-
-        , { {category, "Blindness information and resources"} % {{-
-          , [ { {category, "Blindness organizations"}
-                % NOTE LINKING % {{-
-                % 1. Use  the exact  same  publication  name anywhere  to
-                %    link  to  the  same folder  (`ContentTitle`  IS  the
-                %    directory name;  except in  case of the  presence of
-                %    `dir_prefix`, see 2. below)
-                %
-                % 2. If the publication, that needs to be linked, is ever
-                %    specified in  the context of `dir_prefix`  it has to
-                %    be supplied  anywhere else, otherwise there  will be
-                %    different  directories  created during  drawing  the
-                %    content graph.
-                %
-                %    For example, to link the student handbook below,
-                %    ```erlang
-                %    , [ { { category, "Society for the Blind", {dir_prefix, "sftb"}}
-                %        , [ {publication, "SFB Connection"}
-                %          , {publication, "Monthly newsletter"}
-                %          , {publication, "Society for the Blind's student handbook"}
-                %          ]
-                %        }
-                %    ```
-                %    declare it in the alternative way where it should be
-                %    linked:
-                %    ```erlang
-                %    , { {category, "Educational materials"} %
-                %        % {publication, [Prefix, Title ]}
-                %      , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
-                %
-                %    ```
-                % }}-
-              , [ { {category, "Society for the Blind", {dir_prefix, "sftb"}} % {{-
-                  , [ {publication, "SFB Connection"}
-                    , {publication, "Monthly newsletter"}
-                    , {publication, "Society for the Blind's student handbook"}
-                    , {publication, "Beyond Barriers Project"}
+        , { { category % blindness resources {{-
+            , { "Blindness information and resources" 
+              , [ {dir_prefix, "blindness-resources"} ]
+              }
+            }
+          , [ { { category % organizations {{-
+                , { "Organizations" 
+                  , [ {dir_prefix, "orgs"} ]
+                  }
+                }
+              , [ { { category % SFTB {{-
+                    , { "Society for the Blind"
+                      , [ {dir_prefix, "SFTB"} ]
+                      }
+                    }
+                  , [ {publication, {"SFB Connection",                           [{ alt, "sfb-connection"   }]}}
+                    , {publication, {"Monthly newsletter",                       [{ alt, "newsletter"       }]}}
+                    , {publication, {"Society for the Blind's student handbook", [{ alt, "student-handbook" }]}}
+                    , {publication, {"Beyond Barriers Project",                  [{ alt, "beyond-barriers"  }]}}
                     ]
                   } % }}-
-                , {publication, "The Earle Baum Center"}
-                , {publication, "Sierra Services for the Blind"}
-                , {publication, "California Council of the Blind"}
+                , {publication, {"The Earle Baum Center",           [{ alt, "EBC"   }]}}
+                , {publication, {"Sierra Services for the Blind",   [{ alt, "SSFTB" }]}}
+                , {publication, {"California Council of the Blind", [{ alt, "CCB"   }]}}
                 ]
-              }
-            , { { category, "Publications" }
-              , [ {publication, "Braille Monitor"}
-                , {publication, "Client Assistence Program"}
+              } % }}-
+            , { { category % publications {{-
+                , { "Publications"
+                  , [ {dir_prefix, "publications" } ]
+                  }
+                }
+              , [ {publication, {"Braille Monitor",           [{ link, "braille-monitor" }]}}
+                , {publication, {"Client Assistence Program", [{ alt, "CAP"              }]}}
                 ]
-              }
+              } % }}-
             ]
           } % }}-
         , { {category, "Education and resources"} % {{-
-          , [ {publication, ["sftb", "Society for the Blind's student handbook"]}
-            % , {publication, ["sacramento-bee", "Obituaries", "Sacramento Bee obituaries"]}
-            % This form can also be used to specify directory name, and then the prompt to be read
-            % TODO make this explicit (i.e., dir_prefix, dir, title)
-            % Only 2 places need to be amended, by simply a matching for tuples
-            % + `make_publication_dir/1`
-            % + `make_meta/2`
-            % Maybe add both forms
-            % TODO FAVORITES
-            % Linking can now be used to add publications to your favorites!
-            % , {publication, ["",  "Yuba-Sutter Meals On Wheels", "Meals on wheels"]}
+          , [ { publication, {"Society for the Blind's student handbook", [{link, "student-handbook"}]}}
             , {publication, "Balance exercises"}
             , {publication, "Achieve a healthy weight by UC Davis"}
             , {publication, "Yuba-Sutter Meals On Wheels"}
             , {publication, "Client Assistence Program"}
             ]
           } % }}-
-        , { {category, "Society for the Blind", {dir_prefix, "sftb"}} % {{-
-          , [ {publication, "SFB Connection"}
-            , {publication, "Monthly newsletter"}
-            , {publication, "Society for the Blind's student handbook"}
-            , {publication, "Beyond Barriers Project"}
+        , { { category, "Society for the Blind" } % {{-
+          , [ {publication, {"SFB Connection",                           [{ link, "sfb-connection"   }]}}
+            , {publication, {"Monthly newsletter",                       [{ link, "SFTB-newsletter"  }]}}
+            , {publication, {"Society for the Blind's student handbook", [{ link, "student-handbook" }]}}
+            , {publication, {"Beyond Barriers Project",                  [{ link, "beyond-barriers"  }]}}
             ]
           } % }}-
         ]
@@ -921,23 +1007,95 @@ publication_guide() -> % {{-
 % }}-
 
 % TODO So this could safely be set to [], but need to make sure that it doesn't affect anything. At least, tried renaming it Rest, and use the 
-% logger:debug(#{make_publication_dir => Rest})
+% logger:debug(#{make_title_dir => Rest})
 % and the only thing that came up was []
 %                                      |
 %                                      V
-make_publication_dir([ Prefix, Title | _]) when is_list(Prefix) ->
-    make_publication_dir(Prefix ++ Title);
+% make_title_dir([ Prefix, Title | _]) when is_list(Prefix) ->
+%     make_title_dir(Prefix ++ Title);
+%  NOTE This was unnecessary here; taken care of in `prefix_leaf_items/2` where it should be
 
-make_publication_dir(PublicationTitle) -> % {{-
-    PublicationDir =
-        filename:join(?PUBLICATION_ROOT, PublicationTitle),
-    % no fuss if exists, won't throw
-    file:make_dir(PublicationDir),
-%     erlang:display([make_publication_dir, PublicationDir]),
-    PublicationDir.
+do_dir_options(Title, []) ->
+    make_title_dir(Title);
+
+do_dir_options % alt {{-
+  ( Title
+  , [ {alt, AlternativeName} | Opts ]
+  )
+->
+    do_dir_options(AlternativeName, Opts);
 
 % }}-
-list_recording_vertices(PublicationDir) -> % {{-
+do_dir_options % dir_prefix {{-
+  ( Title
+  , [ {dir_prefix, Prefix} | Opts ]
+  )
+->
+    do_dir_options
+      ( Prefix ++ "-" ++ Title
+      , Opts 
+      );
+
+% }}-
+do_dir_options % link {{-
+  ( _Title
+  , [ {link, EndMatch} | Opts ]
+  )
+->
+    {ok, PublicationDirs} =
+        file:list_dir(?PUBLICATION_ROOT),
+
+    % Could have matched anywhere else, but matching at the end seemed the most logical
+    MatchAtTheEnd =
+        fun(Dirname) ->
+            case re:run(Dirname, EndMatch ++ "$") of
+                nomatch -> false;
+                      _ -> true
+            end
+        end,
+    
+    % There should only be one match when linking.
+    LinkDir =
+        case lists:filter(MatchAtTheEnd, PublicationDirs) of
+            [ Dir ] ->
+                Dir;
+            _ ->
+                FailDir = "link_fail",
+                file:make_dir(FailDir),
+                FailDir
+        end,
+
+    do_dir_options
+      ( LinkDir
+      , Opts 
+      ).
+
+% }}-
+make_title_dir({Title, UnsortedOpts}) ->
+    do_dir_options
+      ( Title
+      % `alt` has to come before dir_prefix
+      % see NOTE at `draw_content_with_subitems/7`
+      % 
+      % Preserves the order of the tuples of a given key
+      % lists:keysort(1, [{b, "miez"}, {a, "lofa"}, {b, "balabab"}]).
+      % [{a,"lofa"},{b,"miez"},{b,"balabab"}]
+      , lists:keysort(1, UnsortedOpts)
+      );
+
+% NOTE Fixed the  above clause from  list to tuple,  so the
+%      guard could simply read `is_list(Title)` but this is
+%      way more explicit that a string is needed
+make_title_dir([Char|_] = Title) when is_integer(Char) -> % {{-
+    Dir =
+        filename:join(?PUBLICATION_ROOT, Title),
+    % no fuss if exists, won't throw
+    file:make_dir(Dir),
+%     erlang:display([make_title_dir, Dir]),
+    Dir.
+
+% }}-
+list_recording_vertices(Dir) -> % {{-
     % Only  MP3s  and  WAVs are  supported  by  FreeSWITCH
     % out-of-the-box. Also, could've  just simply `ls` the
     % publication folder, and crash on unsupported formats
@@ -953,19 +1111,19 @@ list_recording_vertices(PublicationDir) -> % {{-
             end
         end,
 
-    MakeMeta =
+    MakeRecordingMeta =
         fun (Filename) ->
             futil:pipe
               ([ Filename
-               , (futil:cflip(fun filename:absname/2))(PublicationDir)
+               , (futil:cflip(fun filename:absname/2))(Dir)
                , fun make_recording_meta/1
                ])
         end,
 
-%         erlang:display([list_recording_vertices, enter, PublicationDir]),
+%         erlang:display([list_recording_vertices, enter, Dir]),
     futil:pipe
       % NOTE The extra  quotes are  needed because  otherwise the {{-
-      %      special  characters  in   `PublicationDir`  will  be
+      %      special  characters  in   `Dir`  will  be
       %      treated literally by the shell.
       % ``` text
       % $ ls Raley's
@@ -983,121 +1141,99 @@ list_recording_vertices(PublicationDir) -> % {{-
       % TODO Make  an upload  mechanism  that takes  care of  the
       %      naming  based on  given  parameters  (e.g., sort  by
       %      time, numbering, etc.).
-      ([ os:cmd("ls -r \"" ++ PublicationDir ++ "\"")
+      ([ os:cmd("ls -r \"" ++ Dir ++ "\"")
        , (futil:cflip(fun string:lexemes/2))([$\n])
 %      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        , (futil:curry(fun lists:filter/2))(Extensions)
 %      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        % NOTE It would have made more logical sense to put this in
        % `draw_item/7`  but it  would have  been a  hassle to
-       % figure  out `PublicationDir`  - plus  it would  have
+       % figure  out `Dir`  - plus  it would  have
        % been an extra loop
-       , (futil:curry(fun lists:map/2))(MakeMeta)
+       , (futil:curry(fun lists:map/2))(MakeRecordingMeta)
 %      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        ]).
 % }}-
 
-draw_publication % {{-
+% LeafContentItem = { LeafItemType, TitleMaybeWithOptions }
+% LeafItemType = publication | section
+% TitleMaybeWithOptions = Title | { Title, DirOptions }
+% Title = String
+% DirOptions = [ {Option, String} ]
+% Option = dir_prefix | alt
+draw_leaf_item % {{-
 ( Direction
 , Graph
 , ParentVertex
-, { publication, ContentTitle } = ContentItem
+, { LeafItemType, TitleMaybeWithOptions } = LeafContentItem
 , ItemNumber
 , Rest
 )
+when LeafItemType =:= publication
+   ; LeafItemType =:= section
 ->
     RecordingVertices =
         futil:pipe
-          ([ ContentTitle
-           , fun make_publication_dir/1
+          ([ TitleMaybeWithOptions
+           , fun make_title_dir/1
            , fun list_recording_vertices/1
            ]),
+    % => [ Map ]
 
-%     erlang:display(RecordingVertices),
-
-    ItemVertex =
-        make_meta(ContentItem, ItemNumber),
+    LeafItemVertex =
+        make_meta(LeafContentItem, ItemNumber),
 
     draw_item
       ( Direction
       , Graph
       , ParentVertex
-      , ItemVertex
+      , LeafItemVertex
       , RecordingVertices
       , Rest
       ).
 
 % }}-
-% `SubItems` needs  to be checked whether  `_Title` is
-% string or a  list of lists - as  this function calls
-% itself, this can turn into a nasty crash fast.
-% https://stackoverflow.com/questions/1406173/how-can-i-determine-if-a-list-is-a-just-a-string-or-a-list-of-strings
+% ContentItemWithSubItemsType = category | sectioned_publication
+% TitleMaybeWithOptions = Title | { Title, DirOptions }
+% Title = String
+% DirOptions = [ {Option, String} ]
+% Option = dir_prefix   % no `alt`!!!
+%
+% NOTE "NO `alt`"
+%      It  does   not  make  sense   to  use  `alt`   on  a
+%      ContentItemWithSubItems (and may  even cause a crash
+%      because then  every LeafSubItems would get  the same
+%      alternative directory  name (effectively  making all
+%      LeafSubItems  linking to  the  same  dir under  that
+%      ContentItemWithSubItems, right?)
 draw_content_with_subitems % {{-
 ( Direction
 , Graph
-, ParentVertex
-, { ContentType
-  , ContentTitle
-  , {dir_prefix, Prefix}
-  }
+, #{ type := _ContentType} = ParentVertex
+% , [ category, _ContentTitle | MaybePrefix ] = ContentItemWithSubItems
+, { ContentItemWithSubItemsType
+  , TitleMaybeWithOptions
+  } = ContentItemWithSubItems
 , ItemNumber
-, [ { SubItem, [H|_] = _Title }|_] = SubItems
+% Explicitly disallow ContentItemWithSubItems without any sub items
+, [_|_] = SubItems
 , Rest
 )
-when is_integer(H), SubItem =:= section
-   ; is_integer(H), SubItem =:= publication
+when ContentItemWithSubItemsType =:= category
+   ; ContentItemWithSubItemsType =:= sectioned_publication
 ->
-
-    % ItemVertex =
-    %     make_meta(ContentItem, ItemNumber),
-
     PrefixedSubItems =
-        prefix_publications(SubItems, Prefix),
+        prefix_subitems(SubItems, TitleMaybeWithOptions),
 
-    draw_content_with_subitems
-      ( Direction
-      , Graph
-      , ParentVertex
-      , { ContentType, ContentTitle }
-      , ItemNumber
-      , PrefixedSubItems
-      , Rest
-      );
-
-    % draw_item
-    %   ( Direction
-    %   , Graph
-    %   , ParentVertex
-    %   , ItemVertex
-    %   , SubItems
-    %   , Rest
-    %   ).
-
-% }}-
-draw_content_with_subitems % {{-
-( Direction
-, Graph
-, ParentVertex
-% , [ category, _ContentTitle | MaybePrefix ] = ContentItem
-, { _ContentType, _ContentTitle } = ContentItem
-, ItemNumber
-% Empty categories are disallowed thus this is permitted
-% , [ [publication, _]
-%   | _RestOfSubItems
-%   ] = SubItems
-, SubItems
-, Rest
-)
-->
     ItemVertex =
-        make_meta(ContentItem, ItemNumber),
+        make_meta(ContentItemWithSubItems, ItemNumber),
 
     draw_item
       ( Direction
       , Graph
       , ParentVertex
       , ItemVertex
-      , SubItems
+      , PrefixedSubItems
       , Rest
       ).
 
@@ -1173,40 +1309,30 @@ make_recording_meta(AbsFilename) ->
          },
     add_id(BaseMeta).
 
-make_meta
-( { publication, [Prefix, Title] } = _ContentItem
-% , Path
-, ItemNumber
-) ->
-    make_meta
-      ( { publication, Title }
-      , ItemNumber
-      );
-
 % TODO, NOTE, whatever
 % `ContentType` of each vertex in the content graph is
 % used as  the state of  the IVR state machine  at one
 % point - that  is, almost; `ivr:derive_state/1` keeps
 % `content.erl` and `ivr.erl` decoupled.
 make_meta
-( { publication, Title, _ } = _ContentItem
-% , Path
+( { ContentType, {Title, _Options} } = _ContentItem
 , ItemNumber
 ) ->
     make_meta
-      ( { sectioned_publication, Title }
+      ( { ContentType, Title }
       , ItemNumber
       );
 
 make_meta
-( { ContentType, ContentTitle } = _ContentItem
-% , Path
+( { ContentType, [Char|_] = Title } = _ContentItem
 , ItemNumber
-) ->
+)
+when is_integer(Char)
+->
     BaseMeta =
         #{ type      => ContentType
          , selection => ItemNumber
-         , title     => ContentTitle
+         , title     => Title
          },
     add_id(BaseMeta).
 
@@ -1218,32 +1344,104 @@ make_meta
 add_id(BaseMeta) ->
     BaseMeta#{id => erlang:make_ref()}.
 
-prefix_publications
-( [ {publication, [_, _]}
-  | _
-  ] = SectionedPublications
-, _Prefix
-) ->
-    SectionedPublications;
+% prefix_subitems
+% ( [ {publication, [_, _]}
+%   | _
+%   ] = PrefixedPublicationsOrSections
+% , _Prefix
+% ) ->
+%     PrefixedPublicationsOrSections;
 
-prefix_publications
-( [ {section, Title}
-  | Rest
-  ]
-, Prefix
-) ->
-    prefix_publications([{publication, Title}|Rest], Prefix);
+% prefix_subitems
+% ( [ {section, Title}
+%   | Rest
+%   ]
+% , Prefix
+% ) ->
+%     prefix_subitems([{publication, Title}|Rest], Prefix);
 
-prefix_publications
-( [ {SubItemType, Title}
-  | Rest
-  ]
-, Prefix
-) ->
-    NewRest =
-        Rest ++ [{SubItemType, [Prefix, Title]}],
+% prefix_subitems
+% ( [ {SubItemType, Title}
+%   | Rest
+%   ]
+% , Prefix
+% ) ->
+%     NewRest =
+%         Rest ++ [{SubItemType, [Prefix, Title]}],
 
-    prefix_publications(NewRest, Prefix).
+%     prefix_subitems(NewRest, Prefix).
+
+% NOTE If  any of  the parent  had a  `DirOptions` list,  we
+%      would never  get here, because it  will trickle down
+%      once present
+prefix_subitems
+  ( SubItems
+  , [Char|_] = _TitleMaybeWithOptions
+  )
+when is_integer(Char)
+->
+    SubItems;
+
+prefix_subitems
+  ( SubItems
+  , { Title, DirOptions } = TitleMaybeWithOptions
+  )
+->
+    do_prefix(SubItems, DirOptions, []).
+
+do_prefix([], _DirOptions, Acc) ->
+    % The order matters because of automatic item numbering
+    lists:reverse(Acc);
+
+do_prefix
+  ( [ SubItem | RestSubItems ]
+  , DirOptions
+  , Acc
+  )
+->
+    SubItemWithMergedOptions =
+        case SubItem of
+            { { ContentItemWithSubItemsType
+              , TitleMaybeWithOptions
+              } = ContentItemWithSubItems
+            % ContentItemWithSubItems should never be empty
+            , [_|_] = SubItemSubItems
+            }
+            ->
+                { { ContentItemWithSubItemsType
+                  , merge_dir_options(TitleMaybeWithOptions, DirOptions)
+                  }
+                , SubItemSubItems
+                };
+
+            { LeafItemType, TitleMaybeWithOptions } ->
+                { LeafItemType
+                , merge_dir_options(TitleMaybeWithOptions, DirOptions)
+                }
+        end,
+
+    do_prefix
+      ( RestSubItems
+      , DirOptions
+      , [ SubItemWithMergedOptions | Acc ]
+      ).
+
+merge_dir_options
+  ( TitleMaybeWithOptions
+  , DirOptions
+  )
+->
+    case TitleMaybeWithOptions of
+
+        [Char|_] = Title when is_integer(Char) ->
+            { Title, DirOptions };
+
+        { Title, SubItemDirOptions } ->
+            { Title
+            , SubItemDirOptions ++ DirOptions
+            }
+    end.
+
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
