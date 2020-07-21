@@ -833,7 +833,7 @@ publication_guide() -> % {{-
               , [ { publication
                   , { "Beyond Barriers Project"
                     , [ {dir_prefix, "SFTB"}
-                      , {alt, "beyond-barriers"}
+                      , {link, "beyond-barriers"}
                       ]
                     }
                   }
@@ -879,20 +879,24 @@ publication_guide() -> % {{-
                   }
                 }
               , [ {publication, {"Braille Monitor",           [{ link, "braille-monitor" }]}}
-                , {publication, {"Client Assistence Program", [{ alt, "CAP"              }]}}
+                , {publication, {"Client Assistence Program", [{ link, "CAP"              }]}}
                 ]
               } % }}-
             ]
           } % }}-
-        , { {category, "Education and resources"} % {{-
-          , [ { publication, {"Society for the Blind's student handbook", [{link, "student-handbook"}]}}
-            , {publication, "Balance exercises"}
-            , {publication, "Achieve a healthy weight by UC Davis"}
-            , {publication, "Yuba-Sutter Meals On Wheels"}
-            , {publication, "Client Assistence Program"}
+        , { { category  % education and resources {{-
+            , { "Education and resources" 
+              , [ {dir_prefix, "edu"} ]
+              }
+            }
+          , [ {publication, {"Society for the Blind's student handbook", [{ link, "student-handbook"       }]}}
+            , {publication, {"Balance exercises",                        [{ alt, "balance-exercises"       }]}}
+            , {publication, {"Achieve a healthy weight by UC Davis",     [{ alt, "uc-davis-healthy-weight" }]}}
+            , {publication, {"Yuba-Sutter Meals On Wheels",              [{ alt, "YSMOW"                   }]}}
+            , {publication, {"Client Assistence Program",                [{ alt, "CAP"                     }]}}
             ]
           } % }}-
-        , { { category, "Society for the Blind" } % {{-
+        , { {category, "Society for the Blind" } % {{-
           , [ {publication, {"SFB Connection",                           [{ link, "sfb-connection"   }]}}
             , {publication, {"Monthly newsletter",                       [{ link, "SFTB-newsletter"  }]}}
             , {publication, {"Society for the Blind's student handbook", [{ link, "student-handbook" }]}}
