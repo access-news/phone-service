@@ -1141,7 +1141,7 @@ list_recording_vertices(Dir) -> % {{-
       % TODO Make  an upload  mechanism  that takes  care of  the
       %      naming  based on  given  parameters  (e.g., sort  by
       %      time, numbering, etc.).
-      ([ os:cmd("ls -r \"" ++ Dir ++ "\"")
+      ([ os:cmd("ls \"" ++ Dir ++ "\"")
        , (futil:cflip(fun string:lexemes/2))([$\n])
 %      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        , (futil:curry(fun lists:filter/2))(Extensions)

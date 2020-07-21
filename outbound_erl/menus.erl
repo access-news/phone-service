@@ -640,7 +640,8 @@ prompt(PromptName) -> % {{-
             "Press star to go up";
 
         "to_main_menu" ->
-            "For the main  menu press 0."
+            % "For the main  menu press 0."
+            "For help and other options, press 0."
     end.
 
 % }}-
