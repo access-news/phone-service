@@ -12,6 +12,7 @@
     % General helpers
     , stitch/1
     , stringify/1
+    , sanitize_string/1
     ]).
 
 % FUNCTIONAL HELPERS ================================================== {{-
@@ -88,6 +89,18 @@ stitch([Utterance|Rest]) ->
 stringify(Term) ->
     R = io_lib:format("~p",[Term]),
     lists:flatten(R).
+
+sanitize_string(String) ->
+    lists:filter
+        ( fun
+            (Char) when Char >= 65, Char =< 90
+                      ; Char >= 97, Char =< 122
+                      ; Char >= 48, Char =< 57
+                -> true;
+            (_) -> false
+          end
+        , String
+        ).
 
 % }}-
 

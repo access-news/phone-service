@@ -47,13 +47,13 @@ play % GREETING {{-
     % GoToBlindnessServices = "To learn about other blindness services, dial zero four.",
     % }}-
 
-    % IsRegistered =
-    %     case AuthStatus of
-    %         registered ->
-    %             fun(D) -> D end;
-    %         unregistered ->
-    %             q(greeting_demo_warning)
-    %     end,
+    IsRegistered =
+        case AuthStatus of
+            registered ->
+                fun(D) -> D end;
+            unregistered ->
+                q(greeting_demo_warning)
+        end,
 
     menu_queue
       ( State
@@ -62,18 +62,20 @@ play % GREETING {{-
         % TODO !!!
         % , (cp(lofa))("https://accessnews.blob.core.windows.net/safeway/ro.mp3")
       , [ q(greeting)
+        , IsRegistered
         , q(option_changes)
-         % q(greeting_welcome)
-        % , q(to_main_menu)
-        % , IsRegistered
-        % , q(greeting_footer)
         ]
       );
 
 % }}-
 play % MAIN_MENU {{-
   ( main_menu = State
-  , #{ auth_status := AuthStatus } = Data
+  , #{ auth_status := AuthStatus
+     , current_content :=
+       #{ title := Title
+        , type  := Type
+        }
+     } = Data
   )
 ->
     IsRegistered =
@@ -84,11 +86,20 @@ play % MAIN_MENU {{-
                 q(help_menu_demo)
         end,
 
+    Back =
+        case Type =:= article of
+            true ->
+                "the article";
+            false ->
+                Title
+        end,
+
     menu_queue
       ( State
       , Data
       , [ q(help_menu)
         , IsRegistered
+        , q("go" ++ Back)
         , q(help_menu_options)
         ]
       );
@@ -131,9 +142,8 @@ play % IN_RECORDING {{-
 % }}-
 play % CONTENT_ROOT {{-
   ( content_root = State
-  , #{ current_content :=
-       #{title := Title} = CurrentContent
-     , auth_status := AuthStatus
+  , #{ current_content := CurrentContent
+     ,     auth_status := AuthStatus
      } = Data
   )
 ->
@@ -149,27 +159,29 @@ play % CONTENT_ROOT {{-
       ( State
       , Data
       , [ title(CurrentContent)
-        , IsRegistered
         , q(get_help)
         , selections(CurrentContent)
+        , IsRegistered
         ]
       );
 
 % }}-
 play % CATEGORY {{-
   ( category = State
-  , #{ current_content :=
-       #{title := Title} = CurrentContent
+  , #{ current_content := CurrentContent
      } = Data
   )
 ->
+    ParentCategoryTitle = pick_title(parent, CurrentContent),
+    NextCategoryTitle   = pick_title(next,   CurrentContent),
+
     menu_queue
       ( State
       , Data
       , [ title(CurrentContent)
         , selections(CurrentContent)
-        , q(go_up)
-        , q(next_category)
+        , q("go" ++ ParentCategoryTitle)
+        , q("next_category" ++ NextCategoryTitle)
         , q(to_main_menu)
         ]
       );
@@ -177,8 +189,7 @@ play % CATEGORY {{-
 % }}-
 play % PUBLICATION {{-
   ( publication = State
-  , #{ current_content :=
-       #{title := Title} = CurrentContent
+  , #{ current_content := CurrentContent
      } = Data
   )
 ->
@@ -189,21 +200,44 @@ play % PUBLICATION {{-
            , fun erlang:integer_to_list/1
            ]),
 
+    ParentCategoryTitle =
+        pick_title(parent, CurrentContent),
+
     menu_queue
       ( State
       , Data
       , [ title(CurrentContent)
         , q("article-number-" ++ ArticleNumberString)
         , q(to_publication_help)
+        , q("go" ++ ParentCategoryTitle)
         ]
       );
 
 % }}-
 play % PUBLICATION_HELP {{-
   ( publication_help = State
-  , Data
+  , #{ current_content :=
+       #{title := Title} = CurrentContent
+     } = Data
   )
 ->
+    ArticleNumber =
+        futil:pipe
+          ([ content:pick(children, CurrentContent)
+           , fun erlang:length/1
+           ]),
+
+    LastFirst =
+        case ArticleNumber of
+            0 -> [];
+            1 -> [ q(first_article) ];
+            _ -> [ q(first_article), q(last_article) ]
+        end,
+
+    % TODO keep an eye on these (here and in other places, e.g., in CATEGORY) for perf issues
+    NextPublicationTitle = pick_title(next, CurrentContent),
+    PrevPublicationTitle = pick_title(prev, CurrentContent),
+
     menu_queue
       ( State
       , Data
@@ -211,11 +245,11 @@ play % PUBLICATION_HELP {{-
          % title(CurrentContent)
         % , q("article-number-" ++ ArticleNumberString)
           q(publication_help)
-        , q(first_article)
-        , q(last_article)
-        , q(prev_publication)
-        , q(next_publication)
-        , q(go_up)
+        ]
+        ++ LastFirst ++
+        [ q("prev_publication" ++ PrevPublicationTitle)
+        , q("next_publication" ++ NextPublicationTitle)
+        , q("go" ++ Title)
         , q(to_main_menu)
         , q(extra_publication_help)
         ]
@@ -286,9 +320,13 @@ play % ARTICLE {{-
 % }}-
 play % ARTICLE_HELP {{-
   ( article_help = State
-  , Data
+  , #{ current_content := CurrentContent
+     } = Data
   )
 ->
+    ParentPublicationTitle =
+        pick_title(parent, CurrentContent),
+
     menu_queue
       ( State
       , Data
@@ -302,7 +340,7 @@ play % ARTICLE_HELP {{-
         , q(volume_down)
         , q(volume_up)
         , q(prev_article)
-        , q(go_up)
+        , q("go" ++ ParentPublicationTitle)
         , q(to_main_menu)
         , q(next_article)
         ]
@@ -368,14 +406,15 @@ play % NO_PREV_ITEM {{-
 , #{current_content := #{ type := ContentType }} = Data
 )
 ->
-    case ContentType of
-        category ->
-            menu_queue(State, Data, [ q(no_prev_category) ]);
-        publication ->
-            menu_queue(State, Data, [ q(no_prev_publication) ]);
-        article ->
-            menu_queue(State, Data, [ q(no_prev_article) ])
-    end;
+    Prompt =
+        case ContentType of
+            category    -> q(no_prev_category);
+            publication -> q(no_prev_publication);
+            article     -> q(no_prev_article);
+            section     -> q(no_prev_section)
+        end,
+
+    menu_queue(State, Data, [ Prompt ]);
 
 % }}-
 play % NO_NEXT_ITEM {{-
@@ -383,22 +422,30 @@ play % NO_NEXT_ITEM {{-
 , #{current_content := #{ type := ContentType }} = Data
 )
 ->
-    case ContentType of
-        category ->
-            menu_queue(State, Data, [ q(no_next_category) ]);
-        publication ->
-            menu_queue(State, Data, [ q(no_next_publication) ]);
-        article ->
-            menu_queue(State, Data, [ q(no_next_article) ])
-    end.
+    Prompt =
+        case ContentType of
+            section     -> q(no_next_section);
+            category    -> q(no_next_category);
+            publication -> q(no_next_publication);
+            article     -> q(no_next_article)
+        end,
+
+    menu_queue(State, Data, [ Prompt ]).
 
 % }}-
 
 % }}-
 % === STRINGS TO BE READ BY TTS ====================== {{-
-% TODO Also, if the `prompts` dir does not exist, nothing will fail and the app happily goes along without ever playing anything
+% TODO If the  `prompts` dir  does not exist,  nothing will
+%      fail  and the  app happily  goes along  without ever
+%      playing anything
 prompt(PromptName) -> % {{-
     case PromptName of
+
+        "go" ->
+            "";
+        "go" ++ Back ->
+            "Press star to go back to " ++ Back ++ ".";
 
         % GREETING {{-
         "greeting" ->
@@ -417,10 +464,10 @@ prompt(PromptName) -> % {{-
         %     "time, or  press pound to skip  to the main "
         %     "categories.";
 
-        % "greeting_demo_warning" ->
-        %     "You are  currently in demo mode,  and have "
-        %     "approximately  5 minutes  to  try out  the "
-        %     "system before getting disconnected.";
+        "greeting_demo_warning" ->
+            "You are  currently in demo mode,  and have "
+            "approximately  5 minutes  to  try out  the "
+            "system before getting disconnected.";
 
         % "greeting_footer" ->
         %     "If  you have  any questions,  concerns, or "
@@ -434,7 +481,6 @@ prompt(PromptName) -> % {{-
             "Help and other options.";
 
         "help_menu_options" ->
-            "Press star to go back. "
             "Press pound to record a message. "
             "Press 0 to jump to the main category. "
             "Press 2 to change prompt playback speed.";
@@ -478,68 +524,6 @@ prompt(PromptName) -> % {{-
             "Please note that you are currently in demo mode.";
 
         % }}-
-        % CATEGORY {{-
-        "next_category" ->
-            "Press pound to jump to the next category.";
-
-        % }}-
-        % PUBLICATION {{-
-        % number of articles {{-
-        "article-number-0" ->
-            "No articles in this publication.";
-
-        "article-number-1" ->
-            "One article in this publication.";
-
-        "article-number-" ++ Number ->
-            Number ++ " articles in this publication.";
-        % }}-
-        % If they press 2 while still in publication -> PUBLICATION_HELP
-        % If the article already started playing -> ARTICLE_HELP
-        "to_publication_help" -> 
-            "Press two for help at any time.";
-
-        % }}-
-        % PUBLICATION_HELP {{-
-        "publication_help" ->
-            "The  following controls  are available  in "
-            "each publication: ";
-
-        "next_publication" ->
-            "Press pound to jump to the next publication.";
-
-        "prev_publication" ->
-            "Press nine for the previous publication.";
-
-        "first_article" ->
-            "Press one to start the newest article.";
-
-        "last_article" ->
-            "Press three to start the oldest article.";
-
-        "extra_publication_help" ->
-            "The     newest   article     will    start "
-            "automatically   once   the  name   of  the "
-            "publication  and  the article  count  have "
-            "been announced. "
-            "Pressing  two while  listening an  article "
-            "will pause playback, and the upcoming menu "
-            "will tell you  about all available article "
-            "controls. ";
-
-        % }}-
-        % TODO This should hold the article title at one point.
-        % TODO or, any kind of metadata, that could be customizeable.
-        % For example, user wants to hear the date of the article (recorded, written, or both) , and/or the name of the reader, whatever, and they should be able to customize this in `main_menu``
-        % ARTICLE_INTRO {{-
-        "article_intro" ->
-            % "Press two for help at any time.";
-            "";
-
-        % }}-
-        % ARTICLE (empty){{-
-        % }}-
-        % TODO Either automatically read the article metadata (date recorded/written, name of reader, title, article author, etc), and have a submenu with the article controls (e.g. "Article paused. To listen to the available article playback controls, press x. For article information press y." or just straight up start reading article metadata).
         % ARTICLE_HELP {{-
         "article_paused" ->
             "Article  paused. Press  2  to resume.  The "
@@ -572,13 +556,82 @@ prompt(PromptName) -> % {{-
             "Press 7 to lower the volume.";
 
         "volume_up" ->
-            "Rress 8 to turn up the volume.";
+            "Press 8 to turn up the volume.";
 
         "restart" ->
             % "Press 7 to restart the article.";
             "Press 4 to restart the article.";
 
         % }}-
+        % CATEGORY {{-
+        "next_category" ->
+            "";
+        "next_category" ++ Title ->
+            "Press pound to jump to the next category, " ++ Title ++ ".";
+
+        % }}-
+        % PUBLICATION {{-
+        % number of articles {{-
+        "article-number-0" ->
+            "No articles in this publication.";
+
+        "article-number-1" ->
+            "One article in this publication.";
+
+        "article-number-" ++ Number ->
+            Number ++ " articles in this publication.";
+        % }}-
+        % If they press 2 while still in publication -> PUBLICATION_HELP
+        % If the article already started playing -> ARTICLE_HELP
+        "to_publication_help" -> 
+            "Press two for help at any time.";
+
+        % }}-
+        % PUBLICATION_HELP {{-
+        "publication_help" ->
+            "The  following controls  are available: ";
+
+        "next_publication" ->
+            "";
+        "next_publication" ++ Title ->
+            "Press pound to jump to the next publication, "
+            "in this case, to " ++ Title ++ ".";
+
+        "prev_publication" ->
+            "";
+        "prev_publication" ++ Title ->
+            "Press nine for the previous publication, "
+            "in this case, to " ++ Title ++ ".";
+
+        "first_article" ->
+            "Press one to start the newest article.";
+
+        "last_article" ->
+            "Press three to start the oldest article.";
+
+        "extra_publication_help" ->
+            "The     newest   article     will    start "
+            "automatically   once   the  name   of  the "
+            "publication  and  the article  count  have "
+            "been announced. "
+            "Pressing two while listening an to article "
+            "will pause playback, and the upcoming menu "
+            "will tell you  about all available article "
+            "controls. ";
+
+        % }}-
+        % TODO This should hold the article title at one point.
+        % TODO or, any kind of metadata, that could be customizeable.
+        % For example, user wants to hear the date of the article (recorded, written, or both) , and/or the name of the reader, whatever, and they should be able to customize this in `main_menu``
+        % ARTICLE_INTRO {{-
+        "article_intro" ->
+            % "Press two for help at any time.";
+            "";
+
+        % }}-
+        % ARTICLE (empty){{-
+        % }}-
+        % TODO Either automatically read the article metadata (date recorded/written, name of reader, title, article author, etc), and have a submenu with the article controls (e.g. "Article paused. To listen to the available article playback controls, press x. For article information press y." or just straight up start reading article metadata).
         % INVALID_SELECTION {{-
         "invalid_selection" ->
             "Invalid selection.";
@@ -623,6 +676,9 @@ prompt(PromptName) -> % {{-
         "no_prev_article" ->
             "This is the first article.";
 
+        "no_prev_section" ->
+            "This is the first section.";
+
         % }}-
         % NO_NEXT_ITEM {{-
         "no_next_category" ->
@@ -634,10 +690,13 @@ prompt(PromptName) -> % {{-
         "no_next_article" ->
             "This is the last article.";
 
+        "no_next_section" ->
+            "This is the last section.";
+
         % }}-
 
-        "go_up" ->
-            "Press star to go up";
+        % "go_up" ->
+        %     "Press star to go up";
 
         "to_main_menu" ->
             % "For the main  menu press 0."
@@ -689,25 +748,29 @@ menu_queue(State, Data) ->
 % }}-
 % `queue_prompt/3`    and `q/1`           {{-
 queue_prompt
-( PromptNameString % String
+( Prompt % String
 , TTSEngine
 , #{ prompt_speed := PromptSpeed } = Data
 )
 ->
-    Text =
-        prompt(PromptNameString),
+    PromptText =
+        prompt(Prompt),
+
     ID =
-        id_from_hash(Text),
-        
+        id_from_hash(PromptText),
     AudioFilename =
-        get_audiofilename(ID, PromptNameString, PromptSpeed),
+        get_audiofilename
+          ( ID
+          , futil:sanitize_string(Prompt)
+          , PromptSpeed
+          ),
 
     case filelib:is_file(AudioFilename) of
         true ->
             noop;
         false ->
-            % google_TTS_to_wav(Text, PromptNameString, PromptSpeed)
-            TTSEngine({Text, AudioFilename, PromptSpeed})
+            % google_TTS_to_wav(PromptText, Prompt, PromptSpeed)
+            TTSEngine({PromptText, AudioFilename, PromptSpeed})
     end,
 
     playback(smarties_cereal, Data, AudioFilename).
@@ -752,6 +815,30 @@ title(Vertex) ->
 
 % }}-
 % `play_selections/2` and `selections/1`  {{-
+
+% TODO Improve responsiveness
+% THE ISSUE: Sometimes when  pressing a  digit, the DTMF  tone is
+%            seemingly ignored,  and then  it does tend  to start
+%            working  after a  couple  of seconds  -  even if  it
+%            should do so instantly (e.g., because there are only
+%            <10 choices in the menu, hence no wait time needed).
+%            The user  may become  irritated and  start pummeling
+%            the  button,  causing  them to  enter  subitems  not
+%            intended originally.
+%
+% I think there are 2 reasons for this: 
+% 
+% + prompts  are generated  on-demand when  it does  not
+%   exist (so this would make it a one-time issue)
+% 
+% + when entering a vertex,  ALL selections are enqueued
+%   to be  played, and then  ALL of them are  stopped on
+%   valid DTMF event
+% 
+% Would  the  app  be  more  responsive  if  only  one
+% playback would  be scheduled and it  would start the
+% next one on  CHANNEL_EXECUTE_COMPLETE? It would also
+% make it more complicated.
 play_selections(Vertex, Data) ->
     PlaybackFunctions =
         [  (futil:curry(fun do_play_selection/2))(Child)
@@ -1037,19 +1124,8 @@ do_check  % {{-
                 }
         end,
 
-        FilteredTitle =
-            lists:filter
-              ( fun
-                    (Char) when Char >= 65, Char =< 90;
-                                Char >= 97, Char =< 122
-                        -> true;
-                    (_) -> false
-                end
-              , Title
-              ),
-
     FileBasename =
-           FilteredTitle
+           futil:sanitize_string(Title)
         ++ "-"
         ++ LabelKey,
 
@@ -1103,6 +1179,16 @@ get_audiofilename(ID, FileBasename, Speed) -> % {{-
     ++ ".wav".
 
 % }}-
+pick_title(Direction, ContentItem) ->
+    MaybeItem =
+        content:pick(Direction, ContentItem),
+    case MaybeItem of
+        [] ->
+            "";
+        [ #{title := Title} ] ->
+            Title
+    end.
+
 % }}-
 % === FOR TESTING ONLY =============================== {{-
 

@@ -605,7 +605,14 @@ publication_guide() -> % {{-
                   , [ {dir_prefix, "grocery"} ]
                   }
                 }
-              , [ {publication, "Safeway"}
+              , [ { { sectioned_publication
+                    , { "Safeway" 
+                      , [ {dir_prefix, "safeway"} ]
+                      }
+                    }
+                  , [ {section, {"Week 7/15/2020 to 7/21/2020", [{alt, "07152020"}]}}
+                    ]
+                  }
                 , {publication, {"Raley's",            [{ alt, "raleys"      }]}}
                 , {publication, {"La Superior",        [{ alt, "la-superior" }]}}
                 , {publication, {"Food Source",        [{ alt, "food-source" }]}}
