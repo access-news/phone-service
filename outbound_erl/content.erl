@@ -617,7 +617,7 @@ publication_guide() -> % {{-
                 , {publication, {"La Superior",        [{ alt, "la-superior" }]}}
                 , {publication, {"Food Source",        [{ alt, "food-source" }]}}
                 , {publication, "Savemart"}
-                , {publication, {"Food Co",            [{ alt, "foods-co"    }]}}
+                , {publication, {"Foods Co",           [{ alt, "foods-co"    }]}}
                 , {publication, {"Trader Joe's",       [{ alt, "trader-joes" }]}}
                 , {publication, "Sprouts"}
                 , {publication, {"Lucky Supermarkets", [{ alt, "lucky"       }]}}
