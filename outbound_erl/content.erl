@@ -35,10 +35,6 @@
     % , update_history/2
     ]).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% gen_server callbacks                                               %%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 start_link() ->
     {ok, Pid} = gen_server:start_link({local, ?MODULE}, ?MODULE, [], []),
     Pid.
@@ -46,6 +42,10 @@ start_link() ->
 start() ->
     {ok, Pid} = gen_server:start({local, ?MODULE}, ?MODULE, [], []),
     Pid.
+
+%% ====================================================================
+%% gen_server callbacks
+%% ====================================================================
 
 init(_Args) -> % {{-
     % TODO PROD How to set up the graph? ("do not overthink" notes below) {{-

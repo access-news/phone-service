@@ -34,6 +34,10 @@ start() ->
     {ok, Pid} = gen_server:start({local, ?MODULE}, ?MODULE, [], []),
     Pid.
 
+%% ====================================================================
+%% gen_server callbacks
+%% ====================================================================
+
 init(_Args) ->
     %% Set up logging.
     filog:add_singleton_handler(?MODULE),
