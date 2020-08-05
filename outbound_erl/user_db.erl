@@ -103,6 +103,9 @@ look_up(PhoneNumber) ->
 reload() ->
     gen_server:cast(user_db, reload_db).
 
+% TODO `add_phone_number/1`
+% TODO `toggle_phone_number/1`
+
 % }}-
 %%%%%%%%%%%%%%%%%%%%%%%
 %% Private functions %%

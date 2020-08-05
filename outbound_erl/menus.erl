@@ -52,7 +52,8 @@ play % GREETING {{-
             registered ->
                 fun(D) -> D end;
             unregistered ->
-                q(greeting_demo_warning)
+                % q(greeting_demo_warning)
+                q(demo_announcement)
         end,
 
     menu_queue
@@ -78,13 +79,13 @@ play % MAIN_MENU {{-
      } = Data
   )
 ->
-    IsRegistered =
-        case AuthStatus of
-            registered ->
-                fun(D) -> D end;
-            unregistered ->
-                q(help_menu_demo)
-        end,
+    % IsRegistered =
+    %     case AuthStatus of
+    %         registered ->
+    %             fun(D) -> D end;
+    %         unregistered ->
+    %             q(demo_announcement)
+    %     end,
 
     Back =
         case Type =:= article of
@@ -98,7 +99,7 @@ play % MAIN_MENU {{-
       ( State
       , Data
       , [ q(help_menu)
-        , IsRegistered
+        % , IsRegistered
         , q("go" ++ Back)
         , q(help_menu_options)
         ]
@@ -152,7 +153,7 @@ play % CONTENT_ROOT {{-
             registered ->
                 fun(D) -> D end;
             unregistered ->
-                q(demo_mode)
+                q(root_demo_mode)
         end,
 
     menu_queue
@@ -444,6 +445,8 @@ prompt(PromptName) -> % {{-
 
         "go" ->
             "";
+        "go" ++ "Main menu" ->
+            "Press star to go back to the main menu.";
         "go" ++ Back ->
             "Press star to go back to " ++ Back ++ ".";
 
@@ -465,9 +468,11 @@ prompt(PromptName) -> % {{-
         %     "categories.";
 
         "greeting_demo_warning" ->
-            "You are  currently in demo mode,  and have "
-            "approximately  5 minutes  to  try out  the "
-            "system before getting disconnected.";
+            "You are currently in demo mode and will have "
+            "five minutes to try out the system. ";
+            % "You are  currently in demo mode,  and have "
+            % "approximately  5 minutes  to  try out  the "
+            % "system before getting disconnected.";
 
         % "greeting_footer" ->
         %     "If  you have  any questions,  concerns, or "
@@ -482,16 +487,18 @@ prompt(PromptName) -> % {{-
 
         "help_menu_options" ->
             "Press pound to record a message. "
-            "Press 0 to jump to the main category. "
+            "Press 0 to go to the main menu. "
             "Press 2 to change prompt playback speed.";
         
-        "help_menu_demo" ->
-            "You are  currently in demo mode,  and have "
-            "approximately  5 minutes  to  try out  the "
-            "system before getting disconnected. "
+        "demo_announcement" ->
+            "You are currently in demo mode and will have "
+            "five minutes to try out the system. "
+            % "You are  currently in demo mode,  and have "
+            % "approximately  5 minutes  to  try out  the "
+            % "system before getting disconnected. "
             "If  you would like to register or have any "
             "questions, please call 9 1 6, 8 8 9, 7 5 1 "
-            "9, or leave a message by pressing pound.; ";
+            "9, or leave a message by pressing zero and then pound.; ";
 
         % }}-
         % PROMPT_PLAYBACK_SPEED {{-
@@ -520,7 +527,7 @@ prompt(PromptName) -> % {{-
         "get_help" ->
             "Press 0 for help at any time.";
 
-        "demo_mode" ->
+        "root_demo_mode" ->
             "Please note that you are currently in demo mode.";
 
         % }}-
@@ -531,16 +538,16 @@ prompt(PromptName) -> % {{-
             "playback.";
 
         "next_article" ->
-            "Press pound to jump to the next article.";
+            "Press pound to go to the next article.";
 
         "prev_article" ->
             "Press 9 to play previous article.";
 
         "skip_backward" ->
-            "Press 1 to skip back ten seconds.";
+            "Press 1 to go back ten seconds.";
 
         "skip_forward" ->
-            "Press 3 to jump forward ten seconds.";
+            "Press 3 to go forward ten seconds.";
 
         "pause_resume" ->
             "Press 2 to pause or resume article.";
@@ -550,7 +557,7 @@ prompt(PromptName) -> % {{-
             "Press 5 to slow down the recording.";
 
         "speed_up" ->
-            "Press 6 to speed up playback.";
+            "Press 6 to speed up the recording.";
 
         "volume_down" ->
             "Press 7 to lower the volume.";
@@ -567,7 +574,7 @@ prompt(PromptName) -> % {{-
         "next_category" ->
             "";
         "next_category" ++ Title ->
-            "Press pound to jump to the next category, " ++ Title ++ ".";
+            "Press pound to go to the next category, " ++ Title ++ ".";
 
         % }}-
         % PUBLICATION {{-
@@ -594,7 +601,7 @@ prompt(PromptName) -> % {{-
         "next_publication" ->
             "";
         "next_publication" ++ Title ->
-            "Press pound to jump to the next publication, "
+            "Press pound to go to the next publication, "
             "in this case, to " ++ Title ++ ".";
 
         "prev_publication" ->
@@ -615,7 +622,7 @@ prompt(PromptName) -> % {{-
             "publication  and  the article  count  have "
             "been announced. "
             "Pressing two while listening an to article "
-            "will pause playback, and the upcoming menu "
+            "will pause the recording, and the upcoming menu "
             "will tell you  about all available article "
             "controls. ";
 
@@ -650,7 +657,7 @@ prompt(PromptName) -> % {{-
             "End of demo session.  If you would like to "
             "sign  up  for  Access News,  or  have  any "
             "questions, please call 916-889-7519. Thank "
-            "you, and have a wondeful day!";
+            "you, and have a wonderful day!";
 
         % }}-
         % INACTIVITY_HANGUP {{-

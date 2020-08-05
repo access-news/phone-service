@@ -386,24 +386,25 @@ handle_event(
     % see `demo_hangup` on what happens next or how the call is terminated from the server side
 % Hanging up, so stop processing other `internal` events [..]
 % NOTE `info` (i.e., external) events are still processed, but they are irrelevant at this point. If need to save them for debugging, just modify MOD_ERL_EVENT_MASSAGE, or the DEBUG clause in the "`info` clauses (for FreeSwITCH events)" section above
-handle_event(
-  internal, % EventType
-  _EventContent,
-  % TODO This does not seem right. I believe complex hangup states like this have been abolished. How would we get here anyway?
-  {hangup, _},                % State
-  #{ call_UUID := UUID } = _Data                  % Data
-) ->
-    % logger:debug(#{ self() => ["in HANGUP state", #{ data => Data, state => hangup, event_content => EC }]}),
+% handle_event(
+%   internal, % EventType
+%   _EventContent,
+%   % TODO This does not seem right. I believe complex hangup states like this have been abolished. How would we get here anyway?
+%   {hangup, _},                % State
+%   #{ call_UUID := UUID } = _Data                  % Data
+% ) ->
+%     logger:debug(#{ self() => ["in HANGUP state", #{ data => Data, state => hangup, event_content => EC }]}),
 
-    % sending it synchronously to allow the playback to end
-    fs:sendmsg_locked(UUID, hangup, ["16"]),
-        % #{ command => hangup
-        %  , args       => ["16"]
-        %  }),
-    %% Not stopping the  `gen_statem` process here, because
-    %% there will be further events related to the `hangup`
-    %% command above. See "CALL_HANGUP" `info` clause below.
-    keep_state_and_data;
+%     % sending it synchronously to allow the playback to end
+%     fs:sendmsg_locked(UUID, hangup, ["16"]),
+%     % fs:fsend({api, uuid_broadcast, UUID ++ " info!:: both"}),
+%         % #{ command => hangup
+%         %  , args       => ["16"]
+%         %  }),
+%     %% Not stopping the  `gen_statem` process here, because
+%     %% there will be further events related to the `hangup`
+%     %% command above. See "CALL_HANGUP" `info` clause below.
+%     keep_state_and_data;
 % }}-
 
 %% (STATE: init -> incoming_call)
@@ -461,6 +462,7 @@ handle_event
     %% everything related to the same call in one place.
     %% }}-
     fs:fsend({api, uuid_setvar, UUID ++ " playback_terminators none"}),
+    % fs:fsend({api, uuid_setvar, UUID ++ " hangup_after_bridge true"}),
 
     { NewAuthStatus
     , TransitionActions
@@ -1132,7 +1134,7 @@ handle_event(
 %% HANDLE_CHANNEL_EXECUTE_COMPLETE (catching stopped playbacks mostly) {{-
 handle_event(
   internal,                    % EventType
-  { _UUID                      % \
+  { UUID                       % \
   , call_event                 % |
   , #{ "Event-Name" := "CHANNEL_EXECUTE_COMPLETE"
        % TODO re-eval on any playback change! (external engine etc)
@@ -1246,6 +1248,8 @@ when Application =:= "speak"
         _ when State =:= demo_hangup;
                State =:= inactivity_hangup
         ->
+            logger:debug(#{ self() => ["HANGING UP"] }),
+            fs:sendmsg_locked(UUID, hangup, ["16"]),
             {keep_state, NewData}
     end;
 %% }}-
