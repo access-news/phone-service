@@ -8,6 +8,8 @@
 #               VVVVVVVVVVVVVVVV
 { pkgs ? import ~/clones/nixpkgs {} }:
 
+# `mkShell` vs `mkDerivation`
+# https://github.com/NixOS/nixpkgs/issues/58624
 pkgs.mkShell {
 
   buildInputs = with pkgs; [
