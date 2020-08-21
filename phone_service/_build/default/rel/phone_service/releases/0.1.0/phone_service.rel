@@ -1,0 +1,3 @@
+{release,{"phone_service","0.1.0"},
+         {erts,"10.7"},
+         [{kernel,"6.5.2"},{stdlib,"3.12"},{phone_service,"0.1.0"}]}. 

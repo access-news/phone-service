@@ -1,0 +1,6 @@
+%% coding: utf-8
+[{release,"phone_service","0.1.0","10.7",
+          [{kernel,"6.5.2","./lib/kernel-6.5.2"},
+           {stdlib,"3.12","./lib/stdlib-3.12"},
+           {phone_service,"0.1.0","./lib/phone_service-0.1.0"}],
+          permanent}].
