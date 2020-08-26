@@ -44,14 +44,14 @@ init([]) ->
        }
 
     % TODO `content`  takes  its  time to  create  the  content
-%          graph, and depending  on its size, it  may result is
+%          graph, and depending  on its size, it  may result in
 %          startup  issues. If  this indeed  becomes an  issue,
 %          "outsource" the  graph building  to a  process, that
 %          sends a  message to  `ivr_sup` that  is ok  to start
 %          accepting calls.
 ,   ChildSpecs =
         [ child_spec(user_db, worker)
-        , child_spec(content, worker)
+        % , child_spec(content, worker)
         , child_spec(ivr_sup, supervisor)
         ]
 ,   {ok, {SupFlags, ChildSpecs}}

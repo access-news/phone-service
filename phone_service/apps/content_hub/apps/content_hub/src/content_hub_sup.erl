@@ -29,7 +29,21 @@ init([]) ->
     SupFlags = #{strategy => one_for_all,
                  intensity => 0,
                  period => 1},
-    ChildSpecs = [],
-    {ok, {SupFlags, ChildSpecs}}.
+,   ChildSpecs =
+        [ child_spec(content, worker)
+        % , child_spec(ivr_sup, supervisor)
+        ]
+,   {ok, {SupFlags, ChildSpecs}}
+.
 
-%% internal functions
+%% ====================================================================
+%% Internal functions
+%% ====================================================================
+
+child_spec(Id, Type) ->
+    #{ id       => Id
+     , start    => { Id, start_link, [] }
+     , restart  => permanent
+     , type     => Type
+     }
+.
