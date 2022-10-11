@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<include>
+  <context name="default">
+
+    <extension name="SignalWire CONNECTORS local call">
+      <!-- the numbers you assigned in your dashboard -->
+      <condition field="destination_number" expression="^.*$">
+<!--      <condition field="destination_number" expression="^(\+19162510217)$">-->
+        <action application="erlang" data="ivr:start access_news@tr2"/>
+      </condition>
+    </extension>
+
+<!--    <extension name="SignalWire CONNECTORS toll-free call">-->
+      <!-- the numbers you assigned in your dashboard -->
+<!--      <condition field="destination_number" expression="^(\+19167202772)$">-->
+<!--        <action application="erlang" data="ivr:start access_news@tr2"/>-->
+<!--      </condition>-->
+<!--    </extension>-->
+
+  </context>
+</include>

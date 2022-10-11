@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<document type="freeswitch/xml">
+
+  <X-PRE-PROCESS cmd="include" data="vars.xml"/>
+
+  <section name="configuration" description="Various Configuration">
+    <X-PRE-PROCESS cmd="include" data="autoload_configs/*.xml"/>
+  </section>
+
+  <section name="dialplan" description="Regex/XML Dialplan">
+    <X-PRE-PROCESS cmd="include" data="dialplan/default.xml"/>
+  </section>
+
+  <!-- See ttps://github.com/toraritte/knowledge-gaps/blob/master/telephony/freeswitch.md#2-speech-phrase-management-in-docs-vs-language-management-in-demo-config -->
+  <section name="phrases" description="Phrase Management">
+    <macros>
+      <X-PRE-PROCESS cmd="include" data="lang/en/en.xml"/>
+    </macros>
+  </section>
+</document>

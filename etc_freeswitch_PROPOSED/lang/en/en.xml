@@ -1,0 +1,9 @@
+<include>
+  <language name="en" sound-path="$${sound_prefix}" tts-engine="flite" tts-voice="slt">
+    <X-PRE-PROCESS cmd="include" data="tr2.xml"/>  <!-- IVR and custom phrases go here -->
+  </language>
+</include>
+<!--
+VIM modeline
+vim:set softtabstop=2 shiftwidth=2 tabstop=2 expandtab:
+-->
