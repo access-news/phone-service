@@ -10,11 +10,4 @@
   <section name="dialplan" description="Regex/XML Dialplan">
     <X-PRE-PROCESS cmd="include" data="dialplan/default.xml"/>
   </section>
-
-  <!-- See ttps://github.com/toraritte/knowledge-gaps/blob/master/telephony/freeswitch.md#2-speech-phrase-management-in-docs-vs-language-management-in-demo-config -->
-  <section name="phrases" description="Phrase Management">
-    <macros>
-      <X-PRE-PROCESS cmd="include" data="lang/en/en.xml"/>
-    </macros>
-  </section>
 </document>
