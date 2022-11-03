@@ -131,3 +131,5 @@ log(Level, ValueList) ->
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
+% vim: set nowrap:
+% vim: softtabstop=4 shiftwidth=4 tabstop=4 expandtab:
