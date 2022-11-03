@@ -22,11 +22,12 @@
 
 
 # Easiest way to install them is using Nix:
-# # straightforward:
-# $ nix-env -iA nixpkgs.jq
-# $ nix-env -iA nixpkgs.google-cloud-sdk
-# # if nixos/nixpkgs is cloned:
-# $ nix-env -f path/to/cloned/nixpkgs -iA pkgs.curl
+#
+# nix-shell -p jq google-cloud-sdk curl
+#
+# ( `base64` has  always  been  available on the Linux
+#   command line thus far.
+# )
 
 # OTHER REQUIRED STEPS BEFORE USING
 
