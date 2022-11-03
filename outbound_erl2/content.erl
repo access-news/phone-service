@@ -1,11 +1,11 @@
 -module(content).
 -behaviour(gen_server).
 
-% NOTE 2022-10-19_1917 Vaguely remember experiment, but not this one. It can probably go.
+% NOTE 20221019_1917 Vaguely remember experimenting with stuff, but not the specifics; these can probably go.
 % -define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").
+% -define(CONTENT_ROOT, {category, 0, "Main category"}).
 
 -define(PUBLICATION_ROOT, "/home/tr2-admin/publications/").
-% -define(CONTENT_ROOT, {category, 0, "Main category"}).
 
 -export(
     [ start/0
@@ -626,9 +626,9 @@ publication_guide() -> % {{-
                     ]
                   }
                 , { { category, "Grocery stores with names beginning with 'S' through 'Z'" }
-                  , [ {publication, {"Sacramento Natural Foods Co-op", [{ alt, "sac-coop" }]}} 
+                  , [ {publication, {"Sacramento Natural Foods Co-op", [{ alt, "sac-coop" }]}}
                     , { { sectioned_publication, "Safeway" } % {{-
-	                    , [ {section, {"Weekly ads", [{alt, "safeway-this-week"}]}}
+                        , [ {section, {"Weekly ads", [{alt, "safeway-this-week"}]}}
                         , {section, {"Big Book of Savings",  [{alt, "safeway-big-book"}]}}
                         % , {section, {"Weekly ads from February 3rd to the 9th",  [{alt, "safeway-last-week"}]}}
                         ]
@@ -653,7 +653,7 @@ publication_guide() -> % {{-
           %           % }
           %         , [ {section, {"Big Book of Savings, valid from February 1st to March 2nd",  [{alt, "safeway-big-book"}]}}
           %           % , {section, {"Weekly ads from February 3rd to the 9th",  [{alt, "safeway-last-week"}]}}
-		    % , {section, {"Weekly ads", [{alt, "safeway-this-week"}]}}
+            % , {section, {"Weekly ads", [{alt, "safeway-this-week"}]}}
           %           ]
           %         }
           %       , { publication, { "Raley's",  [{alt, "raleys-sue"  }]}} % 2
@@ -664,11 +664,11 @@ publication_guide() -> % {{-
           %       %     }
           %       %   , [ {section, {"This week's ads",  [{alt, "latest"}]}}
           %       %     , {section, {"Week 8/26/2020 to 9/1/2020",  [{alt, "08262020"}]}}
-		    % % , {section, {"Week 8/19/2020 to 8/25/2020", [{alt, "08192020"}]}}
-		    % % , {section, {"Week 8/12/2020 to 8/18/2020", [{alt, "08122020"}]}}
-		    % % , {section, {"Week 8/4/2020 to 8/11/2020",  [{alt, "08042020"}]}}
-		    % % , {section, {"Week 7/28/2020 to 8/3/2020",  [{alt, "07282020"}]}}
-		    % % , {section, {"Week 7/22/2020 to 7/27/2020", [{alt, "07222020"}]}}
+            % % , {section, {"Week 8/19/2020 to 8/25/2020", [{alt, "08192020"}]}}
+            % % , {section, {"Week 8/12/2020 to 8/18/2020", [{alt, "08122020"}]}}
+            % % , {section, {"Week 8/4/2020 to 8/11/2020",  [{alt, "08042020"}]}}
+            % % , {section, {"Week 7/28/2020 to 8/3/2020",  [{alt, "07282020"}]}}
+            % % , {section, {"Week 7/22/2020 to 7/27/2020", [{alt, "07222020"}]}}
           %       %     ]
           %       %   }
           %       % , {publication, {"Raley's",            [{ alt, "raleys"      }]}}
@@ -1042,17 +1042,17 @@ publication_guide() -> % {{-
           %             }
           %           }
           %         , [ {section, { "Proposition 14", [{alt, "props-14"}]}}
-		    % , {section, { "Proposition 15", [{alt, "props-15"}]}}
-		    % , {section, { "Proposition 16", [{alt, "props-16"}]}}
-		    % , {section, { "Proposition 17", [{alt, "props-17"}]}}
-		    % , {section, { "Proposition 18", [{alt, "props-18"}]}}
-		    % , {section, { "Proposition 19", [{alt, "props-19"}]}}
-		    % , {section, { "Proposition 20", [{alt, "props-20"}]}}
-		    % , {section, { "Proposition 21", [{alt, "props-21"}]}}
-		    % , {section, { "Proposition 22", [{alt, "props-22"}]}}
-		    % , {section, { "Proposition 23", [{alt, "props-23"}]}}
-		    % , {section, { "Proposition 24", [{alt, "props-24"}]}}
-		    % , {section, { "Proposition 25", [{alt, "props-25"}]}}
+            % , {section, { "Proposition 15", [{alt, "props-15"}]}}
+            % , {section, { "Proposition 16", [{alt, "props-16"}]}}
+            % , {section, { "Proposition 17", [{alt, "props-17"}]}}
+            % , {section, { "Proposition 18", [{alt, "props-18"}]}}
+            % , {section, { "Proposition 19", [{alt, "props-19"}]}}
+            % , {section, { "Proposition 20", [{alt, "props-20"}]}}
+            % , {section, { "Proposition 21", [{alt, "props-21"}]}}
+            % , {section, { "Proposition 22", [{alt, "props-22"}]}}
+            % , {section, { "Proposition 23", [{alt, "props-23"}]}}
+            % , {section, { "Proposition 24", [{alt, "props-24"}]}}
+            % , {section, { "Proposition 25", [{alt, "props-25"}]}}
           %           ]
           %         }
           %       ]
