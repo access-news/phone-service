@@ -1,2 +1,4 @@
 conn_string.lua
 passwords.xml
+*.beam
+*.log
