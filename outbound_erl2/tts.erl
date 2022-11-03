@@ -27,3 +27,4 @@ google_TTS_to_wav
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
 % vim: set nowrap:
+% vim: set softtabstop=4 shiftwidth=4 tabstop=4 expandtab:

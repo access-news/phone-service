@@ -92,3 +92,5 @@ base64 --decode
 
 # vim: set fdm=marker:
 # vim: set foldmarker={{-,}}-:
+# vim: set nowrap:
+# vim: set softtabstop=2 shiftwidth=2 tabstop=2 expandtab:
