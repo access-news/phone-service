@@ -448,9 +448,16 @@ play % NO_NEXT_ITEM {{-
 
 % }}-
 % === STRINGS TO BE READ BY TTS ====================== {{-
+
 % TODO If the  `prompts` dir  does not exist,  nothing will
 %      fail  and the  app happily  goes along  without ever
 %      playing anything
+
+% TODO 20221107_1257
+% Is it appropriate to keep the text in here? Probably not because every change requires recompilation of this module, and these could be picked from a configuration file.
+% + Would moving these out affect caching? (see 20221102_0616)
+% + seems to be deeply coupled with the `play/2` function clauses...
+
 prompt(PromptName) -> % {{-
     case PromptName of
 
@@ -804,9 +811,11 @@ queue_prompt
     PromptText =
         prompt(Prompt),
 
-    % TODO 20221102_0616
+    % TODO 20221102_0616 (https://github.com/access-news/phone-service/issues/20)
     % + Something is wrong with the naming of the TTS-generated audio files as they keep accumulating. Not sure where I messed up, so examing the outputs of the prompt folder on the prod TR2.
     % + It also feels like this should be another file or even in tts.erl
+    % mentioned in 20221107_1257
+
     ID =
         id_from_hash(PromptText),
     AudioFilename =
