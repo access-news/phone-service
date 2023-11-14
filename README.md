@@ -29,6 +29,8 @@ In case the legacy server restarts: (shouldn't touch anything else)
    lsblk -f
    sudo mount /dev/sd?? ....../publications
    ```
+
+4. <erl_shell> `content:redraw().`
    
 ### Current `/etc/freeswitch/dialplan/default.xml` to start the `gen_statem` process on incoming calls
 
