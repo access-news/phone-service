@@ -25,6 +25,10 @@ In case the legacy server restarts: (shouldn't touch anything else)
    erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -run content -sname access_news -setcookie OldTimeRadio
    ```
 3. Mount publications
+   ```
+   lsblk -f
+   sudo mount /dev/sd?? ....../publications
+   ```
    
 ### Current `/etc/freeswitch/dialplan/default.xml` to start the `gen_statem` process on incoming calls
 
