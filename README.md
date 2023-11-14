@@ -16,9 +16,16 @@ passphrase.)
 
 ## Scratch notes
 
-```erlang
-erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -run content -sname access_news -setcookie OldTimeRadio
-```
+In case the legacy server restarts: (shouldn't touch anything else)
+
+1. Restart FreeSWITCH: `sudo systemctl restart freeswitch.service`
+2. Fire up the Erlang node
+   ```
+   nix-shell -p erlang
+   erl -eval 'cover:compile_directory("./outbound_erl").' -eval '{lofa, freeswitch@tr2} ! register_event_handler.' -run filog -run user_db -run content -sname access_news -setcookie OldTimeRadio
+   ```
+3. Mount publications
+   
 ### Current `/etc/freeswitch/dialplan/default.xml` to start the `gen_statem` process on incoming calls
 
 ```xml
