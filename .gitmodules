@@ -1,0 +1,3 @@
+[submodule "nix_shell/nixos-freeswitch"]
+	path = nix_shell/nixos-freeswitch
+	url = https://github.com/access-news/nixos-freeswitch.git
