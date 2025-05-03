@@ -123,27 +123,37 @@ Giving this another shot, because the latest Erlang and FreeSWITCH have linking 
 
 * COMPILE FreeSWITCH
   ==========================================================
-  Following the [Compiling Release Branch (production)][fs-compile-branch] guide on Debian.
+  The steps below are essentially the same as in the [Compiling Release Branch (production)][fs-compile-branch] guide for Debian, but added the extra step to enable `mod_erlang_event` before compiling:
 
   ```
   sudo su
   TOKEN=pat_ehr9aonkYYKkoqXDzwKvUCjn
-  cd /usr/src
-
-  # continue with the steps from the guide until:
+  apt update && apt install -y curl
+  curl -sSL https://freeswitch.org/fsget | bash -s $TOKEN
+   
+  # Install dependencies required for the build
+  apt-get build-dep freeswitch
+   
+  # then let's get the source. Use the -b flag to get a specific branch
+  cd /usr/src/
+  git clone -b v1.10 https://github.com/signalwire/freeswitch.git
+  cd freeswitch
+   
+  # Because we're in a branch that will go through many rebases, it's
+  # better to set this one, or you'll get CONFLICTS when pulling (update).
+  git config pull.rebase true
+   
+  # ... and do the build:
+  ./bootstrap.sh -j
+  # Uncomment `mod_erlang_event` in `modules.conf`, e.g., with `vim modules.conf`.
+  ./configure
+  make
+  make install
   ```
 
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  !!!                                                    !!!
-  !!! Before running `./bootstrap.sh -j`, uncomment      !!!
-  !!! `mod_erlang_event` in `modules.conf`, e.g., with:  !!!
-  !!!                                                    !!!
-  !!! vim modules.conf                                   !!!
-  !!!                                                    !!!
-  !!! In general, this is [how to install FreeSWITCH mods][fs-install-mods].!!!
-  !!!                                                    !!!
-  !!!                                                    !!!
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  In general, this is [how to install FreeSWITCH mods][fs-install-mods].
+
+                                                   
 
   Saving the `./configure` output here just in case:
   ```
@@ -345,11 +355,3 @@ Compiling everything from source because no packages are available anymore for t
   cd otp
 
   ```
-
-
-
-* INSTALL ERLANG
-  ==========================================================
-* INSTALL ERLANG
-  ==========================================================
-
